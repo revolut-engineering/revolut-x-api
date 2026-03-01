@@ -3,7 +3,8 @@
   "name": "revolutx-mcp",
   "version": "0.2.0",
   "display_name": "RevolutX",
-  "description": "MCP server for the Revolut X crypto exchange — check account balances, place and cancel orders, view order books, tickers, candlestick data, and public trades. Set technical-analysis alerts (price, RSI, MACD, EMA cross, Bollinger Bands, ATR breakout, volume spike, spread, OBI, price change %) with optional Telegram notifications. Run grid-trading backtests and parameter optimisations.",
+  "icon": "icon.png",
+  "description": "MCP server for the Revolut X Crypto Exchange — check account balances, place and cancel orders, view order books, tickers, candlestick data, and public trades.",
   "author": {
     "name": "Revolut"
   },

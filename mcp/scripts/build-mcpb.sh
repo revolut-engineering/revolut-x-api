@@ -23,6 +23,7 @@ cp dist/index.js "$STAGE_DIR/dist/index.js"
 cp "$MCPB_DIR/manifest.json" "$STAGE_DIR/manifest.json"
 cp "$MCPB_DIR/.mcpbignore" "$STAGE_DIR/.mcpbignore"
 cp "$MCP_DIR/package.json" "$STAGE_DIR/package.json"
+cp "$MCP_DIR/icon.png" "$STAGE_DIR/icon.png"
 
 # 3. Pack with mcpb
 echo ">> Packing MCPB archive..."
