@@ -24,7 +24,7 @@ Search for **RevolutX** in the Claude Desktop MCP directory and click Install.
 
 Add to your Claude Desktop configuration file:
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**macOS:** `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
@@ -81,7 +81,7 @@ All credentials are stored locally on your machine. The private key never leaves
 
 | Platform | Path |
 |----------|------|
-| macOS | `~/Library/Application Support/revolutx-mcp/` |
+| macOS | `~/.config/revolutx-mcp/` |
 | Windows | `%APPDATA%\revolutx-mcp\` |
 | Linux | `~/.config/revolutx-mcp/` |
 

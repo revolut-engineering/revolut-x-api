@@ -101,7 +101,7 @@ The config directory stores the SQLite database, API credentials, and key pairs.
 
 | Platform | Path |
 |----------|------|
-| macOS | `~/Library/Application Support/revolutx-mcp/` |
+| macOS | `~/.config/revolutx-mcp/` |
 | Linux | `~/.config/revolutx-mcp/` |
 | Windows | `%APPDATA%\revolutx-mcp\` |
 
