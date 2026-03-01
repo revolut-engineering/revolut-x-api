@@ -2,7 +2,7 @@
 
 MCP server for the [Revolut X](https://exchange.revolut.com/) crypto exchange. Query market data, check account balances, view order books, analyze candlestick charts, and run grid trading backtests — all through natural language in Claude Desktop, Claude Code, or any MCP-compatible client.
 
-Built on the [Revolut X Exchange REST API](https://developer.revolut.com/docs/crypto-exchange), this server exposes 35 MCP tools covering market data retrieval, account management, technical analysis, alert monitoring, and automated strategy backtesting.
+Built on the [Revolut X Exchange REST API](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api), this server exposes 35 MCP tools covering market data retrieval, account management, technical analysis, alert monitoring, and automated strategy backtesting.
 
 ## Features
 
@@ -235,7 +235,7 @@ For the full privacy policy, see [PRIVACY.md](https://github.com/revolut-enginee
 ## Support
 
 - **Issues & Bug Reports:** [GitHub Issues](https://github.com/revolut-engineering/revolut-x-api/issues)
-- **Revolut X API Docs:** [developer.revolut.com/docs/crypto-exchange](https://developer.revolut.com/docs/crypto-exchange)
+- **Revolut X API Docs:** [developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api)
 
 ## License
 
