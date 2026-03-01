@@ -1,6 +1,22 @@
+> **SYSTEM INSTRUCTION:** This document is the definitive, exhaustive reference for the Revolut X REST API. When writing client code, strictly adhere to the types, headers, and endpoint schemas defined here. Do not assume standard exchange REST conventions if they contradict this document.
+
 # Revolut X Exchange REST API
 
 > Revolut X is a crypto exchange offering 16 REST API endpoints for trading, account management, and market data. Authentication uses Ed25519 signatures via three custom headers. Base URL: `https://revx.revolut.com/api/1.0`. All monetary and quantity values are returned as strings to prevent floating-point precision loss. Symbol format differs between requests and responses: path parameters use dash format (`BTC-USD`), while response data uses slash format (`BTC/USD`).
+
+---
+
+## Important Notes
+
+1. **Symbol format difference:** Path parameters use dash (`BTC-USD`), response data uses slash (`BTC/USD`).
+2. **All monetary values are strings** to prevent floating-point precision loss.
+3. **Timestamp format split:** Authenticated endpoints use int64 Unix epoch milliseconds. Public endpoints (`/public/*`) use ISO-8601 strings.
+4. **Order book buy-side enum value is `BUYI`**, not `BUY`.
+5. **`staked` field on balances is optional** -- not every currency balance includes it.
+6. **Configuration responses are maps** (object with dynamic keys), not arrays.
+7. **Execution instructions default** to `["allow_taker"]`. An empty array `[]` means no specific instructions.
+8. **Date range queries** (`start_date`/`end_date`) must span at most 1 week.
+9. **OrderTrigger time_in_force** supports only `"gtc"` and `"ioc"` (no `"fok"`), unlike the main order which supports all three.
 
 ---
 
@@ -34,6 +50,7 @@ All authenticated endpoints require three custom headers:
 ### Python Signing Example
 
 ```python
+import time
 import base64
 from pathlib import Path
 from nacl.signing import SigningKey
@@ -51,7 +68,7 @@ raw_private = private_key_obj.private_bytes(
 timestamp = str(int(time.time() * 1000))
 method = "GET"
 path = "/api/1.0/orders/active"
-query = "status=open&limit=10"
+query = "order_states=new,partially_filled&limit=10"
 body = ""
 
 message = f"{timestamp}{method}{path}{query}{body}".encode("utf-8")
@@ -108,7 +125,7 @@ All errors return the same JSON structure:
 
 | Tier | Limit | Applies To |
 |------|-------|-----------|
-| Authenticated | 1000 requests per minute | All 14 authenticated endpoints |
+| Authenticated | 1000 requests per minute | All authenticated endpoints |
 | Public | 20 requests per 10 seconds | `GET /public/last-trades`, `GET /public/order-book/{symbol}` |
 
 ---
@@ -242,6 +259,8 @@ Place a new order (limit or market).
 | base_size | string (decimal) | one of base_size/quote_size | Amount in base currency |
 | quote_size | string (decimal) | one of base_size/quote_size | Amount in quote currency |
 
+**Note on `time_in_force`:** This field cannot be set during order placement. Limit orders default to `gtc` (good till cancelled). Market orders are always `ioc` (immediate or cancel). The `time_in_force` field appears only in the `Order` response object.
+
 **Example request (limit order by base size with execution instructions):**
 ```json
 {
@@ -278,7 +297,7 @@ Place a new order (limit or market).
 }
 ```
 
-**Response (200):** `{ data: [OrderPlacementResult] }` -- note: `data` is an **array**.
+**Response (200):** `{ data: OrderPlacementResult }` -- note: `data` is a **single object**, not an array.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -289,9 +308,7 @@ Place a new order (limit or market).
 **Example response:**
 ```json
 {
-  "data": [
-    {"venue_order_id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b", "client_order_id": "984a4d8a-2a9b-4950-822f-2a40037f02bd", "state": "new"}
-  ]
+  "data": {"venue_order_id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b", "client_order_id": "984a4d8a-2a9b-4950-822f-2a40037f02bd", "state": "new"}
 }
 ```
 
@@ -309,10 +326,10 @@ Get active orders for the authenticated user with optional filters.
 
 | Name | In | Type | Required | Description |
 |------|-----|------|----------|-------------|
-| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD` |
-| order_states | query | string (comma-separated) | no | Filter by state: `pending_new`, `new`, `partially_filled` |
-| order_types | query | string (comma-separated) | no | Filter by type: `limit`, `conditional`, `tpsl` |
-| side | query | string | no | `"buy"` or `"sell"` |
+| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all) |
+| order_states | query | string (comma-separated) | no | Filter by state: `pending_new`, `new`, `partially_filled`. If omitted, no filter is applied (returns all) |
+| order_types | query | string (comma-separated) | no | Filter by type: `limit`, `conditional`, `tpsl`. If omitted, no filter is applied (returns all) |
+| side | query | string | no | `"buy"` or `"sell"`. If omitted, no filter is applied (returns both) |
 | cursor | query | string | no | Pagination cursor from previous response |
 | limit | query | integer | no | Max records (1-100, default: 100) |
 
@@ -350,9 +367,9 @@ Get historical (completed) orders for the authenticated user.
 
 | Name | In | Type | Required | Description |
 |------|-----|------|----------|-------------|
-| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD` |
-| order_states | query | string (comma-separated) | no | Filter by state: `filled`, `cancelled`, `rejected`, `replaced` |
-| order_types | query | string (comma-separated) | no | Filter by type: `market`, `limit` |
+| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all) |
+| order_states | query | string (comma-separated) | no | Filter by state: `filled`, `cancelled`, `rejected`, `replaced`. If omitted, no filter is applied (returns all) |
+| order_types | query | string (comma-separated) | no | Filter by type: `market`, `limit`. If omitted, no filter is applied (returns all) |
 | start_date | query | integer (int64) | no | Start timestamp in Unix epoch ms. Defaults to `end_date - 1 week` |
 | end_date | query | integer (int64) | no | End timestamp in Unix epoch ms. Defaults to `start_date + 1 week` or now. **Max range: 1 week** |
 | cursor | query | string | no | Pagination cursor from previous response |
@@ -512,7 +529,7 @@ Get the fills (trade executions) for a specific order.
 
 ### GET /trades/all/{symbol}
 
-Get all public trades (market history) for a specific symbol, not limited to the authenticated user.
+Get all trades (market history) for a specific symbol, not limited to the authenticated user's own activity. Note: despite returning public market data, this endpoint requires authentication. For unauthenticated access to recent trades, use `GET /public/last-trades` instead.
 
 **Auth:** Required
 **Errors:** 400, 401, 403, 409, 5XX
@@ -595,6 +612,7 @@ Get the current order book snapshot (bids and asks) for a specific trading pair.
 - `asks`: sell orders, sorted by price **descending**
 - `bids`: buy orders, sorted by price **descending**
 - `metadata.timestamp`: int64, Unix epoch milliseconds
+- Note: all timestamps in this response (`pdt`, `metadata.timestamp`) are **int64 Unix epoch milliseconds**.
 
 **Example response:**
 ```json
@@ -658,7 +676,7 @@ Get the latest market data snapshots for all supported currency pairs, or filter
 
 | Name | In | Type | Required | Description |
 |------|-----|------|----------|-------------|
-| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD` |
+| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all) |
 
 **Response (200):** `{ data: [Ticker], metadata: { timestamp } }`
 
@@ -739,6 +757,7 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 - `bids`: buy orders, sorted by price descending
 - `metadata.timestamp`: ISO-8601 string (not epoch ms)
 - `OrderBookPublicPriceLevel.pdt`: ISO-8601 string (not epoch ms)
+- **Important:** Unlike the authenticated `GET /order-book/{symbol}`, all timestamps here are ISO-8601 strings, not int64 epoch milliseconds.
 
 **Example response:**
 ```json
@@ -927,17 +946,3 @@ Allowed values for the `interval` query parameter on `GET /candles/{symbol}`:
 | 40320 | 4 weeks |
 
 **Constraint:** The total number of candles `(until - since) / interval` must not exceed 100.
-
----
-
-## Important Notes
-
-1. **Symbol format difference:** Path parameters use dash (`BTC-USD`), response data uses slash (`BTC/USD`).
-2. **All monetary values are strings** to prevent floating-point precision loss.
-3. **Timestamp format split:** Authenticated endpoints use int64 Unix epoch milliseconds. Public endpoints (`/public/*`) use ISO-8601 strings.
-4. **Order book buy-side enum value is `BUYI`**, not `BUY`.
-5. **`staked` field on balances is optional** -- not every currency balance includes it.
-6. **Configuration responses are maps** (object with dynamic keys), not arrays.
-7. **Execution instructions default** to `["allow_taker"]`. An empty array `[]` means no specific instructions.
-8. **Date range queries** (`start_date`/`end_date`) must span at most 1 week.
-9. **OrderTrigger time_in_force** supports only `"gtc"` and `"ioc"` (no `"fok"`), unlike the main order which supports all three.
