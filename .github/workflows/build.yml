@@ -1,0 +1,66 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  build-mcp:
+    name: MCP Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - name: Build MCPB archive
+        run: bash scripts/build-mcpb.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revolutx-mcp-mcpb
+          path: mcp/dist/revolutx-mcp.mcpb
+
+  build-worker:
+    name: Worker Service
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Create release tarball
+        run: tar -czf revolutx-worker.tar.gz dist/ package.json package-lock.json README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revolutx-worker
+          path: worker/revolutx-worker.tar.gz

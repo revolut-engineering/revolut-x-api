@@ -1,0 +1,11 @@
+services:
+  worker:
+    build:
+      context: worker/
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${REVOLUTX_CONFIG_DIR:-${HOME}/.config/revolutx-mcp}:/data
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    restart: unless-stopped

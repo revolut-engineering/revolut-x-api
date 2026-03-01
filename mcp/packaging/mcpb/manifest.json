@@ -1,0 +1,91 @@
+{
+  "manifest_version": "0.4",
+  "name": "revolutx-mcp",
+  "version": "0.2.0",
+  "display_name": "RevolutX",
+  "description": "MCP server for the Revolut X crypto exchange — check account balances, place and cancel orders, view order books, tickers, candlestick data, and public trades. Set technical-analysis alerts (price, RSI, MACD, EMA cross, Bollinger Bands, ATR breakout, volume spike, spread, OBI, price change %) with optional Telegram notifications. Run grid-trading backtests and parameter optimisations.",
+  "author": {
+    "name": "Revolut"
+  },
+  "keywords": ["crypto", "exchange", "trading", "revolut", "alerts", "telegram", "technical-analysis", "indicators"],
+  "license": "MIT",
+  "privacy_policies": [
+    "https://github.com/revolut-engineering/revolut-x-api/blob/main/PRIVACY.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/revolut-engineering/revolut-x-api"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "REVOLUTX_CONFIG_DIR": "${user_config.config_dir}",
+        "REVOLUTX_WORKER_URL": "${user_config.worker_url}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "generate_keypair", "description": "Generate an Ed25519 key pair and save it to the config directory for Revolut X API authentication" },
+    { "name": "configure_api_key", "description": "Save your Revolut X API key to the local config file so subsequent tools can authenticate requests" },
+    { "name": "check_auth_status", "description": "Verify that API key and private key are configured, and test the connection to the Revolut X API" },
+    { "name": "get_balances", "description": "Get your Revolut X account balances for all held cryptocurrencies and fiat currencies" },
+    { "name": "get_currencies", "description": "List all currencies available on the Revolut X exchange with their deposit/withdrawal status" },
+    { "name": "get_currency_pairs", "description": "List all tradeable currency pairs on Revolut X with their min/max order sizes and tick sizes" },
+    { "name": "get_order_book", "description": "Get the current order book (bids and asks) for a specified trading pair on Revolut X" },
+    { "name": "get_tickers", "description": "Get current bid, ask, mid, and last prices for all trading pairs on Revolut X" },
+    { "name": "get_candles", "description": "Get OHLCV candlestick data for a specified trading pair and time interval from Revolut X" },
+    { "name": "get_public_trades", "description": "Get the most recent public trades for a specified trading pair on Revolut X" },
+    { "name": "get_last_trades", "description": "Get the last 100 public trades across all trading pairs on Revolut X" },
+    { "name": "place_market_order", "description": "Place a market buy or sell order for a specified trading pair and amount on Revolut X" },
+    { "name": "place_limit_order", "description": "Place a limit buy or sell order at a specified price for a trading pair on Revolut X" },
+    { "name": "get_active_orders", "description": "List your currently open (unfilled) orders on Revolut X, optionally filtered by pair" },
+    { "name": "cancel_order", "description": "Cancel a specific open order on Revolut X by its order ID" },
+    { "name": "get_client_trades", "description": "Get your personal trade history (filled orders) on Revolut X, optionally filtered by pair" },
+    { "name": "grid_backtest", "description": "Run a grid trading backtest on historical candlestick data for a specified pair, grid range, and level count" },
+    { "name": "grid_optimize", "description": "Test multiple grid parameter combinations on historical data and rank results by profit" },
+    { "name": "alert_create", "description": "Create a technical-analysis alert (price, RSI, MACD, EMA cross, Bollinger, volume spike, spread, OBI, price change %, ATR breakout) for a trading pair. Requires the Worker service." },
+    { "name": "alert_list", "description": "List all configured alerts with their type, trading pair, enabled/triggered status, and last check time. Requires the Worker service." },
+    { "name": "alert_get", "description": "Get full details of a specific alert by its ID, including configuration and trigger history. Requires the Worker service." },
+    { "name": "alert_enable", "description": "Enable a previously disabled alert so the Worker resumes evaluating it. Requires the Worker service." },
+    { "name": "alert_disable", "description": "Disable an alert to pause evaluation without deleting its configuration. Requires the Worker service." },
+    { "name": "alert_delete", "description": "Permanently delete an alert and its configuration. Requires the Worker service." },
+    { "name": "alert_types", "description": "List all 10 supported alert types with their config fields, defaults, and example configurations. Requires the Worker service." },
+    { "name": "telegram_add_connection", "description": "Add a Telegram Bot API connection for alert notifications. Connects to the user-configured Telegram Bot API (external service). Requires the Worker service." },
+    { "name": "telegram_list_connections", "description": "List all configured Telegram bot connections with their enabled status and last test result. Connects to the user-configured Telegram Bot API (external service). Requires the Worker service." },
+    { "name": "telegram_delete_connection", "description": "Remove a Telegram bot connection and stop using it for notifications. Requires the Worker service." },
+    { "name": "telegram_enable_connection", "description": "Enable a previously disabled Telegram connection so it receives alert notifications. Requires the Worker service." },
+    { "name": "telegram_disable_connection", "description": "Disable a Telegram connection to pause notifications without deleting its configuration. Requires the Worker service." },
+    { "name": "telegram_test_connection", "description": "Send a test message through a Telegram bot connection to verify it is working. Connects to the user-configured Telegram Bot API (external service). Requires the Worker service." },
+    { "name": "worker_status", "description": "Get the current status of the background Worker service including uptime, active alerts, and enabled connections" },
+    { "name": "worker_stop", "description": "Stop the Worker background tick loop, pausing all alert evaluation and notifications" },
+    { "name": "worker_restart", "description": "Restart the Worker background tick loop to pick up configuration changes" },
+    { "name": "events_list", "description": "List recent system events (alert triggers, Telegram sends, worker starts/stops) with optional category filter. Requires the Worker service." }
+  ],
+  "user_config": {
+    "config_dir": {
+      "type": "directory",
+      "title": "Config Directory",
+      "description": "Directory for storing API keys and configuration",
+      "default": "~/.config/revolutx-mcp",
+      "required": false
+    },
+    "worker_url": {
+      "type": "string",
+      "title": "Worker URL",
+      "description": "URL of the RevolutX Worker service (needed for alerts and Telegram tools). Start Worker with: cd revolutx-ai && docker compose up -d",
+      "default": "http://localhost:8080",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}

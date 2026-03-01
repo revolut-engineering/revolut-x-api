@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "revolutx": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "cwd": "/path/to/revolutx-ai/mcp",
+      "env": {
+        "REVOLUTX_WORKER_URL": "http://localhost:8080"
+      }
+    }
+  }
+}

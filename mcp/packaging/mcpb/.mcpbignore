@@ -1,0 +1,9 @@
+node_modules/
+src/
+tests/
+*.ts
+.git/
+.DS_Store
+coverage/
+*.test.*
+*.tsbuildinfo

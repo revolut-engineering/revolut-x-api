@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+
+# SQLite databases (runtime)
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Environment / secrets
+.env
+.env.local
+
+# macOS
+.DS_Store
