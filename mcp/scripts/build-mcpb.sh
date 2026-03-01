@@ -15,15 +15,19 @@ cd "$MCP_DIR"
 echo ">> Building bundle..."
 npm run build:bundle
 
-# 2. Copy bundle into stage directory
-echo ">> Copying bundle to stage..."
+# 2. Prepare stage directory
+echo ">> Preparing stage directory..."
+MCPB_DIR="$MCP_DIR/packaging/mcpb"
 mkdir -p "$STAGE_DIR/dist"
 cp dist/index.js "$STAGE_DIR/dist/index.js"
+cp "$MCPB_DIR/manifest.json" "$STAGE_DIR/manifest.json"
+cp "$MCPB_DIR/.mcpbignore" "$STAGE_DIR/.mcpbignore"
+cp "$MCP_DIR/package.json" "$STAGE_DIR/package.json"
 
 # 3. Pack with mcpb
 echo ">> Packing MCPB archive..."
 cd "$STAGE_DIR"
-npx @anthropic-ai/mcpb pack
+npx --yes @anthropic-ai/mcpb pack
 
 # 4. Move the produced .mcpb file to mcp/dist/
 MCPB_FILE=$(ls -1 *.mcpb 2>/dev/null | head -1)
