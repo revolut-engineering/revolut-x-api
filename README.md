@@ -219,6 +219,10 @@ Net return: $42.35 (4.24%)
 Max drawdown: 1.82%
 ```
 
+## Worker installation
+
+Follow the instructions in the worker [README.md](/worker/README.md) to complete the installation.
+
 ## Privacy Policy
 
 RevolutX MCP Server is a **local-only** application. All data stays on your machine.
