@@ -3,22 +3,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getConfigDir, ensureConfigDir } from "revolutx-api";
 
-export interface Alert {
-  id: string;
-  pair: string;
-  alert_type: string;
-  config: Record<string, unknown>;
-  connection_ids?: string[];
-  poll_interval_sec: number;
-  enabled: boolean;
-  triggered: boolean;
-  last_checked_at: string | null;
-  last_triggered_at: string | null;
-  current_value: { label: string; value: string } | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface TelegramConnection {
   id: string;
   label: string;
@@ -57,92 +41,6 @@ function saveArray<T>(filename: string, data: T[]): void {
   const tmp = path + ".tmp";
   writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
   renameSync(tmp, path);
-}
-
-const ALERTS_FILE = "alerts.json";
-
-function backfillAlert(raw: Record<string, unknown>): Alert {
-  return {
-    ...(raw as unknown as Alert),
-    triggered: (raw.triggered as boolean) ?? false,
-    last_checked_at: (raw.last_checked_at as string | null) ?? null,
-    last_triggered_at: (raw.last_triggered_at as string | null) ?? null,
-    current_value:
-      (raw.current_value as { label: string; value: string } | null) ?? null,
-  };
-}
-
-export function loadAlerts(): Alert[] {
-  return loadArray<Record<string, unknown>>(ALERTS_FILE).map(backfillAlert);
-}
-
-export function saveAlerts(alerts: Alert[]): void {
-  saveArray(ALERTS_FILE, alerts);
-}
-
-export function createAlert(
-  pair: string,
-  alert_type: string,
-  config: Record<string, unknown>,
-  poll_interval_sec: number,
-): Alert {
-  const alerts = loadAlerts();
-  const now = new Date().toISOString();
-  const alert: Alert = {
-    id: randomUUID(),
-    pair,
-    alert_type,
-    config,
-    poll_interval_sec,
-    enabled: true,
-    triggered: false,
-    last_checked_at: null,
-    last_triggered_at: null,
-    current_value: null,
-    created_at: now,
-    updated_at: now,
-  };
-  alerts.push(alert);
-  saveAlerts(alerts);
-  return alert;
-}
-
-export function getAlert(id: string): Alert | undefined {
-  return loadAlerts().find((a) => a.id === id);
-}
-
-export function updateAlert(
-  id: string,
-  updates: Partial<
-    Pick<
-      Alert,
-      | "enabled"
-      | "triggered"
-      | "last_checked_at"
-      | "last_triggered_at"
-      | "current_value"
-    >
-  >,
-): Alert | undefined {
-  const alerts = loadAlerts();
-  const idx = alerts.findIndex((a) => a.id === id);
-  if (idx === -1) return undefined;
-  alerts[idx] = {
-    ...alerts[idx],
-    ...updates,
-    updated_at: new Date().toISOString(),
-  };
-  saveAlerts(alerts);
-  return alerts[idx];
-}
-
-export function deleteAlert(id: string): boolean {
-  const alerts = loadAlerts();
-  const idx = alerts.findIndex((a) => a.id === id);
-  if (idx === -1) return false;
-  alerts.splice(idx, 1);
-  saveAlerts(alerts);
-  return true;
 }
 
 const TELEGRAM_FILE = "telegram.json";
