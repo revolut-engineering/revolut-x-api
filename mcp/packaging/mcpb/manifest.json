@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "RevolutX",
-  "version": "0.2.0",
+  "version": "0.0.2",
   "display_name": "RevolutX",
   "description": "Trade smarter on Revolut X. Check balances, analyze markets, place orders, and backtest grid strategies. All through natural language in Claude.",
   "author": {

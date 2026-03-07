@@ -1,5 +1,9 @@
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
 import { createProgram } from "../src/index.js";
+
+const require = createRequire(import.meta.url);
+const pkg = require("../package.json") as { version: string };
 
 describe("CLI program", () => {
   it("creates program with correct name", () => {
@@ -9,7 +13,7 @@ describe("CLI program", () => {
 
   it("has version", () => {
     const program = createProgram();
-    expect(program.version()).toBe("0.1.0");
+    expect(program.version()).toBe(pkg.version);
   });
 
   it("has all top-level commands", () => {

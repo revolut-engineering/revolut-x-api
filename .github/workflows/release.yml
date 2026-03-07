@@ -34,6 +34,7 @@ jobs:
           VERSION="${TAG#release-}"
           VERSION="${VERSION#v}"
           echo "Resolved version: $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           for dir in api cli mcp; do
             (cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
           done
@@ -91,9 +92,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(node -p "require('./api/package.json').version")
           gh release upload "${{ github.event.release.tag_name }}" \
             "api/revolutx-api-${VERSION}.tgz" \
             "cli/revolutx-cli-${VERSION}.tgz" \
             "mcp/dist/revolutx-mcp.mcpb" \
             --clobber
+
+      - name: Commit version bump back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add api/package.json cli/package.json mcp/package.json mcp/packaging/mcpb/manifest.json
+          git commit -m "chore: bump version to ${VERSION} [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:master
