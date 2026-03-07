@@ -1,3 +1,4 @@
+import type { KeyObject } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -49,10 +50,10 @@ async function createClient(): Promise<Client> {
   return client;
 }
 
-function getText(result: {
-  content: Array<{ type: string; text?: string }>;
-}): string {
-  return result.content[0].text ?? "";
+function getText(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  if (!("content" in result)) return "";
+  const content = result.content as Array<{ type: string; text?: string }>;
+  return content[0]?.text ?? "";
 }
 
 describe("setup tools", () => {
@@ -69,7 +70,7 @@ describe("setup tools", () => {
       name: "generate_keypair",
       arguments: {},
     });
-    const text = getText(result as any);
+    const text = getText(result);
     expect(text).toContain("Ed25519 keypair generated successfully");
     expect(text).toContain("PUBLIC key");
   });
@@ -83,7 +84,7 @@ describe("setup tools", () => {
       name: "generate_keypair",
       arguments: {},
     });
-    const text = getText(result as any);
+    const text = getText(result);
     expect(text).toContain("A keypair already exists");
   });
 
@@ -93,7 +94,7 @@ describe("setup tools", () => {
       name: "configure_api_key",
       arguments: { api_key: "tooshort" },
     });
-    const text = getText(result as any);
+    const text = getText(result);
     expect(text).toContain("Invalid API key format");
   });
 
@@ -107,7 +108,7 @@ describe("setup tools", () => {
       name: "configure_api_key",
       arguments: { api_key: validKey },
     });
-    const text = getText(result as any);
+    const text = getText(result);
     expect(text).toContain("API key saved successfully");
   });
 
@@ -117,7 +118,7 @@ describe("setup tools", () => {
       name: "check_auth_status",
       arguments: {},
     });
-    const text = getText(result as any);
+    const text = getText(result);
     expect(text).toContain("Not configured");
   });
 
@@ -126,15 +127,15 @@ describe("setup tools", () => {
     vi.mocked(api.isConfigured).mockReturnValue(true);
     vi.mocked(api.loadCredentials).mockReturnValue({
       apiKey: "x",
-      privateKey: {},
-    } as any);
+      privateKey: {} as KeyObject,
+    });
 
     const client = await createClient();
     const result = await client.callTool({
       name: "check_auth_status",
       arguments: {},
     });
-    const text = getText(result as any);
+    const text = getText(result);
     expect(text).toContain("Authentication is configured and working");
     expect(text).toContain("Available currencies: 3");
   });

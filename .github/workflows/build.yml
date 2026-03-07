@@ -67,12 +67,14 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - run: npm run build
-
-      - uses: actions/cache/save@v4
+      - uses: actions/cache@v4
+        id: api-dist-cache
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+
+      - run: npm run build
+        if: steps.api-dist-cache.outputs.cache-hit != 'true'
 
   lint:
     name: Lint & Format
