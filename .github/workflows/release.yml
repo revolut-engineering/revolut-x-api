@@ -37,6 +37,13 @@ jobs:
           for dir in api cli mcp; do
             (cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
           done
+          VERSION="$VERSION" node -e "
+            const fs = require('fs');
+            const f = 'mcp/packaging/mcpb/manifest.json';
+            const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+            m.version = process.env.VERSION;
+            fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
+          "
 
       - name: Install all dependencies
         run: |

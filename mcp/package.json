@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --external:better-sqlite3",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify",
+    "build:bundle:lite": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify --external:express --external:@hono/node-server --external:iconv-lite --external:mime-db --external:mime-types",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
@@ -29,7 +30,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.25.0",
     "nock": "^14.0.11",
     "tsx": "^4.21.0",
     "typescript": "^5.6.0",

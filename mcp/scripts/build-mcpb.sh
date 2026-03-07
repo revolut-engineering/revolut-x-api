@@ -16,8 +16,8 @@ if [ ! -f "../api/dist/index.js" ]; then
   (cd ../api && npm run build)
 fi
 
-echo ">> Building bundle..."
-npm run build:bundle
+echo ">> Building bundle (stdio-only, Express externalized)..."
+npm run build:bundle:lite
 
 echo ">> Copying bundle to stage..."
 mkdir -p "$STAGE_DIR/dist"

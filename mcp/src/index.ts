@@ -1,8 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import type { StreamableHTTPServerTransport as StreamableHTTPServerTransportType } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
 
 const MCP_PORT = Number(process.env.MCP_PORT ?? 8000);
@@ -15,7 +12,15 @@ async function runStdio(): Promise<void> {
 }
 
 async function runHttp(): Promise<void> {
-  const transports: Record<string, StreamableHTTPServerTransport> = {};
+  const { randomUUID } = await import("node:crypto");
+  const { createMcpExpressApp } =
+    await import("@modelcontextprotocol/sdk/server/express.js");
+  const { StreamableHTTPServerTransport } =
+    await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
+  const { isInitializeRequest } =
+    await import("@modelcontextprotocol/sdk/types.js");
+
+  const transports: Record<string, StreamableHTTPServerTransportType> = {};
   const app = createMcpExpressApp({
     host: MCP_HOST,
     allowedHosts: ["localhost", "127.0.0.1", "[::1]"],
@@ -33,7 +38,7 @@ async function runHttp(): Promise<void> {
   ): Promise<void> => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     try {
-      let transport: StreamableHTTPServerTransport;
+      let transport: StreamableHTTPServerTransportType;
       if (sessionId && transports[sessionId]) {
         transport = transports[sessionId];
       } else if (!sessionId && isInitializeRequest(req.body)) {
