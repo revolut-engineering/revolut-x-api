@@ -47,6 +47,7 @@ revx configure                              # Setup API key + keypair
 revx account balances                       # Check balances
 revx market ticker BTC-USD                  # Get price
 revx order place BTC-USD buy 0.001 --limit 95000  # Place limit buy
+revx monitor price BTC-USD --threshold 100000     # Monitor price level
 ```
 
 ## Commands
@@ -64,7 +65,8 @@ revx configure path                # Print config directory path
 ### Account
 
 ```bash
-revx account balances              # List all balances
+revx account balances              # List non-zero balances
+revx account balances --all        # Include zero balances
 revx account balance BTC           # Single currency balance
 ```
 
@@ -98,10 +100,12 @@ revx order place BTC-USD sell 0.001 --market         # Market sell
 revx order list                     # Active orders
   --symbol BTC-USD                  # Filter by pair
   --side buy                        # Filter by side
+  --limit 50                        # Max results
 revx order history                  # Historical orders
   --symbol BTC-USD
   --start-date 2025-01-01
   --end-date 2025-01-02
+  --limit 50                        # Max results
 revx order get <order-id>           # Get specific order
 revx order cancel <order-id>        # Cancel order
 revx order fills <order-id>         # Get fills for order
@@ -116,68 +120,60 @@ revx trade history BTC-USD          # My trade history
   --limit 50
 ```
 
-### Alerts
+### Monitor
 
-Manage market price and technical indicator alerts.
+Live monitoring for price thresholds and technical indicators. Each monitor type has its own subcommand with dedicated flags. Monitors run in the foreground, check on an interval, and send Telegram notifications when conditions trigger.
 
 ```bash
-revx alerts list                    # List all alerts
-revx alerts get <alert-id>         # Show alert details
-revx alerts enable <alert-id>     # Enable an alert
-revx alerts disable <alert-id>    # Disable an alert
-revx alerts delete <alert-id>     # Delete an alert
-revx alerts types                  # List all alert types with config examples
+revx monitor types                  # List all supported monitor types
 ```
 
-Create alerts:
-
 ```bash
-# Price alert
-revx alerts create BTC-USD --type price --direction above --threshold 100000
+# Price threshold
+revx monitor price BTC-USD --direction above --threshold 100000
 
-# RSI alert
-revx alerts create BTC-USD --type rsi \
-  --config '{"period":14,"direction":"above","threshold":"70"}'
+# RSI
+revx monitor rsi ETH-USD --direction above --threshold 70 --period 14
 
 # EMA crossover
-revx alerts create BTC-USD --type ema_cross \
-  --config '{"fast_period":9,"slow_period":21,"direction":"bullish"}'
+revx monitor ema-cross BTC-USD --direction bullish
 
-# MACD signal
-revx alerts create BTC-USD --type macd \
-  --config '{"fast":12,"slow":26,"signal":9,"direction":"bullish"}'
+# MACD crossover
+revx monitor macd BTC-USD --direction bullish --fast 12 --slow 26 --signal 9
 
 # Bollinger Bands
-revx alerts create BTC-USD --type bollinger \
-  --config '{"period":20,"std_mult":"2","band":"upper"}'
+revx monitor bollinger BTC-USD --band upper
 
 # Volume spike
-revx alerts create BTC-USD --type volume_spike \
-  --config '{"period":20,"multiplier":"2.0"}'
+revx monitor volume-spike BTC-USD --period 20 --multiplier 2.0
 
-# Spread threshold
-revx alerts create BTC-USD --type spread \
-  --config '{"direction":"above","threshold":"0.5"}'
+# Bid-ask spread
+revx monitor spread BTC-USD --direction above --threshold 0.5
 
 # Order book imbalance
-revx alerts create BTC-USD --type obi \
-  --config '{"direction":"above","threshold":"0.3"}'
+revx monitor obi BTC-USD --direction above --threshold 0.3
 
 # Price change %
-revx alerts create BTC-USD --type price_change_pct \
-  --config '{"lookback":24,"direction":"rise","threshold":"5.0"}'
+revx monitor price-change BTC-USD --direction rise --threshold 5.0 --lookback 24
 
 # ATR breakout
-revx alerts create BTC-USD --type atr_breakout \
-  --config '{"period":14,"multiplier":"1.5"}'
+revx monitor atr-breakout BTC-USD --period 14 --multiplier 1.5
 ```
 
-Options for `alerts create`:
-- `--type <type>` — Alert type (default: `price`). One of: `price`, `rsi`, `ema_cross`, `macd`, `bollinger`, `volume_spike`, `spread`, `obi`, `price_change_pct`, `atr_breakout`
-- `--direction <dir>` — `above` or `below` (price alerts only, default: `above`)
-- `--threshold <value>` — Price threshold (required for price alerts)
-- `--config <json>` — JSON config object (required for non-price alerts)
-- `--interval <sec>` — Poll interval in seconds, minimum 5 (default: `10`)
+All monitor subcommands accept `--interval <sec>` to set the check interval in seconds (minimum 5, default: `10`).
+
+| Subcommand | Flags | Defaults |
+|---|---|---|
+| `price <pair>` | `--direction <above\|below>`, `--threshold <value>` (required) | direction: `above` |
+| `rsi <pair>` | `--direction <above\|below>`, `--threshold <value>`, `--period <n>` | threshold: `70`, period: `14` |
+| `ema-cross <pair>` | `--direction <bullish\|bearish>`, `--fast-period <n>`, `--slow-period <n>` | direction: `bullish`, fast: `9`, slow: `21` |
+| `macd <pair>` | `--direction <bullish\|bearish>`, `--fast <n>`, `--slow <n>`, `--signal <n>` | direction: `bullish`, fast: `12`, slow: `26`, signal: `9` |
+| `bollinger <pair>` | `--band <upper\|lower>`, `--period <n>`, `--std-mult <n>` | band: `upper`, period: `20`, std-mult: `2` |
+| `volume-spike <pair>` | `--period <n>`, `--multiplier <n>` | period: `20`, multiplier: `2.0` |
+| `spread <pair>` | `--direction <above\|below>`, `--threshold <value>` | direction: `above`, threshold: `0.5` |
+| `obi <pair>` | `--direction <above\|below>`, `--threshold <value>` | direction: `above`, threshold: `0.3` |
+| `price-change <pair>` | `--direction <rise\|fall>`, `--threshold <value>`, `--lookback <n>` | direction: `rise`, threshold: `5.0`, lookback: `24` |
+| `atr-breakout <pair>` | `--period <n>`, `--multiplier <n>` | period: `14`, multiplier: `1.5` |
 
 ### Telegram
 
@@ -210,6 +206,22 @@ Options for `telegram add`:
 - `--chat-id <id>` — Telegram chat ID (required)
 - `--label <label>` — Connection label (default: `default`)
 - `--test` — Send a test message after adding
+
+### Events
+
+View alert trigger and notification events.
+
+```bash
+revx events                                    # Show recent events (last 50)
+revx events --limit 10                         # Show last 10 events
+revx events --category alert_triggered         # Filter by category
+revx events --json                             # Output as JSON
+```
+
+Options:
+- `--limit <n>` — Number of events to show (default: `50`)
+- `--category <type>` — Filter by category: `alert_triggered`, `telegram_send_ok`, `telegram_send_fail`
+- `--json` — Output as JSON
 
 ## Output Formats
 
