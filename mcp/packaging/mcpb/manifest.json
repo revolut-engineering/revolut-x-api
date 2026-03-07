@@ -60,7 +60,7 @@
     "worker_url": {
       "type": "string",
       "title": "Worker URL",
-      "description": "URL of the RevolutX Worker service (needed for alerts and Telegram tools). Start Worker with: cd revolutx-ai && docker compose up -d",
+      "description": "URL of the RevolutX Worker service (needed for alerts and Telegram tools). Start Worker with: cd revolut-x-api && docker compose up -d",
       "default": "http://localhost:8080",
       "required": false
     }

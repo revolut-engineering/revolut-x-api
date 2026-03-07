@@ -2,17 +2,22 @@
 
 MCP server for the [Revolut X](https://exchange.revolut.com/) crypto exchange. Query market data, check account balances, view order books, analyze candlestick charts, and run grid trading backtests — all through natural language in Claude Desktop, Claude Code, or any MCP-compatible client.
 
-Built on the [Revolut X Exchange REST API](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api), this server exposes 35 MCP tools covering market data retrieval, account management, technical analysis, alert monitoring, and automated strategy backtesting.
+Built on the [Revolut X Exchange REST API](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api), this server exposes 35 MCP tools covering market data retrieval, account management, technical analysis, and automated strategy backtesting.
 
 ## Features
 
 - **Market data** — live tickers, order books, OHLCV candles, public trades for all Revolut X pairs
 - **Account management** — check balances across all held cryptocurrencies and fiat currencies
 - **Grid trading backtests** — simulate grid strategies on historical data, optimize parameters, analyze P&L
-- **Technical analysis alerts** — 10 indicator types (price, RSI, MACD, EMA cross, Bollinger Bands, ATR breakout, volume spike, spread, OBI, price change %)
-- **Telegram notifications** — get notified when alert conditions trigger
-- **Background Worker** — monitors markets 24/7 independently of any active AI session
+- **Candlestick analysis** — technical indicators (RSI, MACD, EMA, Bollinger Bands, ATR, OBI, volume)
 - **Zero-install** — ships as a Node.js MCP server, runs locally on your machine
+
+## Packages
+
+This monorepo also includes standalone packages:
+
+- **[`api/`](api/)** — typed HTTP client for the Revolut X Exchange REST API (zero runtime dependencies)
+- **[`cli/`](cli/)** — `revx` command-line interface for trading from the terminal
 
 ## Installation
 
@@ -20,11 +25,30 @@ Built on the [Revolut X Exchange REST API](https://developer.revolut.com/docs/x-
 
 Search for **RevolutX** in the Claude Desktop MCP directory and click Install.
 
+### Build from Source
+
+The MCP depends on the `api` package. Build both in order:
+
+```bash
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
+
+# 1. Build the API (required by MCP)
+cd api && npm ci && npm run build && cd ..
+
+# 2. Build the MCP
+cd mcp && npm ci && npm run build && cd ..
+# Or use build:bundle for a single-file output:
+# cd mcp && npm ci && npm run build:bundle && cd ..
+```
+
+Then use the path `revolut-x-api/mcp/dist/index.js` in your MCP client configuration.
+
 ### Manual Setup — Claude Desktop
 
-Add to your Claude Desktop configuration file:
+After building from source (or if you have the MCP installed elsewhere), add to your Claude Desktop configuration file:
 
-**macOS:** `~/Library/Application\ Support/Claude/claude_desktop_config.json`
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
@@ -32,7 +56,7 @@ Add to your Claude Desktop configuration file:
   "mcpServers": {
     "revolutx": {
       "command": "node",
-      "args": ["/path/to/revolutx-ai/mcp/dist/index.js"]
+      "args": ["/path/to/revolut-x-api/mcp/dist/index.js"]
     }
   }
 }
@@ -40,17 +64,10 @@ Add to your Claude Desktop configuration file:
 
 ### Manual Setup — Claude Code
 
-```bash
-claude mcp add revolutx node /path/to/revolutx-ai/mcp/dist/index.js
-```
-
-### Build from Source
+After building from source (or if you have the MCP installed elsewhere):
 
 ```bash
-git clone https://github.com/revolut-engineering/revolut-x-api.git
-cd revolut-x-api/mcp
-npm install
-npm run build:bundle   # produces dist/index.js
+claude mcp add revolutx node /path/to/revolut-x-api/mcp/dist/index.js
 ```
 
 ## Configuration
@@ -75,15 +92,14 @@ All credentials are stored locally on your machine. The private key never leaves
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REVOLUTX_CONFIG_DIR` | Platform-dependent (see below) | Config directory path |
-| `REVOLUTX_WORKER_URL` | `http://localhost:8080` | Worker service URL (for alerts/Telegram) |
 
 **Default config directory:**
 
 | Platform | Path |
 |----------|------|
-| macOS | `~/.config/revolutx-mcp/` |
-| Windows | `%APPDATA%\revolutx-mcp\` |
-| Linux | `~/.config/revolutx-mcp/` |
+| macOS | `~/.config/revolut-x/` |
+| Windows | `%APPDATA%\revolut-x\` |
+| Linux | `~/.config/revolut-x/` |
 
 ## Usage Examples
 
@@ -219,19 +235,15 @@ Net return: $42.35 (4.24%)
 Max drawdown: 1.82%
 ```
 
-## Worker installation
-
-Follow the instructions in the worker [README.md](/worker/README.md) to complete the installation.
-
 ## Privacy Policy
 
 RevolutX MCP Server is a **local-only** application. All data stays on your machine.
 
-- **Data collected:** Revolut X API key and Ed25519 private key, stored in your local config directory with restricted file permissions (0600). Optionally, Telegram bot tokens for alert notifications.
-- **Data storage:** All data is stored locally — credentials in JSON config files, alerts and events in a local SQLite database. No cloud storage is used.
-- **Data sharing:** API credentials are sent only to `revx.revolut.com` (Revolut X Exchange API) for authenticated requests. Telegram bot tokens are sent only to `api.telegram.org` when notifications are configured. **No data is sent to Anthropic, the developer, or any third party.**
+- **Data collected:** Revolut X API key and Ed25519 private key, stored in your local config directory with restricted file permissions (0600).
+- **Data storage:** All data is stored locally in JSON config files. No cloud storage is used.
+- **Data sharing:** API credentials are sent only to `revx.revolut.com` (Revolut X Exchange API) for authenticated requests. **No data is sent to Anthropic, the developer, or any third party.**
 - **Data retention:** All data persists locally until you delete it. Remove the config directory to delete all stored data.
-- **Third-party services:** Revolut X Exchange API (market data, account operations), Telegram Bot API (optional notifications).
+- **Third-party services:** Revolut X Exchange API (market data, account operations).
 - **Contact:** [GitHub Issues](https://github.com/revolut-engineering/revolut-x-api/issues)
 
 For the full privacy policy, see [PRIVACY.md](https://github.com/revolut-engineering/revolut-x-api/blob/main/PRIVACY.md).
@@ -239,6 +251,7 @@ For the full privacy policy, see [PRIVACY.md](https://github.com/revolut-enginee
 ## Support
 
 - **Issues & Bug Reports:** [GitHub Issues](https://github.com/revolut-engineering/revolut-x-api/issues)
+- **Documentation:** [ABOUT.md](ABOUT.md) for architecture overview, local development, and testing
 - **Revolut X API Docs:** [developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api)
 
 ## License

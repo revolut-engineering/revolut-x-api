@@ -68,7 +68,7 @@ export const CLI_INSTALL_HINT =
   "If you have already shown install instructions earlier in this conversation, you may skip this.\n\n" +
   "```\n" +
   "# Install the revx CLI (requires Node.js 18+)\n" +
-  "git clone https://github.com/anthropics/revolutx-ai.git\n" +
-  "cd revolutx-ai/api && npm install && npm run build\n" +
+  "git clone https://github.com/revolut-engineering/revolut-x-api.git\n" +
+  "cd revolut-x-api/api && npm install && npm run build\n" +
   "cd ../cli && npm install && npm run build && npm link\n" +
   "```";

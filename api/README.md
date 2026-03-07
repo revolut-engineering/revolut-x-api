@@ -4,7 +4,7 @@ Typed HTTP client for the [Revolut X Exchange](https://revx.revolut.com) REST AP
 
 ## Installation
 
-Download `revolutx-api-*.tgz` from the [latest release](https://github.com/revolut-engineering/revolutx-ai/releases/latest), then:
+Download `revolutx-api-*.tgz` from the [latest release](https://github.com/revolut-engineering/revolut-x-api/releases/latest), then:
 
 ```bash
 npm install ./revolutx-api-*.tgz
@@ -13,7 +13,7 @@ npm install ./revolutx-api-*.tgz
 Or from source:
 
 ```bash
-git clone https://github.com/revolut-engineering/revolutx-ai.git && cd revolutx-ai/api
+git clone https://github.com/revolut-engineering/revolut-x-api.git && cd revolut-x-api/api
 npm install && npm run build
 ```
 
@@ -244,7 +244,7 @@ The API returns symbols with **slashes** in responses: `BTC/USD`.
 ## Support
 
 - **Issues:** [GitHub Issues](https://github.com/revolut-engineering/revolut-x-api/issues)
-- **Revolut X API Docs:** [developer.revolut.com/docs/crypto-exchange](https://developer.revolut.com/docs/crypto-exchange)
+- **Revolut X API Docs:** [developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api)
 
 ## License
 

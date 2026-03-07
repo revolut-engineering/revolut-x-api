@@ -16,7 +16,7 @@ node dist/index.js
 
 Configure your MCP client to run:
 - **Command:** `node`
-- **Args:** `["/path/to/revolutx-ai/mcp/dist/index.js"]`
+- **Args:** `["/path/to/revolut-x-api/mcp/dist/index.js"]`
 
 ### 2. HTTP — remote clients
 
@@ -41,8 +41,8 @@ Environment variables:
 **Option A: From source**
 
 ```bash
-git clone https://github.com/revolut-engineering/revolutx-ai.git
-cd revolutx-ai
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
 cd api && npm ci && npm run build && cd ..
 cd mcp && npm ci && npm run build
 ```
@@ -60,7 +60,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "revolutx": {
       "command": "node",
-      "args": ["/path/to/revolutx-ai/mcp/dist/index.js"]
+      "args": ["/path/to/revolut-x-api/mcp/dist/index.js"]
     }
   }
 }
@@ -75,7 +75,7 @@ Add to Cursor MCP settings or `.cursor/mcp.json`:
   "mcpServers": {
     "revolutx": {
       "command": "node",
-      "args": ["/path/to/revolutx-ai/mcp/dist/index.js"]
+      "args": ["/path/to/revolut-x-api/mcp/dist/index.js"]
     }
   }
 }
@@ -86,8 +86,8 @@ Add to Cursor MCP settings or `.cursor/mcp.json`:
 **Option A: From source**
 
 ```powershell
-git clone https://github.com/revolut-engineering/revolutx-ai.git
-cd revolutx-ai
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
 cd api; npm ci; npm run build; cd ..
 cd mcp; npm ci; npm run build
 ```
@@ -101,7 +101,7 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
   "mcpServers": {
     "revolutx": {
       "command": "node",
-      "args": ["C:\\path\\to\\revolutx-ai\\mcp\\dist\\index.js"]
+      "args": ["C:\\path\\to\\revolut-x-api\\mcp\\dist\\index.js"]
     }
   }
 }
@@ -112,8 +112,8 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 **Option A: From source**
 
 ```bash
-git clone https://github.com/revolut-engineering/revolutx-ai.git
-cd revolutx-ai
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
 (cd api && npm ci && npm run build)
 (cd mcp && npm ci && npm run build)
 ```
@@ -127,7 +127,7 @@ Edit `~/.config/Claude/claude_desktop_config.json` (or equivalent):
   "mcpServers": {
     "revolutx": {
       "command": "node",
-      "args": ["/path/to/revolutx-ai/mcp/dist/index.js"]
+      "args": ["/path/to/revolut-x-api/mcp/dist/index.js"]
     }
   }
 }
