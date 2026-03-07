@@ -28,6 +28,16 @@ jobs:
             cli/package-lock.json
             mcp/package-lock.json
 
+      - name: Set version from release tag
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#release-}"
+          VERSION="${VERSION#v}"
+          echo "Resolved version: $VERSION"
+          for dir in api cli mcp; do
+            (cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+          done
+
       - name: Install all dependencies
         run: |
           npm ci &
