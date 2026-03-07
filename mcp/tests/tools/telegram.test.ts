@@ -14,8 +14,10 @@ async function createClient(): Promise<Client> {
   return client;
 }
 
-function getText(result: any): string {
-  return result.content[0].text ?? "";
+function getText(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  if (!("content" in result)) return "";
+  const content = result.content as Array<{ type: string; text?: string }>;
+  return content[0]?.text ?? "";
 }
 
 describe("telegram_command tool", () => {
