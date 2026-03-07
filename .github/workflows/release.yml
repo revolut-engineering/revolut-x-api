@@ -1,0 +1,82 @@
+name: Release Packages
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Upload Tarballs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            api/package-lock.json
+            cli/package-lock.json
+            mcp/package-lock.json
+
+      - name: Install all dependencies
+        run: |
+          npm ci &
+          cd api && npm ci &
+          cd cli && npm ci &
+          cd mcp && npm ci &
+          wait
+
+      - name: Build & test API
+        run: cd api && npm run typecheck && npm test && npm run build
+
+      - name: Test CLI & MCP
+        run: |
+          (cd cli && npm run typecheck && npm test && npm run build) &
+          (cd mcp && npm run typecheck && npm test) &
+          wait
+
+      - name: Lint & format check
+        run: npm run format:check && npm run lint
+
+      - name: Pack API tarball
+        run: cd api && npm pack
+
+      - name: Pack CLI tarball (with bundled API)
+        run: |
+          cd cli
+          if [ -L node_modules/revolutx-api ]; then
+            TARGET=$(readlink -f node_modules/revolutx-api)
+            rm node_modules/revolutx-api
+            cp -r "$TARGET" node_modules/revolutx-api
+          fi
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.bundledDependencies = ['revolutx-api'];
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          npm pack
+
+      - name: Build MCPB archive
+        run: cd mcp && bash scripts/build-mcpb.sh
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./api/package.json').version")
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "api/revolutx-api-${VERSION}.tgz" \
+            "cli/revolutx-cli-${VERSION}.tgz" \
+            "mcp/dist/revolutx-mcp.mcpb" \
+            --clobber

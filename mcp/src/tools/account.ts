@@ -6,7 +6,8 @@ export function registerAccountTools(server: McpServer): void {
     "get_balances",
     {
       title: "Get Account Balances",
-      description: "Get all crypto exchange balances for your Revolut X account. Returns a list of all currencies with available, reserved, and total amounts.",
+      description:
+        "Get all crypto exchange balances for your Revolut X account. Returns a list of all currencies with available, reserved, and total amounts.",
       annotations: {
         title: "Get Account Balances",
         readOnlyHint: true,
@@ -15,29 +16,18 @@ export function registerAccountTools(server: McpServer): void {
       },
     },
     async () => {
-      const { getRevolutXClient } = await import("../server.js");
-      const { AuthNotConfiguredError } =
-        await import("../shared/client/exceptions.js");
-      const { SETUP_GUIDE } =
-        await import("../shared/auth/credentials.js");
+      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
+      const { AuthNotConfiguredError } = await import("revolutx-api");
 
-      let result: unknown;
+      let balances;
       try {
-        result = await getRevolutXClient().getBalances();
+        balances = await getRevolutXClient().getBalances();
       } catch (error) {
         if (error instanceof AuthNotConfiguredError) {
           return textResult(SETUP_GUIDE);
         }
         throw error;
       }
-
-      if (!result) {
-        return textResult("No balances found. Your account may be empty.");
-      }
-
-      const balances: Record<string, string>[] = Array.isArray(result)
-        ? result
-        : ((result as Record<string, unknown>)["data"] as Record<string, string>[]) ?? [];
 
       if (!balances.length) {
         return textResult("No balances found.");
@@ -49,10 +39,10 @@ export function registerAccountTools(server: McpServer): void {
       lines.push("-".repeat(65));
       for (const b of balances) {
         lines.push(
-          `${(b.currency ?? "?").padStart(10)} | ` +
-            `${(b.available ?? "0").padStart(16)} | ` +
-            `${(b.reserved ?? "0").padStart(14)} | ` +
-            `${(b.total ?? "0").padStart(16)}`,
+          `${b.currency.padStart(10)} | ` +
+            `${b.available.padStart(16)} | ` +
+            `${b.reserved.padStart(14)} | ` +
+            `${b.total.padStart(16)}`,
         );
       }
       return textResult(lines.join("\n"));

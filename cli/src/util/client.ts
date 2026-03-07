@@ -1,0 +1,20 @@
+import { RevolutXClient } from "revolutx-api";
+
+let cachedClient: RevolutXClient | undefined;
+
+export function getClient(opts?: { requireAuth?: boolean }): RevolutXClient {
+  if (cachedClient) return cachedClient;
+
+  cachedClient = new RevolutXClient();
+
+  if (opts?.requireAuth && !cachedClient.isAuthenticated) {
+    console.error("Error: Not authenticated. Run 'revx configure' first.");
+    process.exit(1);
+  }
+
+  return cachedClient;
+}
+
+export function getPublicClient(): RevolutXClient {
+  return new RevolutXClient({ autoLoadCredentials: false });
+}

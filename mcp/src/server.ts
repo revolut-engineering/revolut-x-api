@@ -1,35 +1,27 @@
-/**
- * MCP server setup — singleton clients and server factory.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { RevolutXClient } from "./shared/client/api-client.js";
-import { RateLimiter } from "./shared/client/rate-limiter.js";
-import { WorkerAPIClient } from "./shared/client/worker-client.js";
-import { loadCredentials } from "./shared/auth/credentials.js";
+import { RevolutXClient } from "revolutx-api";
 import { registerAllTools } from "./tools/index.js";
 
+export const SETUP_GUIDE =
+  "Revolut X API is not configured yet. Follow these steps:\n\n" +
+  "1. Run the 'generate_keypair' tool to create your authentication keys\n" +
+  "2. Copy the public key that is returned\n" +
+  "3. Go to Revolut X → Profile and add the public key\n" +
+  "4. Create a new API key and copy it\n" +
+  "5. Run the 'configure_api_key' tool with your API key\n" +
+  "6. Run 'check_auth_status' to verify everything works";
+
 let _client: RevolutXClient | null = null;
-let _workerClient: WorkerAPIClient | null = null;
 
 export function getRevolutXClient(): RevolutXClient {
   if (_client === null) {
-    const creds = loadCredentials();
-    const rateLimiter = new RateLimiter();
-    _client = new RevolutXClient({
-      rateLimiter,
-      credentials: creds ?? undefined,
-    });
+    _client = new RevolutXClient();
   }
   return _client;
 }
 
-export function getWorkerClient(): WorkerAPIClient {
-  if (_workerClient === null) {
-    const workerUrl =
-      process.env["REVOLUTX_WORKER_URL"] ?? "http://localhost:8080";
-    _workerClient = new WorkerAPIClient(workerUrl);
-  }
-  return _workerClient;
+export function resetRevolutXClient(): void {
+  _client = null;
 }
 
 export function createServer(): McpServer {

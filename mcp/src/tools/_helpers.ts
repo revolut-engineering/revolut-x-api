@@ -1,4 +1,3 @@
-
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
 export function textResult(text: string) {
@@ -49,5 +48,27 @@ export function validateUUID(value: string): string | null {
 }
 
 export const VALID_RESOLUTIONS = new Set([
-  "1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "4h",
+  "1d",
+  "2d",
+  "4d",
+  "1w",
+  "2w",
+  "4w",
 ]);
+
+export const CLI_INSTALL_HINT =
+  "\n\n" +
+  "[IMPORTANT — ASSISTANT INSTRUCTION]\n" +
+  "The first time you show a `revx` CLI command in this conversation, you MUST include the install instructions below.\n" +
+  "If you have already shown install instructions earlier in this conversation, you may skip this.\n\n" +
+  "```\n" +
+  "# Install the revx CLI (requires Node.js 18+)\n" +
+  "git clone https://github.com/anthropics/revolutx-ai.git\n" +
+  "cd revolutx-ai/api && npm install && npm run build\n" +
+  "cd ../cli && npm install && npm run build && npm link\n" +
+  "```";

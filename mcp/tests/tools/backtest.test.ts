@@ -1,6 +1,3 @@
-/**
- * Tests for backtest tools — grid_backtest, grid_optimize.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -12,16 +9,15 @@ vi.mock("../../src/server.js", () => ({
   getRevolutXClient: vi.fn(() => ({
     getCandles: mockGetCandles,
   })),
-}));
-
-vi.mock("../../src/shared/client/exceptions.js", async () => {
-  class AuthNotConfiguredError extends Error { name = "AuthNotConfiguredError"; }
-  return { AuthNotConfiguredError };
-});
-
-vi.mock("../../src/shared/auth/credentials.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
+
+vi.mock("revolutx-api", async () => {
+  class AuthNotConfiguredError extends Error {
+    name = "AuthNotConfiguredError";
+  }
+  return { AuthNotConfiguredError };
+});
 
 const CANDLES = [
   { start: 1, open: "100", high: "110", low: "90", close: "105" },
@@ -34,7 +30,8 @@ const CANDLES = [
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerBacktestTools(server);
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -69,7 +66,7 @@ describe("backtest tools", () => {
   });
 
   it("grid_backtest returns formatted results", async () => {
-    mockGetCandles.mockResolvedValue(CANDLES);
+    mockGetCandles.mockResolvedValue({ data: CANDLES });
     const client = await createClient();
     const result = await client.callTool({
       name: "grid_backtest",
@@ -87,15 +84,19 @@ describe("backtest tools", () => {
       name: "grid_optimize",
       arguments: {
         symbol: "BTC-USD",
-        grid_levels_options: Array.from({ length: 21 }, (_, i) => i + 3).join(","),
-        range_pct_options: Array.from({ length: 11 }, (_, i) => i + 1).join(","),
+        grid_levels_options: Array.from({ length: 21 }, (_, i) => i + 3).join(
+          ",",
+        ),
+        range_pct_options: Array.from({ length: 11 }, (_, i) => i + 1).join(
+          ",",
+        ),
       },
     });
     expect(getText(result)).toContain("Too many combinations");
   });
 
   it("grid_optimize returns ranked results", async () => {
-    mockGetCandles.mockResolvedValue(CANDLES);
+    mockGetCandles.mockResolvedValue({ data: CANDLES });
     const client = await createClient();
     const result = await client.callTool({
       name: "grid_optimize",

@@ -1,6 +1,3 @@
-/**
- * Grid trading backtest engine — pure computation, no I/O.
- */
 import { Decimal } from "decimal.js";
 
 export interface GridLevel {
@@ -84,7 +81,6 @@ export function simulateCandle(
   gridLevels: number,
   feeRate: Decimal = new Decimal(0),
 ): Decimal {
-  // Buy orders: price went down to level
   for (const level of levels) {
     if (level.hasBuyOrder && low.lte(level.price)) {
       const btcBought = usdPerLevel
@@ -106,7 +102,6 @@ export function simulateCandle(
     }
   }
 
-  // Sell orders: price went up to level above position
   for (const level of levels) {
     if (level.hasPosition && level.index < gridLevels - 1) {
       const sellLevel = levels[level.index + 1];
@@ -240,9 +235,7 @@ export function optimizeGridParams(
         : totalReturn.div(investment).times(100);
 
       const profitPerTrade =
-        bt.totalSells > 0
-          ? bt.realizedPnl.div(bt.totalSells)
-          : new Decimal(0);
+        bt.totalSells > 0 ? bt.realizedPnl.div(bt.totalSells) : new Decimal(0);
 
       const sharpe = bt.maxDrawdown.gt(0)
         ? returnPct.div(bt.maxDrawdown.times(100))

@@ -1,172 +1,193 @@
-/**
- * Trading tools — orders, cancellation, trade history.
- */
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { textResult, validateSymbol, validateSide, validateDecimal, validateUUID } from "./_helpers.js";
+import {
+  textResult,
+  validateSymbol,
+  validateSide,
+  validateDecimal,
+  validateUUID,
+  CLI_INSTALL_HINT,
+} from "./_helpers.js";
+
+const VALID_ORDER_ACTIONS = ["place_market", "place_limit", "cancel"] as const;
 
 export function registerTradingTools(server: McpServer): void {
   server.registerTool(
-    "place_market_order",
+    "order_command",
     {
-      title: "Place Market Order",
-      description: 'Place a market order on Revolut X exchange. Provide either base_size or quote_size, not both.',
+      title: "Order CLI Command",
+      description:
+        "Generate a revx CLI command for order operations. Supports: place_market, place_limit, cancel. " +
+        "Returns the exact CLI command to run.",
       inputSchema: {
-        symbol: z.string().describe('Trading pair, e.g. "BTC-USD"'),
-        side: z.string().describe('"buy" or "sell"'),
-        base_size: z.string().optional().describe('Amount in base currency (e.g. "0.1" BTC).'),
-        quote_size: z.string().optional().describe('Amount in quote currency (e.g. "1000" USD).'),
+        action: z
+          .enum(VALID_ORDER_ACTIONS)
+          .describe("The order operation: place_market, place_limit, cancel."),
+        symbol: z
+          .string()
+          .optional()
+          .describe(
+            'Trading pair, e.g. "BTC-USD" (required for place_market, place_limit).',
+          ),
+        side: z
+          .string()
+          .optional()
+          .describe(
+            '"buy" or "sell" (required for place_market, place_limit).',
+          ),
+        size: z
+          .string()
+          .optional()
+          .describe(
+            "Order size in base currency (required unless quote_size is provided).",
+          ),
+        quote_size: z
+          .string()
+          .optional()
+          .describe("Order size in quote currency (alternative to size)."),
+        price: z
+          .string()
+          .optional()
+          .describe("Limit price (required for place_limit)."),
+        post_only: z
+          .boolean()
+          .optional()
+          .describe("Post-only execution (place_limit only)."),
+        venue_order_id: z
+          .string()
+          .optional()
+          .describe("Order ID to cancel (required for cancel)."),
       },
-      annotations: { title: "Place Market Order", readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-    },
-    async ({ symbol, side, base_size, quote_size }) => {
-      const { getRevolutXClient } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("../shared/client/exceptions.js");
-      const { SETUP_GUIDE } = await import("../shared/auth/credentials.js");
-
-      symbol = symbol.trim().toUpperCase();
-      side = side.trim().toLowerCase();
-
-      let error = validateSymbol(symbol);
-      if (error) return textResult(error);
-      error = validateSide(side);
-      if (error) return textResult(error);
-
-      if (base_size && quote_size) {
-        return textResult("Please provide either base_size or quote_size, not both.");
-      }
-      if (!base_size && !quote_size) {
-        return textResult("Please provide either base_size or quote_size.");
-      }
-
-      if (base_size) {
-        error = validateDecimal(base_size, "base_size");
-        if (error) return textResult(error);
-      }
-      if (quote_size) {
-        error = validateDecimal(quote_size, "quote_size");
-        if (error) return textResult(error);
-      }
-
-      const marketConfig: Record<string, string> = {};
-      if (base_size) {
-        marketConfig.base_size = base_size.trim();
-      } else {
-        marketConfig.quote_size = quote_size!.trim();
-      }
-
-      const clientOrderId = randomUUID();
-
-      let result: unknown;
-      try {
-        result = await getRevolutXClient().placeOrder(
-          clientOrderId,
-          symbol,
-          side,
-          { market: marketConfig },
-        );
-      } catch (err) {
-        if (err instanceof AuthNotConfiguredError) return textResult(SETUP_GUIDE);
-        throw err;
-      }
-
-      const data = (result as Record<string, unknown>)?.data ?? result;
-      const d = data as Record<string, string>;
-      return textResult(
-        `Market ${side} order placed!\n\n` +
-          `Symbol: ${symbol}\n` +
-          `Side: ${side}\n` +
-          `Size: ${base_size ?? quote_size} ${base_size ? "(base)" : "(quote)"}\n` +
-          `Order ID: ${d.venue_order_id ?? "N/A"}\n` +
-          `Client Order ID: ${d.client_order_id ?? clientOrderId}\n` +
-          `State: ${d.state ?? "unknown"}`,
-      );
-    },
-  );
-
-  server.registerTool(
-    "place_limit_order",
-    {
-      title: "Place Limit Order",
-      description: 'Place a limit order on Revolut X exchange. Provide either base_size or quote_size, not both.',
-      inputSchema: {
-        symbol: z.string().describe('Trading pair, e.g. "BTC-USD"'),
-        side: z.string().describe('"buy" or "sell"'),
-        price: z.string().describe('Limit price as string (e.g. "90000.50")'),
-        base_size: z.string().optional().describe("Amount in base currency."),
-        quote_size: z.string().optional().describe("Amount in quote currency."),
-        post_only: z.boolean().default(false).describe("If true, order is only placed as a maker order."),
+      annotations: {
+        title: "Order CLI Command",
+        readOnlyHint: true,
+        destructiveHint: false,
       },
-      annotations: { title: "Place Limit Order", readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     },
-    async ({ symbol, side, price, base_size, quote_size, post_only }) => {
-      const { getRevolutXClient } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("../shared/client/exceptions.js");
-      const { SETUP_GUIDE } = await import("../shared/auth/credentials.js");
+    async ({
+      action,
+      symbol,
+      side,
+      size,
+      quote_size,
+      price,
+      post_only,
+      venue_order_id,
+    }) => {
+      const act = action;
 
-      symbol = symbol.trim().toUpperCase();
-      side = side.trim().toLowerCase();
+      switch (act) {
+        case "place_market": {
+          if (!symbol) return textResult("Missing required parameter: symbol.");
+          if (!side) return textResult("Missing required parameter: side.");
 
-      let error = validateSymbol(symbol);
-      if (error) return textResult(error);
-      error = validateSide(side);
-      if (error) return textResult(error);
-      error = validateDecimal(price, "price");
-      if (error) return textResult(error);
+          symbol = symbol.trim().toUpperCase();
+          side = side.trim().toLowerCase();
 
-      if (base_size && quote_size) {
-        return textResult("Please provide either base_size or quote_size, not both.");
+          let error = validateSymbol(symbol);
+          if (error) return textResult(error);
+          error = validateSide(side);
+          if (error) return textResult(error);
+
+          if (size && quote_size)
+            return textResult(
+              "Please provide either size or quote_size, not both.",
+            );
+          if (!size && !quote_size)
+            return textResult("Please provide either size or quote_size.");
+
+          if (size) {
+            error = validateDecimal(size, "size");
+            if (error) return textResult(error);
+          }
+          if (quote_size) {
+            error = validateDecimal(quote_size, "quote_size");
+            if (error) return textResult(error);
+          }
+
+          const parts = [
+            "revx order place",
+            symbol,
+            side,
+            size ?? "0",
+            "--market",
+          ];
+          if (quote_size) parts.push("--quote-size", quote_size.trim());
+
+          return textResult(
+            `Action: Place a market ${side} order\n\n` +
+              `Command:\n  ${parts.join(" ")}\n\n` +
+              `Run this command in your terminal to execute the order.` +
+              CLI_INSTALL_HINT,
+          );
+        }
+
+        case "place_limit": {
+          if (!symbol) return textResult("Missing required parameter: symbol.");
+          if (!side) return textResult("Missing required parameter: side.");
+          if (!price) return textResult("Missing required parameter: price.");
+
+          symbol = symbol.trim().toUpperCase();
+          side = side.trim().toLowerCase();
+
+          let error = validateSymbol(symbol);
+          if (error) return textResult(error);
+          error = validateSide(side);
+          if (error) return textResult(error);
+          error = validateDecimal(price, "price");
+          if (error) return textResult(error);
+
+          if (size && quote_size)
+            return textResult(
+              "Please provide either size or quote_size, not both.",
+            );
+          if (!size && !quote_size)
+            return textResult("Please provide either size or quote_size.");
+
+          if (size) {
+            error = validateDecimal(size, "size");
+            if (error) return textResult(error);
+          }
+          if (quote_size) {
+            error = validateDecimal(quote_size, "quote_size");
+            if (error) return textResult(error);
+          }
+
+          const parts = [
+            "revx order place",
+            symbol,
+            side,
+            size ?? "0",
+            "--limit",
+            price.trim(),
+          ];
+          if (quote_size) parts.push("--quote-size", quote_size.trim());
+          if (post_only) parts.push("--post-only");
+
+          return textResult(
+            `Action: Place a limit ${side} order\n\n` +
+              `Command:\n  ${parts.join(" ")}\n\n` +
+              `Run this command in your terminal to execute the order.` +
+              CLI_INSTALL_HINT,
+          );
+        }
+
+        case "cancel": {
+          if (!venue_order_id)
+            return textResult("Missing required parameter: venue_order_id.");
+
+          venue_order_id = venue_order_id.trim();
+          const error = validateUUID(venue_order_id);
+          if (error) return textResult(error);
+
+          return textResult(
+            `Action: Cancel order ${venue_order_id}\n\n` +
+              `Command:\n  revx order cancel ${venue_order_id}\n\n` +
+              `Run this command in your terminal to cancel the order.` +
+              CLI_INSTALL_HINT,
+          );
+        }
       }
-      if (!base_size && !quote_size) {
-        return textResult("Please provide either base_size or quote_size.");
-      }
-
-      if (base_size) {
-        error = validateDecimal(base_size, "base_size");
-        if (error) return textResult(error);
-      }
-      if (quote_size) {
-        error = validateDecimal(quote_size, "quote_size");
-        if (error) return textResult(error);
-      }
-
-      const limitConfig: Record<string, string | string[]> = { price: price.trim() };
-      if (base_size) {
-        limitConfig.base_size = base_size.trim();
-      } else {
-        limitConfig.quote_size = quote_size!.trim();
-      }
-      limitConfig.execution_instructions = post_only ? ["post_only"] : ["allow_taker"];
-
-      const clientOrderId = randomUUID();
-
-      let result: unknown;
-      try {
-        result = await getRevolutXClient().placeOrder(
-          clientOrderId,
-          symbol,
-          side,
-          { limit: limitConfig },
-        );
-      } catch (err) {
-        if (err instanceof AuthNotConfiguredError) return textResult(SETUP_GUIDE);
-        throw err;
-      }
-
-      const data = (result as Record<string, unknown>)?.data ?? result;
-      const d = data as Record<string, string>;
-      return textResult(
-        `Limit ${side} order placed!\n\n` +
-          `Symbol: ${symbol}\n` +
-          `Side: ${side}\n` +
-          `Price: ${price}\n` +
-          `Size: ${base_size ?? quote_size} ${base_size ? "(base)" : "(quote)"}\n` +
-          `Post-only: ${post_only}\n` +
-          `Order ID: ${d.venue_order_id ?? "N/A"}\n` +
-          `Client Order ID: ${d.client_order_id ?? clientOrderId}\n` +
-          `State: ${d.state ?? "unknown"}`,
-      );
     },
   );
 
@@ -174,47 +195,52 @@ export function registerTradingTools(server: McpServer): void {
     "get_active_orders",
     {
       title: "Get Active Orders",
-      description: "Get all currently active (open) orders on your Revolut X account.",
-      annotations: { title: "Get Active Orders", readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      description:
+        "Get all currently active (open) orders on your Revolut X account.",
+      annotations: {
+        title: "Get Active Orders",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async () => {
-      const { getRevolutXClient } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("../shared/client/exceptions.js");
-      const { SETUP_GUIDE } = await import("../shared/auth/credentials.js");
+      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
+      const { AuthNotConfiguredError } = await import("revolutx-api");
 
-      let result: unknown;
+      let result;
       try {
         result = await getRevolutXClient().getActiveOrders();
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError) return textResult(SETUP_GUIDE);
+        if (error instanceof AuthNotConfiguredError)
+          return textResult(SETUP_GUIDE);
         throw error;
       }
 
-      const orders: Record<string, string>[] = Array.isArray(result)
-        ? result
-        : ((result as Record<string, unknown>)?.data ?? []) as Record<string, string>[];
+      const orders = result.data;
 
       if (!orders.length) {
-        return textResult("You have no active orders on your Revolut X account right now.");
+        return textResult(
+          "You have no active orders on your Revolut X account right now.",
+        );
       }
 
       const lines = ["Active orders:\n"];
       for (const o of orders) {
-        const orderType = o.type ?? "?";
-        const priceLine = orderType === "limit" ? `  Price: ${o.price ?? "N/A"}\n` : "";
+        const priceLine = o.type === "limit" ? `  Price: ${o.price}\n` : "";
         lines.push(
-          `  Order ID: ${o.id ?? "?"}\n` +
-            `  Client Order ID: ${o.client_order_id ?? "?"}\n` +
-            `  Symbol: ${o.symbol ?? "?"}\n` +
-            `  Side: ${o.side ?? "?"}\n` +
-            `  Type: ${orderType}\n` +
+          `  Order ID: ${o.id}\n` +
+            `  Client Order ID: ${o.client_order_id}\n` +
+            `  Symbol: ${o.symbol}\n` +
+            `  Side: ${o.side}\n` +
+            `  Type: ${o.type}\n` +
             priceLine +
-            `  Quantity: ${o.quantity ?? "?"}\n` +
-            `  Filled: ${o.filled_quantity ?? "0"}\n` +
-            `  Remaining: ${o.leaves_quantity ?? "?"}\n` +
-            `  Status: ${o.status ?? "?"}\n` +
-            `  Time in force: ${o.time_in_force ?? "?"}\n` +
-            `  Created: ${o.created_date ?? "?"}\n`,
+            `  Quantity: ${o.quantity}\n` +
+            `  Filled: ${o.filled_quantity}\n` +
+            `  Remaining: ${o.leaves_quantity}\n` +
+            `  Status: ${o.status}\n` +
+            `  Time in force: ${o.time_in_force}\n` +
+            `  Created: ${o.created_date}\n`,
         );
       }
       return textResult(lines.join("\n"));
@@ -222,50 +248,30 @@ export function registerTradingTools(server: McpServer): void {
   );
 
   server.registerTool(
-    "cancel_order",
-    {
-      title: "Cancel Order",
-      description: "Cancel an active order by its venue order ID.",
-      inputSchema: {
-        venue_order_id: z.string().describe("The order ID returned when the order was placed."),
-      },
-      annotations: { title: "Cancel Order", readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-    },
-    async ({ venue_order_id }) => {
-      const { getRevolutXClient } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("../shared/client/exceptions.js");
-      const { SETUP_GUIDE } = await import("../shared/auth/credentials.js");
-
-      venue_order_id = venue_order_id.trim();
-      const error = validateUUID(venue_order_id);
-      if (error) return textResult(error);
-
-      try {
-        await getRevolutXClient().cancelOrder(venue_order_id);
-      } catch (err) {
-        if (err instanceof AuthNotConfiguredError) return textResult(SETUP_GUIDE);
-        throw err;
-      }
-
-      return textResult(`Order ${venue_order_id} has been cancelled.`);
-    },
-  );
-
-  server.registerTool(
     "get_client_trades",
     {
       title: "Get Trade History",
-      description: "Get your personal trade history (fills) for a specific trading pair.",
+      description:
+        "Get your personal trade history (fills) for a specific trading pair.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
-        limit: z.number().min(1).max(100).default(20).describe("Number of trades to return, 1-100 (default 20)"),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Number of trades to return, 1-100 (default 20)"),
       },
-      annotations: { title: "Get Trade History", readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      annotations: {
+        title: "Get Trade History",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ symbol, limit }) => {
-      const { getRevolutXClient } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("../shared/client/exceptions.js");
-      const { SETUP_GUIDE } = await import("../shared/auth/credentials.js");
+      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
+      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
@@ -273,17 +279,18 @@ export function registerTradingTools(server: McpServer): void {
 
       limit = Math.max(1, Math.min(100, limit));
 
-      let result: unknown;
+      let result;
       try {
-        result = await getRevolutXClient().getClientTrades(symbol, undefined, undefined, undefined, limit);
+        result = await getRevolutXClient().getPrivateTrades(symbol, { limit });
       } catch (err) {
-        if (err instanceof AuthNotConfiguredError) return textResult(SETUP_GUIDE);
+        if (err instanceof AuthNotConfiguredError)
+          return textResult(SETUP_GUIDE);
         throw err;
       }
 
-      const raw = result as Record<string, unknown>;
-      const trades = (Array.isArray(raw) ? raw : (raw?.data ?? [])) as Record<string, string>[];
-      if (!trades.length) return textResult(`No trade history found for ${symbol}.`);
+      const trades = result.data;
+      if (!trades.length)
+        return textResult(`No trade history found for ${symbol}.`);
 
       const lines = [`Your trades for ${symbol}:\n`];
       lines.push(
@@ -292,16 +299,17 @@ export function registerTradingTools(server: McpServer): void {
       lines.push("-".repeat(65));
       for (const t of trades) {
         lines.push(
-          `${(t.aid ?? "?").padStart(8)} | ` +
-            `${(t.p ?? "?").padStart(14)} ${(t.pc ?? "").padStart(4)} | ` +
-            `${(t.q ?? "?").padStart(14)} ${(t.qc ?? "").padStart(4)} | ` +
-            `${t.tdt ?? "?"}`,
+          `${t.aid.padStart(8)} | ` +
+            `${t.p.padStart(14)} ${t.pc.padStart(4)} | ` +
+            `${t.q.padStart(14)} ${t.qc.padStart(4)} | ` +
+            `${t.tdt}`,
         );
       }
 
-      const metadata = (!Array.isArray(raw) ? (raw?.metadata as Record<string, string>) : undefined) ?? {};
-      if (metadata.next_cursor) {
-        lines.push(`\nMore trades available (cursor: ${metadata.next_cursor})`);
+      if (result.metadata.next_cursor) {
+        lines.push(
+          `\nMore trades available (cursor: ${result.metadata.next_cursor})`,
+        );
       }
 
       return textResult(lines.join("\n"));

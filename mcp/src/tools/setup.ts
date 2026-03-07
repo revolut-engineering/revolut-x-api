@@ -8,7 +8,8 @@ export function registerSetupTools(server: McpServer): void {
     "generate_keypair",
     {
       title: "Generate API Keypair",
-      description: "Generate a new Ed25519 keypair for Revolut X API authentication. Creates a private key (stored securely on your machine) and returns the public key. You must add the public key to your Revolut X account under Profile > API Keys.",
+      description:
+        "Generate a new Ed25519 keypair for Revolut X API authentication. Creates a private key (stored securely on your machine) and returns the public key. You must add the public key to your Revolut X account under Profile > API Keys.",
       annotations: {
         title: "Generate API Keypair",
         readOnlyHint: false,
@@ -17,10 +18,14 @@ export function registerSetupTools(server: McpServer): void {
       },
     },
     async () => {
-      const { ensureConfigDir, getPrivateKeyFile, getPublicKeyFile, setFilePermissions600 } =
-        await import("../shared/settings.js");
-      const { generateEd25519Keypair, loadPrivateKey, getPublicKeyPem } =
-        await import("../shared/auth/keypair.js");
+      const {
+        ensureConfigDir,
+        getPrivateKeyFile,
+        getPublicKeyFile,
+        generateKeypair,
+        loadPrivateKey,
+        getPublicKeyPem,
+      } = await import("revolutx-api");
 
       ensureConfigDir();
 
@@ -31,35 +36,32 @@ export function registerSetupTools(server: McpServer): void {
           const existingKey = loadPrivateKey(privateKeyPath);
           const pubPem = getPublicKeyPem(existingKey);
           return textResult(
-            "A keypair already exists. Here is your existing public key:\n\n" +
+            "IMPORTANT: Display the public key below to the user exactly as-is — they need to copy it.\n\n" +
+              "A keypair already exists. Here is your existing public key:\n\n" +
               `${pubPem}\n` +
               "If you want to generate a new one, please delete the existing " +
               `key file first at: ${privateKeyPath}\n\n` +
               "Next steps:\n" +
-              "1. Copy the public key above\n" +
-              "2. Go to your Revolut X account → Profile → API Keys\n" +
-              "3. Add this public key\n" +
-              "4. Copy the API key you receive\n" +
-              "5. Run 'configure_api_key' with that API key",
+              "1. Copy the public key above (including the BEGIN/END lines)\n" +
+              "2. Go to Revolut X → Profile and add the public key\n" +
+              "3. Create a new API key and copy it\n" +
+              "4. Run 'configure_api_key' with that API key",
           );
-        } catch {
-          // Corrupted key — regenerate
-        }
+        } catch {}
       }
 
-      const publicPem = generateEd25519Keypair(privateKeyPath, getPublicKeyFile());
-      setFilePermissions600(privateKeyPath);
+      const publicPem = generateKeypair(privateKeyPath, getPublicKeyFile());
 
       return textResult(
-        "Ed25519 keypair generated successfully!\n\n" +
+        "IMPORTANT: Display the public key below to the user exactly as-is — they need to copy it.\n\n" +
+          "Ed25519 keypair generated successfully!\n\n" +
           "Here is your PUBLIC key (copy this):\n\n" +
           `${publicPem}\n` +
           "Next steps:\n" +
-          "1. Copy the public key above\n" +
-          "2. Go to your Revolut X account → Profile → API Keys\n" +
-          "3. Add this public key and create a new API key\n" +
-          "4. Copy the API key that Revolut X gives you\n" +
-          "5. Run 'configure_api_key' with that API key",
+          "1. Copy the public key above (including the BEGIN/END lines)\n" +
+          "2. Go to Revolut X → Profile and add the public key\n" +
+          "3. Create a new API key and copy it\n" +
+          "4. Run 'configure_api_key' with that API key",
       );
     },
   );
@@ -68,9 +70,12 @@ export function registerSetupTools(server: McpServer): void {
     "configure_api_key",
     {
       title: "Configure API Key",
-      description: "Save your Revolut X API key. Run this after you have added your public key to your Revolut X account and received an API key.",
+      description:
+        "Save your Revolut X API key. Run this after you have added your public key to your Revolut X account and received an API key.",
       inputSchema: {
-        api_key: z.string().describe("The 64-character API key from your Revolut X profile."),
+        api_key: z
+          .string()
+          .describe("The 64-character API key from your Revolut X profile."),
       },
       annotations: {
         title: "Configure API Key",
@@ -81,7 +86,7 @@ export function registerSetupTools(server: McpServer): void {
     },
     async ({ api_key }) => {
       const { getPrivateKeyFile, loadConfig, saveConfig } =
-        await import("../shared/settings.js");
+        await import("revolutx-api");
 
       const cleaned = api_key.trim();
       if (!/^[A-Za-z0-9]{64}$/.test(cleaned)) {
@@ -103,6 +108,9 @@ export function registerSetupTools(server: McpServer): void {
       config.private_key_path = getPrivateKeyFile();
       saveConfig(config);
 
+      const { resetRevolutXClient } = await import("../server.js");
+      resetRevolutXClient();
+
       return textResult(
         "API key saved successfully!\n\n" +
           "Run 'check_auth_status' to verify your configuration works.",
@@ -114,7 +122,8 @@ export function registerSetupTools(server: McpServer): void {
     "check_auth_status",
     {
       title: "Check Auth Status",
-      description: "Check if Revolut X API authentication is configured and working. Tests the connection by fetching available currencies.",
+      description:
+        "Check if Revolut X API authentication is configured and working. Tests the connection by fetching available currencies.",
       annotations: {
         title: "Check Auth Status",
         readOnlyHint: true,
@@ -123,9 +132,8 @@ export function registerSetupTools(server: McpServer): void {
       },
     },
     async () => {
-      const { isConfigured } = await import("../shared/settings.js");
-      const { SETUP_GUIDE, loadCredentials } =
-        await import("../shared/auth/credentials.js");
+      const { isConfigured, loadCredentials } = await import("revolutx-api");
+      const { SETUP_GUIDE } = await import("../server.js");
 
       if (!isConfigured()) {
         return textResult(`Not configured.\n\n${SETUP_GUIDE}`);
@@ -133,14 +141,19 @@ export function registerSetupTools(server: McpServer): void {
 
       const creds = loadCredentials();
       if (creds === null) {
-        return textResult(`Configuration incomplete or corrupted.\n\n${SETUP_GUIDE}`);
+        return textResult(
+          `Configuration incomplete or corrupted.\n\n${SETUP_GUIDE}`,
+        );
       }
 
       try {
         const { getRevolutXClient } = await import("../server.js");
         const client = getRevolutXClient();
         const result = await client.getCurrencies();
-        const count = result && typeof result === "object" ? Object.keys(result).length : "unknown";
+        const count =
+          result && typeof result === "object"
+            ? Object.keys(result).length
+            : "unknown";
         return textResult(
           "Authentication is configured and working!\n\n" +
             `Successfully connected to Revolut X API.\n` +

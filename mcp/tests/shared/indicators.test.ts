@@ -14,13 +14,9 @@ import {
   computePriceChangePct,
 } from "../../src/shared/indicators/core.js";
 
-import {
-  evaluateAlert,
-} from "../../src/shared/indicators/evaluators.js";
+import { evaluateAlert } from "../../src/shared/indicators/evaluators.js";
 
 import type { MarketSnapshot } from "../../src/shared/indicators/evaluators.js";
-
-// ── Helpers ──
 
 function dec(values: (string | number)[]): Decimal[] {
   return values.map((v) => new Decimal(String(v)));
@@ -48,8 +44,6 @@ function makeCandles(
   }));
 }
 
-// ── EMA Tests ──
-
 describe("computeEma", () => {
   it("basic EMA", () => {
     const values = dec([10, 11, 12, 13, 14, 15]);
@@ -71,8 +65,6 @@ describe("computeEma", () => {
   });
 });
 
-// ── SMA Tests ──
-
 describe("computeSma", () => {
   it("basic SMA", () => {
     const values = dec([10, 20, 30, 40, 50]);
@@ -85,8 +77,6 @@ describe("computeSma", () => {
     expect(computeSma(dec([10]), 5)).toBeNull();
   });
 });
-
-// ── RSI Tests ──
 
 describe("computeRsi", () => {
   it("all gains → RSI = 100", () => {
@@ -105,8 +95,7 @@ describe("computeRsi", () => {
 
   it("mixed movement → RSI between 0 and 100", () => {
     const closes = dec([
-      100, 102, 101, 103, 100, 104, 99, 105, 98, 106, 97, 107, 96, 108, 95,
-      109,
+      100, 102, 101, 103, 100, 104, 99, 105, 98, 106, 97, 107, 96, 108, 95, 109,
     ]);
     const rsi = computeRsi(closes, 14);
     expect(rsi).not.toBeNull();
@@ -120,13 +109,9 @@ describe("computeRsi", () => {
   });
 });
 
-// ── MACD Tests ──
-
 describe("computeMacd", () => {
   it("uptrend → positive MACD", () => {
-    const closes = dec(
-      Array.from({ length: 49 }, (_, i) => (i + 1) * 10),
-    );
+    const closes = dec(Array.from({ length: 49 }, (_, i) => (i + 1) * 10));
     const result = computeMacd(closes, 12, 26, 9);
     expect(result).not.toBeNull();
     expect(result!.macd.gt(0)).toBe(true);
@@ -146,8 +131,6 @@ describe("computeMacd", () => {
     expect(result).toHaveProperty("histogram");
   });
 });
-
-// ── Bollinger Tests ──
 
 describe("computeBollinger", () => {
   it("flat price → tight bands at price", () => {
@@ -179,8 +162,6 @@ describe("computeBollinger", () => {
   });
 });
 
-// ── ATR Tests ──
-
 describe("computeAtr", () => {
   it("flat market → low ATR", () => {
     const n = 20;
@@ -207,8 +188,6 @@ describe("computeAtr", () => {
   });
 });
 
-// ── Volume Ratio Tests ──
-
 describe("computeVolumeRatio", () => {
   it("normal volume → ratio 1.00", () => {
     const volumes = dec([...Array(21).fill(100), 100]);
@@ -229,8 +208,6 @@ describe("computeVolumeRatio", () => {
     expect(computeVolumeRatio(volumes, 20)).toBeNull();
   });
 });
-
-// ── OBI Tests ──
 
 describe("computeObi", () => {
   it("balanced book → OBI = 0", () => {
@@ -259,8 +236,6 @@ describe("computeObi", () => {
   });
 });
 
-// ── Spread Tests ──
-
 describe("computeSpreadPct", () => {
   it("basic spread", () => {
     const spread = computeSpreadPct(new Decimal("99"), new Decimal("101"));
@@ -282,8 +257,6 @@ describe("computeSpreadPct", () => {
     ).toBe("0.0000");
   });
 });
-
-// ── Price Change % Tests ──
 
 describe("computePriceChangePct", () => {
   it("increase", () => {
@@ -307,8 +280,6 @@ describe("computePriceChangePct", () => {
     ).toBe("0.00");
   });
 });
-
-// ── Evaluator Dispatch Tests ──
 
 describe("evaluateAlert — price", () => {
   it("price above triggered", () => {

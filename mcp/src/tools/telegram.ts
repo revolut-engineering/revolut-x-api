@@ -1,271 +1,146 @@
-/**
- * Telegram connection management MCP tools — delegates to Worker service.
- */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { textResult } from "./_helpers.js";
+import { textResult, CLI_INSTALL_HINT } from "./_helpers.js";
+
+const VALID_ACTIONS = [
+  "add",
+  "list",
+  "delete",
+  "enable",
+  "disable",
+  "test",
+] as const;
 
 export function registerTelegramTools(server: McpServer): void {
   server.registerTool(
-    "telegram_add_connection",
+    "telegram_command",
     {
-      title: "Add Telegram Connection",
-      description: "Add a Telegram connection for alert notifications.",
+      title: "Telegram CLI Command",
+      description:
+        "Generate a revx CLI command for Telegram connection operations. Supports: add, list, delete, enable, disable, test. " +
+        "Returns the exact CLI command to run.",
       inputSchema: {
-        bot_token: z.string().describe("Telegram Bot API token (from @BotFather)."),
-        chat_id: z.string().describe("Telegram chat ID to send messages to."),
+        action: z
+          .enum(VALID_ACTIONS)
+          .describe(
+            "The telegram operation: add, list, delete, enable, disable, test.",
+          ),
+        bot_token: z
+          .string()
+          .optional()
+          .describe("Telegram Bot API token (required for add)."),
+        chat_id: z
+          .string()
+          .optional()
+          .describe("Telegram chat ID (required for add)."),
         label: z
           .string()
-          .default("default")
-          .describe('Human-readable label for this connection (default "default").'),
-        test: z
-          .boolean()
-          .default(true)
-          .describe("If true, send a test message after adding."),
-      },
-      annotations: {
-        title: "Add Telegram Connection",
-        readOnlyHint: false,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ bot_token, chat_id, label, test }) => {
-      const { getWorkerClient } = await import("../server.js");
-      const { WorkerUnavailableError, WorkerAPIError } =
-        await import("../shared/client/exceptions.js");
-      const { WORKER_NOT_RUNNING } =
-        await import("../shared/client/worker-client.js");
-
-      const body = {
-        bot_token: bot_token.trim(),
-        chat_id: chat_id.trim(),
-        label: label.trim() || "default",
-        test,
-      };
-
-      try {
-        const result = (await getWorkerClient().createConnection(body)) as Record<string, unknown>;
-        const connectionId = result.id ?? "?";
-        const testResult = result.test_result as Record<string, unknown> | undefined;
-
-        let testMsg = "";
-        if (testResult !== undefined) {
-          if (testResult.success) {
-            testMsg = "\nTest message sent successfully!";
-          } else {
-            testMsg = `\nTest message FAILED: ${testResult.error ?? "unknown error"}`;
-          }
-        }
-
-        return textResult(
-          `Telegram connection added (id: ${connectionId}, ` +
-            `label: '${label || "default"}')${testMsg}`,
-        );
-      } catch (error) {
-        if (error instanceof WorkerUnavailableError) return textResult(WORKER_NOT_RUNNING);
-        if (error instanceof WorkerAPIError) {
-          if (error.statusCode === 422)
-            return textResult(`Invalid connection configuration: ${error.message}`);
-          return textResult(`Worker error: ${error.message}`);
-        }
-        throw error;
-      }
-    },
-  );
-
-  server.registerTool(
-    "telegram_list_connections",
-    {
-      title: "List Telegram Connections",
-      description: "List all configured Telegram connections.",
-      annotations: { title: "List Telegram Connections", readOnlyHint: true, destructiveHint: false },
-    },
-    async () => {
-      const { getWorkerClient } = await import("../server.js");
-      const { WorkerUnavailableError, WorkerAPIError } =
-        await import("../shared/client/exceptions.js");
-      const { WORKER_NOT_RUNNING } =
-        await import("../shared/client/worker-client.js");
-
-      try {
-        const data = (await getWorkerClient().listConnections()) as Record<string, unknown>;
-        const connections = (data.data ?? []) as Record<string, unknown>[];
-
-        if (!connections.length) {
-          return textResult(
-            "No Telegram connections configured. " +
-              "Use 'telegram_add_connection' to add one.",
-          );
-        }
-
-        const lines: string[] = [];
-        for (const c of connections) {
-          const status = c.enabled ? "enabled" : "disabled";
-          lines.push(
-            `  ID: ${c.id}\n` +
-              `  Label: ${c.label ?? ""}\n` +
-              `  Chat ID: ${c.chat_id ?? "?"}\n` +
-              `  Token: ${c.bot_token_redacted ?? "***"}\n` +
-              `  Status: ${status}\n` +
-              `  Last tested: ${c.last_tested_at ?? "never"}\n`,
-          );
-        }
-        return textResult(`Telegram connections (${connections.length}):\n\n` + lines.join("\n"));
-      } catch (error) {
-        if (error instanceof WorkerUnavailableError) return textResult(WORKER_NOT_RUNNING);
-        if (error instanceof WorkerAPIError) return textResult(`Worker error: ${error.message}`);
-        throw error;
-      }
-    },
-  );
-
-  server.registerTool(
-    "telegram_delete_connection",
-    {
-      title: "Delete Telegram Connection",
-      description: "Delete a Telegram connection.",
-      inputSchema: {
-        connection_id: z.string().describe("ID of the connection to delete."),
-      },
-      annotations: { title: "Delete Telegram Connection", readOnlyHint: false, destructiveHint: true },
-    },
-    async ({ connection_id }) => {
-      const { getWorkerClient } = await import("../server.js");
-      const { WorkerUnavailableError, WorkerAPIError } =
-        await import("../shared/client/exceptions.js");
-      const { WORKER_NOT_RUNNING } =
-        await import("../shared/client/worker-client.js");
-
-      try {
-        await getWorkerClient().deleteConnection(connection_id);
-        return textResult(`Telegram connection ${connection_id} deleted.`);
-      } catch (error) {
-        if (error instanceof WorkerUnavailableError) return textResult(WORKER_NOT_RUNNING);
-        if (error instanceof WorkerAPIError) {
-          if (error.statusCode === 404) return textResult(`Connection ${connection_id} not found.`);
-          return textResult(`Worker error: ${error.message}`);
-        }
-        throw error;
-      }
-    },
-  );
-
-  server.registerTool(
-    "telegram_enable_connection",
-    {
-      title: "Enable Telegram Connection",
-      description: "Enable a Telegram connection.",
-      inputSchema: {
-        connection_id: z.string().describe("ID of the connection to enable."),
-      },
-      annotations: {
-        title: "Enable Telegram Connection",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-    },
-    async ({ connection_id }) => {
-      const { getWorkerClient } = await import("../server.js");
-      const { WorkerUnavailableError, WorkerAPIError } =
-        await import("../shared/client/exceptions.js");
-      const { WORKER_NOT_RUNNING } =
-        await import("../shared/client/worker-client.js");
-
-      try {
-        await getWorkerClient().updateConnection(connection_id, { enabled: true });
-        return textResult(`Telegram connection ${connection_id} enabled.`);
-      } catch (error) {
-        if (error instanceof WorkerUnavailableError) return textResult(WORKER_NOT_RUNNING);
-        if (error instanceof WorkerAPIError) {
-          if (error.statusCode === 404) return textResult(`Connection ${connection_id} not found.`);
-          return textResult(`Worker error: ${error.message}`);
-        }
-        throw error;
-      }
-    },
-  );
-
-  server.registerTool(
-    "telegram_disable_connection",
-    {
-      title: "Disable Telegram Connection",
-      description: "Disable a Telegram connection.",
-      inputSchema: {
-        connection_id: z.string().describe("ID of the connection to disable."),
-      },
-      annotations: {
-        title: "Disable Telegram Connection",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-    },
-    async ({ connection_id }) => {
-      const { getWorkerClient } = await import("../server.js");
-      const { WorkerUnavailableError, WorkerAPIError } =
-        await import("../shared/client/exceptions.js");
-      const { WORKER_NOT_RUNNING } =
-        await import("../shared/client/worker-client.js");
-
-      try {
-        await getWorkerClient().updateConnection(connection_id, { enabled: false });
-        return textResult(`Telegram connection ${connection_id} disabled.`);
-      } catch (error) {
-        if (error instanceof WorkerUnavailableError) return textResult(WORKER_NOT_RUNNING);
-        if (error instanceof WorkerAPIError) {
-          if (error.statusCode === 404) return textResult(`Connection ${connection_id} not found.`);
-          return textResult(`Worker error: ${error.message}`);
-        }
-        throw error;
-      }
-    },
-  );
-
-  server.registerTool(
-    "telegram_test_connection",
-    {
-      title: "Test Telegram Connection",
-      description: "Send a test message through a Telegram connection.",
-      inputSchema: {
-        connection_id: z.string().describe("ID of the connection to test."),
+          .optional()
+          .describe('Human-readable label (default "default").'),
+        connection_id: z
+          .string()
+          .optional()
+          .describe("Connection ID for delete/enable/disable/test operations."),
         message: z
           .string()
-          .default("Test message from RevolutX MCP")
-          .describe("Custom test message text."),
+          .optional()
+          .describe("Custom test message text (for test action)."),
+        test_on_add: z
+          .boolean()
+          .optional()
+          .describe("Send a test message after adding (adds --test flag)."),
       },
       annotations: {
-        title: "Test Telegram Connection",
-        readOnlyHint: false,
+        title: "Telegram CLI Command",
+        readOnlyHint: true,
         destructiveHint: false,
-        openWorldHint: true,
       },
     },
-    async ({ connection_id, message }) => {
-      const { getWorkerClient } = await import("../server.js");
-      const { WorkerUnavailableError, WorkerAPIError } =
-        await import("../shared/client/exceptions.js");
-      const { WORKER_NOT_RUNNING } =
-        await import("../shared/client/worker-client.js");
+    async ({
+      action,
+      bot_token,
+      chat_id,
+      label,
+      connection_id,
+      message,
+      test_on_add,
+    }) => {
+      const act = action;
 
-      try {
-        const result = (await getWorkerClient().testConnection(
-          connection_id,
-          message,
-        )) as Record<string, unknown>;
+      switch (act) {
+        case "add": {
+          if (!bot_token)
+            return textResult("Missing required parameter: bot_token.");
+          if (!chat_id)
+            return textResult("Missing required parameter: chat_id.");
 
-        if (result.success) {
-          return textResult(`Test message sent successfully to connection ${connection_id}.`);
+          const parts = [
+            "revx telegram add",
+            "--token",
+            bot_token.trim(),
+            "--chat-id",
+            chat_id.trim(),
+          ];
+          if (label && label.trim()) parts.push("--label", `"${label.trim()}"`);
+          if (test_on_add) parts.push("--test");
+
+          return textResult(
+            `Action: Add a Telegram connection\n\n` +
+              `Command:\n  ${parts.join(" ")}\n\n` +
+              `Description: Adds a Telegram bot connection for alert notifications.` +
+              CLI_INSTALL_HINT,
+          );
         }
-        return textResult(`Test failed: ${result.error ?? "unknown error"}`);
-      } catch (error) {
-        if (error instanceof WorkerUnavailableError) return textResult(WORKER_NOT_RUNNING);
-        if (error instanceof WorkerAPIError) {
-          if (error.statusCode === 404) return textResult(`Connection ${connection_id} not found.`);
-          return textResult(`Worker error: ${error.message}`);
+
+        case "list":
+          return textResult(
+            "Action: List all Telegram connections\n\n" +
+              "Command:\n  revx telegram list\n\n" +
+              "For JSON output:\n  revx telegram list --json" +
+              CLI_INSTALL_HINT,
+          );
+
+        case "delete": {
+          if (!connection_id)
+            return textResult("Missing required parameter: connection_id.");
+          return textResult(
+            `Action: Delete Telegram connection ${connection_id}\n\n` +
+              `Command:\n  revx telegram delete ${connection_id}` +
+              CLI_INSTALL_HINT,
+          );
         }
-        throw error;
+
+        case "enable": {
+          if (!connection_id)
+            return textResult("Missing required parameter: connection_id.");
+          return textResult(
+            `Action: Enable Telegram connection ${connection_id}\n\n` +
+              `Command:\n  revx telegram enable ${connection_id}` +
+              CLI_INSTALL_HINT,
+          );
+        }
+
+        case "disable": {
+          if (!connection_id)
+            return textResult("Missing required parameter: connection_id.");
+          return textResult(
+            `Action: Disable Telegram connection ${connection_id}\n\n` +
+              `Command:\n  revx telegram disable ${connection_id}` +
+              CLI_INSTALL_HINT,
+          );
+        }
+
+        case "test": {
+          if (!connection_id)
+            return textResult("Missing required parameter: connection_id.");
+          const parts = ["revx telegram test", connection_id];
+          if (message) parts.push("--message", `"${message}"`);
+          return textResult(
+            `Action: Test Telegram connection ${connection_id}\n\n` +
+              `Command:\n  ${parts.join(" ")}` +
+              CLI_INSTALL_HINT,
+          );
+        }
       }
     },
   );

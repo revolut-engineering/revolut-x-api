@@ -1,6 +1,3 @@
-/**
- * Tests for account tools — get_balances.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -12,26 +9,21 @@ vi.mock("../../src/server.js", () => ({
   getRevolutXClient: vi.fn(() => ({
     getBalances: mockGetBalances,
   })),
-}));
-
-vi.mock("../../src/shared/client/exceptions.js", async () => {
-  class AuthNotConfiguredError extends Error { name = "AuthNotConfiguredError"; }
-  class WorkerUnavailableError extends Error { name = "WorkerUnavailableError"; }
-  class WorkerAPIError extends Error {
-    statusCode: number;
-    constructor(msg: string, code: number) { super(msg); this.statusCode = code; }
-  }
-  return { AuthNotConfiguredError, WorkerUnavailableError, WorkerAPIError };
-});
-
-vi.mock("../../src/shared/auth/credentials.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
+
+vi.mock("revolutx-api", async () => {
+  class AuthNotConfiguredError extends Error {
+    name = "AuthNotConfiguredError";
+  }
+  return { AuthNotConfiguredError };
+});
 
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerAccountTools(server);
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -54,7 +46,10 @@ describe("account tools", () => {
     ]);
 
     const client = await createClient();
-    const result = await client.callTool({ name: "get_balances", arguments: {} });
+    const result = await client.callTool({
+      name: "get_balances",
+      arguments: {},
+    });
     const text = getText(result);
     expect(text).toContain("BTC");
     expect(text).toContain("0.5");
@@ -65,17 +60,25 @@ describe("account tools", () => {
     mockGetBalances.mockResolvedValue([]);
 
     const client = await createClient();
-    const result = await client.callTool({ name: "get_balances", arguments: {} });
+    const result = await client.callTool({
+      name: "get_balances",
+      arguments: {},
+    });
     const text = getText(result);
     expect(text).toContain("No balances found");
   });
 
   it("get_balances returns setup guide on auth error", async () => {
-    const { AuthNotConfiguredError } = await import("../../src/shared/client/exceptions.js");
-    mockGetBalances.mockRejectedValue(new AuthNotConfiguredError("not configured"));
+    const { AuthNotConfiguredError } = await import("revolutx-api");
+    mockGetBalances.mockRejectedValue(
+      new AuthNotConfiguredError("not configured"),
+    );
 
     const client = await createClient();
-    const result = await client.callTool({ name: "get_balances", arguments: {} });
+    const result = await client.callTool({
+      name: "get_balances",
+      arguments: {},
+    });
     const text = getText(result);
     expect(text).toContain("Setup guide text");
   });

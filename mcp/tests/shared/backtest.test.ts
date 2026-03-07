@@ -40,8 +40,6 @@ function emptyResult(): BacktestResult {
   };
 }
 
-// ── createGrid ──
-
 describe("createGrid", () => {
   it("correct level count", () => {
     const levels = createGrid(new Decimal("100"), 5, new Decimal("0.10"));
@@ -73,8 +71,6 @@ describe("createGrid", () => {
     expect(levels[levels.length - 1].price.lte(111)).toBe(true);
   });
 });
-
-// ── simulateCandle ──
 
 describe("simulateCandle", () => {
   it("buy triggered", () => {
@@ -175,16 +171,9 @@ describe("simulateCandle", () => {
   });
 });
 
-// ── runBacktest ──
-
 describe("runBacktest", () => {
   it("empty candles → no trades", () => {
-    const result = runBacktest(
-      [],
-      5,
-      new Decimal("0.10"),
-      new Decimal("1000"),
-    );
+    const result = runBacktest([], 5, new Decimal("0.10"), new Decimal("1000"));
     expect(result.totalTrades).toBe(0);
     expect(result.finalUsd.eq(0)).toBe(true);
   });
@@ -255,8 +244,6 @@ describe("runBacktest", () => {
   });
 });
 
-// ── optimizeGridParams ──
-
 describe("optimizeGridParams", () => {
   it("returns sorted by totalReturn descending", () => {
     const candles: Record<string, Decimal>[] = [];
@@ -272,9 +259,7 @@ describe("optimizeGridParams", () => {
     );
     expect(results).toHaveLength(4);
     for (let i = 1; i < results.length; i++) {
-      expect(results[i - 1].totalReturn.gte(results[i].totalReturn)).toBe(
-        true,
-      );
+      expect(results[i - 1].totalReturn.gte(results[i].totalReturn)).toBe(true);
     }
   });
 

@@ -1,0 +1,83 @@
+export { RevolutXClient, type RevolutXClientOptions } from "./client.js";
+
+export {
+  buildAuthHeaders,
+  signRequest,
+  createTimestamp,
+  generateKeypair,
+  loadPrivateKey,
+  getPublicKeyPem,
+  loadCredentials,
+  type Credentials,
+} from "./auth/index.js";
+
+export {
+  getConfigDir,
+  getConfigFile,
+  getPrivateKeyFile,
+  getPublicKeyFile,
+  ensureConfigDir,
+  loadConfig,
+  saveConfig,
+  isConfigured,
+  type RevolutXConfig,
+} from "./config/settings.js";
+
+export {
+  RevolutXError,
+  AuthenticationError,
+  RateLimitError,
+  OrderError,
+  NotFoundError,
+  ConflictError,
+  NetworkError,
+  AuthNotConfiguredError,
+} from "./http/errors.js";
+
+export { RateLimiter, TokenBucket } from "./http/rate-limiter.js";
+
+export type {
+  ErrorResponse,
+  PaginationMetadata,
+  PaginatedResponse,
+  DataResponse,
+  DataArrayResponse,
+  PaginationOptions,
+  DateRangeOptions,
+  AccountBalance,
+  Currency,
+  CurrencyPair,
+  CurrencyMap,
+  CurrencyPairMap,
+  OrderSide,
+  OrderType,
+  OrderStatus,
+  ActiveOrderState,
+  HistoricalOrderState,
+  ActiveOrderType,
+  HistoricalOrderType,
+  TimeInForce,
+  ExecutionInstruction,
+  TriggerDirection,
+  OrderTrigger,
+  Order,
+  OrderPlacementResult,
+  LimitOrderConfig,
+  MarketOrderConfig,
+  PlaceOrderParams,
+  ActiveOrdersOptions,
+  HistoricalOrdersOptions,
+  Trade,
+  PublicTrade,
+  TradesOptions,
+  Ticker,
+  TickersOptions,
+  Candle,
+  CandlesOptions,
+  OrderBookLevel,
+  OrderBookPublicLevel,
+  OrderBook,
+  OrderBookOptions,
+  TickerMetadata,
+  PublicMetadata,
+} from "./types/index.js";

@@ -1,4 +1,4 @@
-# Node.js (mcp/, worker/)
+# Node.js (api/, cli/, mcp/)
 node_modules/
 dist/
 *.tsbuildinfo

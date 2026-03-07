@@ -1,49 +1,13 @@
-/**
- * Tests for alert tools — 7 tools.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registerAlertTools } from "../../src/tools/alerts.js";
-
-const mockWorkerClient = {
-  createAlert: vi.fn(),
-  listAlerts: vi.fn(),
-  updateAlert: vi.fn(),
-  deleteAlert: vi.fn(),
-  getAlert: vi.fn(),
-  getAlertTypes: vi.fn(),
-};
-
-vi.mock("../../src/server.js", () => ({
-  getWorkerClient: vi.fn(() => mockWorkerClient),
-}));
-
-class MockWorkerUnavailableError extends Error {
-  name = "WorkerUnavailableError";
-}
-class MockWorkerAPIError extends Error {
-  name = "WorkerAPIError";
-  statusCode: number;
-  constructor(msg: string, code: number) {
-    super(msg);
-    this.statusCode = code;
-  }
-}
-
-vi.mock("../../src/shared/client/exceptions.js", () => ({
-  WorkerUnavailableError: MockWorkerUnavailableError,
-  WorkerAPIError: MockWorkerAPIError,
-}));
-
-vi.mock("../../src/shared/client/worker-client.js", () => ({
-  WORKER_NOT_RUNNING: "Worker not running message",
-}));
+import { registerMonitorTools } from "../../src/tools/alerts.js";
 
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
-  registerAlertTools(server);
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  registerMonitorTools(server);
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -54,190 +18,334 @@ function getText(result: any): string {
   return result.content[0].text ?? "";
 }
 
-describe("alert tools", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("alert_create creates price alert", async () => {
-    mockWorkerClient.createAlert.mockResolvedValue({ id: "alert-1" });
+describe("monitor_command tool", () => {
+  it("returns correct command for price alert", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "alert_create",
-      arguments: { pair: "BTC-USD", direction: "above", threshold: "100000" },
-    });
-    const text = getText(result);
-    expect(text).toContain("Alert created (id: alert-1)");
-    expect(text).toContain("Type: price");
-  });
-
-  it("alert_create creates rsi alert with config", async () => {
-    mockWorkerClient.createAlert.mockResolvedValue({ id: "alert-2" });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "alert_create",
+      name: "monitor_command",
       arguments: {
         pair: "BTC-USD",
-        alert_type: "rsi",
-        config: '{"period":14,"direction":"above","threshold":"70"}',
+        alert_type: "price",
+        direction: "above",
+        threshold: "100000",
       },
     });
     const text = getText(result);
-    expect(text).toContain("Alert created (id: alert-2)");
-    expect(text).toContain("Type: rsi");
+    expect(text).toContain(
+      "revx monitor price BTC-USD --direction above --threshold 100000",
+    );
+    expect(text).toContain("every 10s");
+    expect(text).toContain("Ctrl+C");
   });
 
-  it("alert_create rejects invalid alert type", async () => {
+  it("includes --interval when custom", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "alert_create",
-      arguments: { pair: "BTC-USD", alert_type: "unknown_type" },
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "price",
+        direction: "below",
+        threshold: "50000",
+        interval: 30,
+      },
     });
-    expect(getText(result)).toContain("Unknown alert type");
+    const text = getText(result);
+    expect(text).toContain(
+      "revx monitor price BTC-USD --direction below --threshold 50000 --interval 30",
+    );
+    expect(text).toContain("every 30s");
   });
 
-  it("alert_create requires config for non-price types", async () => {
+  it("uses type-specific params for rsi", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "alert_create",
+      name: "monitor_command",
+      arguments: {
+        pair: "ETH-USD",
+        alert_type: "rsi",
+        direction: "above",
+        threshold: "70",
+        period: 14,
+      },
+    });
+    const text = getText(result);
+    expect(text).toContain(
+      "revx monitor rsi ETH-USD --direction above --threshold 70 --period 14",
+    );
+  });
+
+  it("uses direction+threshold for rsi without period", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "rsi",
+        direction: "above",
+        threshold: "70",
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor rsi BTC-USD --direction above --threshold 70",
+    );
+  });
+
+  it("generates ema-cross command", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "ema_cross",
+        direction: "bullish",
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor ema-cross BTC-USD --direction bullish",
+    );
+  });
+
+  it("generates ema-cross with fast-period and slow-period", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "ema_cross",
+        direction: "bullish",
+        fast_period: 12,
+        slow_period: 26,
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor ema-cross BTC-USD --direction bullish --fast-period 12 --slow-period 26",
+    );
+  });
+
+  it("generates macd command with all params", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "macd",
+        direction: "bearish",
+        fast: 10,
+        slow: 30,
+        signal: 7,
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor macd BTC-USD --direction bearish --fast 10 --slow 30 --signal 7",
+    );
+  });
+
+  it("generates bollinger command with band and std-mult", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "ETH-USD",
+        alert_type: "bollinger",
+        band: "lower",
+        period: 30,
+        std_mult: 3,
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor bollinger ETH-USD --band lower --period 30 --std-mult 3",
+    );
+  });
+
+  it("generates volume-spike command", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "volume_spike",
+        period: 30,
+        multiplier: 3,
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor volume-spike BTC-USD --period 30 --multiplier 3",
+    );
+  });
+
+  it("generates price-change command with lookback", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "price_change_pct",
+        direction: "fall",
+        threshold: "10",
+        lookback: 48,
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor price-change BTC-USD --direction fall --threshold 10 --lookback 48",
+    );
+  });
+
+  it("generates atr-breakout command", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "atr_breakout",
+        period: 20,
+        multiplier: 2.5,
+      },
+    });
+    expect(getText(result)).toContain(
+      "revx monitor atr-breakout BTC-USD --period 20 --multiplier 2.5",
+    );
+  });
+
+  it("generates bare command for non-price types with no explicit params", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
       arguments: { pair: "BTC-USD", alert_type: "rsi" },
     });
-    expect(getText(result)).toContain("requires a config parameter");
+    expect(getText(result)).toContain("revx monitor rsi BTC-USD");
   });
 
-  it("alert_create returns worker not running", async () => {
-    mockWorkerClient.createAlert.mockRejectedValue(
-      new MockWorkerUnavailableError("unavailable"),
-    );
+  it("rejects missing pair", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "alert_create",
-      arguments: { pair: "BTC-USD", direction: "above", threshold: "100000" },
+      name: "monitor_command",
+      arguments: { pair: "" },
     });
-    expect(getText(result)).toContain("Worker not running message");
+    expect(getText(result)).toContain("pair is required");
   });
 
-  it("alert_list returns formatted list", async () => {
-    mockWorkerClient.listAlerts.mockResolvedValue({
-      data: [
-        {
-          id: "1",
-          alert_type: "price",
-          pair: "BTC-USD",
-          enabled: true,
-          triggered: false,
-          config: { direction: "above", threshold: "100000" },
-          poll_interval_sec: 10,
-          current_value: null,
-          last_checked_at: null,
-        },
-      ],
-    });
-    const client = await createClient();
-    const result = await client.callTool({ name: "alert_list", arguments: {} });
-    const text = getText(result);
-    expect(text).toContain("Alerts (1)");
-    expect(text).toContain("price");
-    expect(text).toContain("BTC-USD");
-  });
-
-  it("alert_list returns empty message", async () => {
-    mockWorkerClient.listAlerts.mockResolvedValue({ data: [] });
-    const client = await createClient();
-    const result = await client.callTool({ name: "alert_list", arguments: {} });
-    expect(getText(result)).toContain("No alerts configured");
-  });
-
-  it("alert_enable succeeds", async () => {
-    mockWorkerClient.updateAlert.mockResolvedValue({});
+  it("rejects invalid pair format", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "alert_enable",
-      arguments: { alert_id: "1" },
+      name: "monitor_command",
+      arguments: { pair: "invalid" },
     });
-    expect(getText(result)).toContain("Alert 1 enabled");
+    expect(getText(result)).toContain("Invalid");
   });
 
-  it("alert_disable succeeds", async () => {
-    mockWorkerClient.updateAlert.mockResolvedValue({});
+  it("rejects unknown alert type", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "alert_disable",
-      arguments: { alert_id: "1" },
-    });
-    expect(getText(result)).toContain("Alert 1 disabled");
-  });
-
-  it("alert_delete returns 404", async () => {
-    mockWorkerClient.deleteAlert.mockRejectedValue(
-      new MockWorkerAPIError("not found", 404),
-    );
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "alert_delete",
-      arguments: { alert_id: "999" },
-    });
-    expect(getText(result)).toContain("Alert 999 not found");
-  });
-
-  it("alert_delete succeeds", async () => {
-    mockWorkerClient.deleteAlert.mockResolvedValue({});
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "alert_delete",
-      arguments: { alert_id: "1" },
-    });
-    expect(getText(result)).toContain("Alert 1 deleted");
-  });
-
-  it("alert_get returns full details", async () => {
-    mockWorkerClient.getAlert.mockResolvedValue({
-      id: "1",
-      alert_type: "price",
-      pair: "BTC-USD",
-      config: { direction: "above", threshold: "100000" },
-      enabled: true,
-      triggered: false,
-      poll_interval_sec: 10,
-      current_value: { label: "Price", value: "99500" },
-      connection_ids: null,
-      last_checked_at: "2024-01-01",
-      last_triggered_at: null,
-      created_at: "2024-01-01",
-      updated_at: "2024-01-01",
-    });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "alert_get",
-      arguments: { alert_id: "1" },
+      name: "monitor_command",
+      arguments: { pair: "BTC-USD", alert_type: "foobar" },
     });
     const text = getText(result);
-    expect(text).toContain("Alert 1");
-    expect(text).toContain("Price: 99500");
+    expect(text).toContain("Unknown alert type");
+    expect(text).toContain("foobar");
   });
 
-  it("alert_types falls back to cached docs when worker unavailable", async () => {
-    mockWorkerClient.getAlertTypes.mockRejectedValue(
-      new MockWorkerUnavailableError("unavailable"),
-    );
+  it("requires threshold for price alerts", async () => {
     const client = await createClient();
-    const result = await client.callTool({ name: "alert_types", arguments: {} });
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: { pair: "BTC-USD", alert_type: "price", direction: "above" },
+    });
+    expect(getText(result)).toContain("threshold is required");
+  });
+
+  it("rejects invalid direction for price alerts", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "price",
+        direction: "sideways",
+        threshold: "100",
+      },
+    });
+    expect(getText(result)).toContain("direction must be");
+  });
+
+  it("normalizes pair to uppercase", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "btc-usd",
+        alert_type: "price",
+        direction: "above",
+        threshold: "100000",
+      },
+    });
+    expect(getText(result)).toContain("revx monitor price BTC-USD");
+  });
+
+  it("clamps interval to minimum 5", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "price",
+        direction: "above",
+        threshold: "100000",
+        interval: 2,
+      },
+    });
+    expect(getText(result)).toContain("--interval 5");
+  });
+
+  it("rejects invalid threshold value", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "price",
+        direction: "above",
+        threshold: "abc",
+      },
+    });
+    expect(getText(result)).toContain("Invalid threshold");
+  });
+
+  it("rejects invalid direction for ema_cross", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_command",
+      arguments: {
+        pair: "BTC-USD",
+        alert_type: "ema_cross",
+        direction: "sideways",
+      },
+    });
+    expect(getText(result)).toContain("Invalid direction");
+  });
+});
+
+describe("monitor_types tool", () => {
+  it("returns all 10 monitor types with revx monitor examples", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "monitor_types",
+      arguments: {},
+    });
     const text = getText(result);
-    expect(text).toContain("Supported Alert Types");
+    expect(text).toContain("Supported Monitor Types");
     expect(text).toContain("price");
     expect(text).toContain("rsi");
-    expect(text).toContain("Worker offline");
-  });
-
-  it("alert_create handles 422 validation error", async () => {
-    mockWorkerClient.createAlert.mockRejectedValue(
-      new MockWorkerAPIError("Missing required field", 422),
-    );
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "alert_create",
-      arguments: { pair: "BTC-USD", direction: "above", threshold: "100000" },
-    });
-    expect(getText(result)).toContain("Invalid alert configuration");
+    expect(text).toContain("ema_cross");
+    expect(text).toContain("macd");
+    expect(text).toContain("bollinger");
+    expect(text).toContain("volume_spike");
+    expect(text).toContain("spread");
+    expect(text).toContain("obi");
+    expect(text).toContain("price_change_pct");
+    expect(text).toContain("atr_breakout");
+    expect(text).toContain("10 monitor types");
+    expect(text).toContain("revx monitor");
+    expect(text).toContain("CLI equivalent: revx monitor types");
   });
 });

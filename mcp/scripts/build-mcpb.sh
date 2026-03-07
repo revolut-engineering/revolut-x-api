@@ -11,26 +11,27 @@ STAGE_DIR="$MCP_DIR/packaging/mcpb/stage"
 
 cd "$MCP_DIR"
 
-# 1. Build the esbuild bundle
+if [ ! -f "../api/dist/index.js" ]; then
+  echo ">> Building API (required for bundle)..."
+  (cd ../api && npm run build)
+fi
+
 echo ">> Building bundle..."
 npm run build:bundle
 
-# 2. Prepare stage directory
-echo ">> Preparing stage directory..."
-MCPB_DIR="$MCP_DIR/packaging/mcpb"
+echo ">> Copying bundle to stage..."
 mkdir -p "$STAGE_DIR/dist"
 cp dist/index.js "$STAGE_DIR/dist/index.js"
+MCPB_DIR="$MCP_DIR/packaging/mcpb"
 cp "$MCPB_DIR/manifest.json" "$STAGE_DIR/manifest.json"
-cp "$MCPB_DIR/.mcpbignore" "$STAGE_DIR/.mcpbignore"
+[ -f "$MCPB_DIR/.mcpbignore" ] && cp "$MCPB_DIR/.mcpbignore" "$STAGE_DIR/.mcpbignore"
 cp "$MCP_DIR/package.json" "$STAGE_DIR/package.json"
-cp "$MCP_DIR/icon.png" "$STAGE_DIR/icon.png"
+[ -f "$MCP_DIR/icon.png" ] && cp "$MCP_DIR/icon.png" "$STAGE_DIR/icon.png"
 
-# 3. Pack with mcpb
 echo ">> Packing MCPB archive..."
 cd "$STAGE_DIR"
-npx --yes @anthropic-ai/mcpb pack
+npx @anthropic-ai/mcpb pack
 
-# 4. Move the produced .mcpb file to mcp/dist/
 MCPB_FILE=$(ls -1 *.mcpb 2>/dev/null | head -1)
 if [ -z "$MCPB_FILE" ]; then
   echo "ERROR: mcpb pack did not produce a .mcpb file" >&2
