@@ -262,15 +262,11 @@ Examples:
 
             if (opts.startDate) {
               const start = parseTimestamp(opts.startDate);
-              trades = trades.filter(
-                (t: any) => new Date(t.tdt).getTime() >= start,
-              );
+              trades = trades.filter((t) => new Date(t.tdt).getTime() >= start);
             }
             if (opts.endDate) {
               const end = parseTimestamp(opts.endDate);
-              trades = trades.filter(
-                (t: any) => new Date(t.tdt).getTime() <= end,
-              );
+              trades = trades.filter((t) => new Date(t.tdt).getTime() <= end);
             }
             if (opts.limit) {
               trades = trades.slice(0, parsePositiveInt(opts.limit, "limit"));

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Decimal } from "decimal.js";
+import type { Ticker, Candle } from "revolutx-api";
 
 const mockGetTickers = vi.fn();
 const mockGetCandles = vi.fn();
@@ -198,7 +199,9 @@ describe("ForegroundMonitor.buildMaps", () => {
         last_price: "3500",
       },
     ];
-    const [priceMap, tickerMap] = ForegroundMonitor.buildMaps(tickers as any);
+    const [priceMap, tickerMap] = ForegroundMonitor.buildMaps(
+      tickers as unknown as Ticker[],
+    );
 
     expect(priceMap.get("BTC-USD")?.toString()).toBe("100000");
     expect(tickerMap.get("BTC-USD")?.bid?.toString()).toBe("99990");
@@ -216,7 +219,9 @@ describe("ForegroundMonitor.buildMaps", () => {
         last_price: "100000",
       },
     ];
-    const [priceMap] = ForegroundMonitor.buildMaps(tickers as any);
+    const [priceMap] = ForegroundMonitor.buildMaps(
+      tickers as unknown as Ticker[],
+    );
 
     expect(priceMap.get("BTC/USD")?.toString()).toBe("100000");
     expect(priceMap.get("BTC-USD")?.toString()).toBe("100000");
@@ -232,7 +237,9 @@ describe("ForegroundMonitor.buildMaps", () => {
         last_price: "also-bad",
       },
     ];
-    const [priceMap] = ForegroundMonitor.buildMaps(tickers as any);
+    const [priceMap] = ForegroundMonitor.buildMaps(
+      tickers as unknown as Ticker[],
+    );
     expect(priceMap.size).toBe(0);
   });
 });
@@ -257,7 +264,9 @@ describe("ForegroundMonitor.parseCandles", () => {
         volume: "50",
       },
     ];
-    const parsed = ForegroundMonitor.parseCandles(candles as any);
+    const parsed = ForegroundMonitor.parseCandles(
+      candles as unknown as Candle[],
+    );
     expect(parsed).toHaveLength(2);
     expect(parsed[0].timestamp).toBe(100);
     expect(parsed[1].timestamp).toBe(200);
@@ -283,7 +292,9 @@ describe("ForegroundMonitor.parseCandles", () => {
         volume: "100",
       },
     ];
-    const parsed = ForegroundMonitor.parseCandles(candles as any);
+    const parsed = ForegroundMonitor.parseCandles(
+      candles as unknown as Candle[],
+    );
     expect(parsed).toHaveLength(1);
     expect(parsed[0].timestamp).toBe(200);
   });
@@ -291,14 +302,19 @@ describe("ForegroundMonitor.parseCandles", () => {
 
 async function runSingleTick(mon: ForegroundMonitor): Promise<TickResult> {
   const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const internals = mon as unknown as {
+    _client: unknown;
+    _runTick: () => Promise<TickResult>;
+    _printTick: (result: TickResult) => void;
+  };
 
-  if (!(mon as any)._client) {
+  if (!internals._client) {
     const { RevolutXClient } = await import("revolutx-api");
-    (mon as any)._client = new RevolutXClient();
+    internals._client = new RevolutXClient();
   }
 
-  const result = await (mon as any)._runTick();
-  (mon as any)._printTick(result);
+  const result = await internals._runTick();
+  internals._printTick(result);
   spy.mockRestore();
   return result;
 }
