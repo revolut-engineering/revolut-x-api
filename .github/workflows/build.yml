@@ -25,15 +25,8 @@ jobs:
             cli/package-lock.json
             mcp/package-lock.json
 
-      - name: Install all dependencies
-        run: |
-          npm ci &
-          cd api && npm ci &
-          cd cli && npm ci &
-          cd mcp && npm ci &
-          wait
-
-      - uses: actions/cache/save@v4
+      - uses: actions/cache@v4
+        id: modules-cache
         with:
           path: |
             node_modules
@@ -41,6 +34,15 @@ jobs:
             cli/node_modules
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Install all dependencies
+        if: steps.modules-cache.outputs.cache-hit != 'true'
+        run: |
+          npm ci &
+          cd api && npm ci &
+          cd cli && npm ci &
+          cd mcp && npm ci &
+          wait
 
   build-api:
     name: Build API
