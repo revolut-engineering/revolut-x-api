@@ -6,7 +6,7 @@ Last updated: 2026-02-28
 
 ## What This Server Does
 
-RevolutX is a **local MCP server** that runs entirely on your machine (via STDIO or HTTP transport). There is no cloud component, no hosted backend, and no third-party analytics. The companion Worker service also runs locally and stores data in a local SQLite database.
+RevolutX is a **local MCP server** that runs entirely on your machine (via STDIO transport). There is no cloud component, no hosted backend, and no third-party analytics. The companion Worker service also runs locally and stores data in a local SQLite database.
 
 ---
 
@@ -60,7 +60,7 @@ No data is sent to any other external service. There is no telemetry, analytics,
 - **Private key isolation:** Your Ed25519 private key never leaves your machine. API requests are signed locally using the key.
 - **File permissions:** Credential files are created with `0600` permissions (owner read/write only).
 - **Local-only database:** SQLite is local and is not exposed over the network.
-- **Localhost binding:** Both the Worker and MCP HTTP server bind to `localhost` by default, preventing external network access.
+- **STDIO only:** The MCP server communicates exclusively via STDIO transport (spawned as a child process), with no network listener.
 - **No credential transmission:** API keys and private keys are never included in MCP tool responses or sent to LLM providers.
 
 ---

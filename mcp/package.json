@@ -9,7 +9,6 @@
   "scripts": {
     "build": "tsc",
     "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify",
-    "build:bundle:lite": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify --external:express --external:@hono/node-server --external:iconv-lite --external:mime-db --external:mime-types",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
