@@ -1,14 +1,23 @@
 {
   "manifest_version": "0.4",
   "name": "RevolutX",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "display_name": "RevolutX",
   "description": "Trade smarter on Revolut X. Check balances, analyze markets, place orders, and backtest grid strategies. All through natural language in Claude.",
   "author": {
     "name": "Revolut"
   },
   "icon": "icon.png",
-  "keywords": ["crypto", "exchange", "trading", "revolut", "alerts", "telegram", "technical-analysis", "indicators"],
+  "keywords": [
+    "crypto",
+    "exchange",
+    "trading",
+    "revolut",
+    "alerts",
+    "telegram",
+    "technical-analysis",
+    "indicators"
+  ],
   "license": "MIT",
   "privacy_policies": [
     "https://github.com/revolut-engineering/revolut-x-api/blob/main/PRIVACY.md"
@@ -22,7 +31,9 @@
     "entry_point": "dist/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/index.js"],
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
       "env": {
         "REVOLUTX_CONFIG_DIR": "${user_config.config_dir}",
         "REVOLUTX_WORKER_URL": "${user_config.worker_url}"
@@ -30,25 +41,82 @@
     }
   },
   "tools": [
-    { "name": "generate_keypair", "description": "Generate a new Ed25519 keypair for Revolut X API authentication. Creates a private key (stored securely on your machine) and returns the public key. You must add the public key to your Revolut X account under Profile > API Keys." },
-    { "name": "configure_api_key", "description": "Save your Revolut X API key. Run this after you have added your public key to your Revolut X account and received an API key." },
-    { "name": "check_auth_status", "description": "Check if Revolut X API authentication is configured and working. Tests the connection by fetching available currencies." },
-    { "name": "get_balances", "description": "Get all crypto exchange balances for your Revolut X account. Returns a list of all currencies with available, reserved, and total amounts." },
-    { "name": "get_currencies", "description": "Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status." },
-    { "name": "get_currency_pairs", "description": "Get all tradeable currency pairs on Revolut X exchange. Returns pair details including base/quote currencies, step sizes, min/max order sizes, and status." },
-    { "name": "get_order_book", "description": "Get the current order book for a trading pair." },
-    { "name": "get_tickers", "description": "Get current ticker data for all trading pairs. Returns bid, ask, mid, and last price for each pair." },
-    { "name": "get_candles", "description": "Get OHLCV candlestick data for a trading pair." },
-    { "name": "get_public_trades", "description": "Get recent public trades for a trading pair." },
-    { "name": "get_last_trades", "description": "Get the last 100 trades executed across all pairs on Revolut X. Note: This endpoint has a stricter rate limit (20 per 10 seconds)." },
-    { "name": "order_command", "description": "Generate a revx CLI command for order operations. Supports: place_market, place_limit, cancel. Returns the exact CLI command to run." },
-    { "name": "get_active_orders", "description": "Get all currently active (open) orders on your Revolut X account." },
-    { "name": "get_client_trades", "description": "Get your personal trade history (fills) for a specific trading pair." },
-    { "name": "grid_backtest", "description": "Run a grid trading backtest on historical candle data from Revolut X. Simulates a grid strategy: places buy orders at evenly-spaced price levels below the starting price, sells at the next level above. Uses up to ~100 most recent candles from the API." },
-    { "name": "grid_optimize", "description": "Test multiple grid parameter combinations and return ranked results. Runs grid_backtest for every combination of grid_levels and range_pct, then ranks by total return." },
-    { "name": "monitor_command", "description": "Generate a revx CLI command to start monitoring a trading pair for alert conditions. Returns the exact CLI command to run. Use 'monitor_types' to see all supported alert types." },
-    { "name": "monitor_types", "description": "List all supported monitor types for the 'revx monitor' CLI command. Returns each type with description, config fields, and CLI usage example." },
-    { "name": "telegram_command", "description": "Generate a revx CLI command for Telegram connection operations. Supports: add, list, delete, enable, disable, test. Returns the exact CLI command to run." }
+    {
+      "name": "generate_keypair",
+      "description": "Generate a new Ed25519 keypair for Revolut X API authentication. Creates a private key (stored securely on your machine) and returns the public key. You must add the public key to your Revolut X account under Profile > API Keys."
+    },
+    {
+      "name": "configure_api_key",
+      "description": "Save your Revolut X API key. Run this after you have added your public key to your Revolut X account and received an API key."
+    },
+    {
+      "name": "check_auth_status",
+      "description": "Check if Revolut X API authentication is configured and working. Tests the connection by fetching available currencies."
+    },
+    {
+      "name": "get_balances",
+      "description": "Get all crypto exchange balances for your Revolut X account. Returns a list of all currencies with available, reserved, and total amounts."
+    },
+    {
+      "name": "get_currencies",
+      "description": "Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status."
+    },
+    {
+      "name": "get_currency_pairs",
+      "description": "Get all tradeable currency pairs on Revolut X exchange. Returns pair details including base/quote currencies, step sizes, min/max order sizes, and status."
+    },
+    {
+      "name": "get_order_book",
+      "description": "Get the current order book for a trading pair."
+    },
+    {
+      "name": "get_tickers",
+      "description": "Get current ticker data for all trading pairs. Returns bid, ask, mid, and last price for each pair."
+    },
+    {
+      "name": "get_candles",
+      "description": "Get OHLCV candlestick data for a trading pair."
+    },
+    {
+      "name": "get_public_trades",
+      "description": "Get recent public trades for a trading pair."
+    },
+    {
+      "name": "get_last_trades",
+      "description": "Get the last 100 trades executed across all pairs on Revolut X. Note: This endpoint has a stricter rate limit (20 per 10 seconds)."
+    },
+    {
+      "name": "order_command",
+      "description": "Generate a revx CLI command for order operations. Supports: place_market, place_limit, cancel. Returns the exact CLI command to run."
+    },
+    {
+      "name": "get_active_orders",
+      "description": "Get all currently active (open) orders on your Revolut X account."
+    },
+    {
+      "name": "get_client_trades",
+      "description": "Get your personal trade history (fills) for a specific trading pair."
+    },
+    {
+      "name": "grid_backtest",
+      "description": "Run a grid trading backtest on historical candle data from Revolut X. Simulates a grid strategy: places buy orders at evenly-spaced price levels below the starting price, sells at the next level above. Uses up to ~100 most recent candles from the API."
+    },
+    {
+      "name": "grid_optimize",
+      "description": "Test multiple grid parameter combinations and return ranked results. Runs grid_backtest for every combination of grid_levels and range_pct, then ranks by total return."
+    },
+    {
+      "name": "monitor_command",
+      "description": "Generate a revx CLI command to start monitoring a trading pair for alert conditions. Returns the exact CLI command to run. Use 'monitor_types' to see all supported alert types."
+    },
+    {
+      "name": "monitor_types",
+      "description": "List all supported monitor types for the 'revx monitor' CLI command. Returns each type with description, config fields, and CLI usage example."
+    },
+    {
+      "name": "telegram_command",
+      "description": "Generate a revx CLI command for Telegram connection operations. Supports: add, list, delete, enable, disable, test. Returns the exact CLI command to run."
+    }
   ],
   "user_config": {
     "config_dir": {
@@ -68,7 +136,11 @@
   },
   "compatibility": {
     "claude_desktop": ">=1.0.0",
-    "platforms": ["darwin", "win32", "linux"],
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
     "runtimes": {
       "node": ">=18"
     }
