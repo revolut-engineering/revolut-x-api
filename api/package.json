@@ -1,6 +1,6 @@
 {
   "name": "revolutx-api",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Typed HTTP client for the Revolut X Exchange REST API",
   "type": "module",
   "main": "dist/index.js",
