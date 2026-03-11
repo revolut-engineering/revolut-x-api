@@ -129,7 +129,7 @@ async function startMonitor(
     );
     console.log(
       chalk.yellow(
-        "Add one with: revx telegram add --token <token> --chat-id <id>\n",
+        "Add one with: revx connector telegram add --token <token> --chat-id <id>\n",
       ),
     );
   }

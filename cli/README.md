@@ -175,33 +175,35 @@ All monitor subcommands accept `--interval <sec>` to set the check interval in s
 | `price-change <pair>` | `--direction <rise\|fall>`, `--threshold <value>`, `--lookback <n>` | direction: `rise`, threshold: `5.0`, lookback: `24` |
 | `atr-breakout <pair>` | `--period <n>`, `--multiplier <n>` | period: `14`, multiplier: `1.5` |
 
-### Telegram
+### Connector
 
-Manage Telegram bot connections for alert notifications.
+Manage notification connectors (e.g. Telegram) for alert notifications.
+
+#### Telegram
 
 ```bash
-revx telegram list                  # List all connections
-revx telegram delete <conn-id>     # Delete a connection
-revx telegram enable <conn-id>    # Enable a connection
-revx telegram disable <conn-id>   # Disable a connection
-revx telegram test <conn-id>      # Send a test message
-  --message "Custom text"          # Optional custom message
+revx connector telegram list                  # List all connections
+revx connector telegram delete <conn-id>     # Delete a connection
+revx connector telegram enable <conn-id>    # Enable a connection
+revx connector telegram disable <conn-id>   # Disable a connection
+revx connector telegram test <conn-id>      # Send a test message
+  --message "Custom text"                    # Optional custom message
 ```
 
 Add a connection:
 
 ```bash
 # Add with default label
-revx telegram add --token "123456:ABC-DEF..." --chat-id "987654321"
+revx connector telegram add --token "123456:ABC-DEF..." --chat-id "987654321"
 
 # Add with custom label
-revx telegram add --token "123456:ABC-DEF..." --chat-id "987654321" --label "main-alerts"
+revx connector telegram add --token "123456:ABC-DEF..." --chat-id "987654321" --label "main-alerts"
 
 # Add and send test message
-revx telegram add --token "123456:ABC-DEF..." --chat-id "987654321" --test
+revx connector telegram add --token "123456:ABC-DEF..." --chat-id "987654321" --test
 ```
 
-Options for `telegram add`:
+Options for `connector telegram add`:
 - `--token <token>` — Telegram Bot API token (required)
 - `--chat-id <id>` — Telegram chat ID (required)
 - `--label <label>` — Connection label (default: `default`)

@@ -1,11 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registerTelegramTools } from "../../src/tools/telegram.js";
+import { registerConnectorTools } from "../../src/tools/connector.js";
 
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
-  registerTelegramTools(server);
+  registerConnectorTools(server);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -20,15 +20,20 @@ function getText(result: Awaited<ReturnType<Client["callTool"]>>): string {
   return content[0]?.text ?? "";
 }
 
-describe("telegram_command tool", () => {
+describe("connector_command tool", () => {
   it("add returns CLI command", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "add", bot_token: "123:ABC", chat_id: "456" },
+      name: "connector_command",
+      arguments: {
+        connector_type: "telegram",
+        action: "add",
+        bot_token: "123:ABC",
+        chat_id: "456",
+      },
     });
     const text = getText(result);
-    expect(text).toContain("revx telegram add");
+    expect(text).toContain("revx connector telegram add");
     expect(text).toContain("--token 123:ABC");
     expect(text).toContain("--chat-id 456");
   });
@@ -36,8 +41,9 @@ describe("telegram_command tool", () => {
   it("add includes label", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
+      name: "connector_command",
       arguments: {
+        connector_type: "telegram",
         action: "add",
         bot_token: "123:ABC",
         chat_id: "456",
@@ -51,8 +57,9 @@ describe("telegram_command tool", () => {
   it("add includes --test flag", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
+      name: "connector_command",
       arguments: {
+        connector_type: "telegram",
         action: "add",
         bot_token: "123:ABC",
         chat_id: "456",
@@ -65,8 +72,8 @@ describe("telegram_command tool", () => {
   it("add requires bot_token", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "add", chat_id: "456" },
+      name: "connector_command",
+      arguments: { connector_type: "telegram", action: "add", chat_id: "456" },
     });
     expect(getText(result)).toContain("Missing required parameter: bot_token");
   });
@@ -74,8 +81,12 @@ describe("telegram_command tool", () => {
   it("add requires chat_id", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "add", bot_token: "123:ABC" },
+      name: "connector_command",
+      arguments: {
+        connector_type: "telegram",
+        action: "add",
+        bot_token: "123:ABC",
+      },
     });
     expect(getText(result)).toContain("Missing required parameter: chat_id");
   });
@@ -83,19 +94,19 @@ describe("telegram_command tool", () => {
   it("list returns CLI command", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "list" },
+      name: "connector_command",
+      arguments: { connector_type: "telegram", action: "list" },
     });
     const text = getText(result);
-    expect(text).toContain("revx telegram list");
+    expect(text).toContain("revx connector telegram list");
     expect(text).toContain("--json");
   });
 
   it("delete requires connection_id", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "delete" },
+      name: "connector_command",
+      arguments: { connector_type: "telegram", action: "delete" },
     });
     expect(getText(result)).toContain(
       "Missing required parameter: connection_id",
@@ -105,44 +116,61 @@ describe("telegram_command tool", () => {
   it("delete returns CLI command", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "delete", connection_id: "conn-1" },
+      name: "connector_command",
+      arguments: {
+        connector_type: "telegram",
+        action: "delete",
+        connection_id: "conn-1",
+      },
     });
-    expect(getText(result)).toContain("revx telegram delete conn-1");
+    expect(getText(result)).toContain("revx connector telegram delete conn-1");
   });
 
   it("enable returns CLI command", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "enable", connection_id: "conn-1" },
+      name: "connector_command",
+      arguments: {
+        connector_type: "telegram",
+        action: "enable",
+        connection_id: "conn-1",
+      },
     });
-    expect(getText(result)).toContain("revx telegram enable conn-1");
+    expect(getText(result)).toContain("revx connector telegram enable conn-1");
   });
 
   it("disable returns CLI command", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "disable", connection_id: "conn-1" },
+      name: "connector_command",
+      arguments: {
+        connector_type: "telegram",
+        action: "disable",
+        connection_id: "conn-1",
+      },
     });
-    expect(getText(result)).toContain("revx telegram disable conn-1");
+    expect(getText(result)).toContain("revx connector telegram disable conn-1");
   });
 
   it("test returns CLI command", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
-      arguments: { action: "test", connection_id: "conn-1" },
+      name: "connector_command",
+      arguments: {
+        connector_type: "telegram",
+        action: "test",
+        connection_id: "conn-1",
+      },
     });
-    expect(getText(result)).toContain("revx telegram test conn-1");
+    expect(getText(result)).toContain("revx connector telegram test conn-1");
   });
 
   it("test includes custom message", async () => {
     const client = await createClient();
     const result = await client.callTool({
-      name: "telegram_command",
+      name: "connector_command",
       arguments: {
+        connector_type: "telegram",
         action: "test",
         connection_id: "conn-1",
         message: "Hello world",

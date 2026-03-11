@@ -24,14 +24,22 @@ describe("CLI program", () => {
     expect(names).toContain("market");
     expect(names).toContain("order");
     expect(names).toContain("trade");
-    expect(names).toContain("telegram");
+    expect(names).toContain("connector");
     expect(names).toContain("monitor");
     expect(names).toContain("events");
   });
 
-  it("telegram has subcommands", () => {
+  it("connector has telegram subcommand", () => {
     const program = createProgram();
-    const telegram = program.commands.find((c) => c.name() === "telegram");
+    const connector = program.commands.find((c) => c.name() === "connector");
+    const connectorSubs = connector.commands.map((c) => c.name());
+    expect(connectorSubs).toContain("telegram");
+  });
+
+  it("connector telegram has subcommands", () => {
+    const program = createProgram();
+    const connector = program.commands.find((c) => c.name() === "connector");
+    const telegram = connector.commands.find((c) => c.name() === "telegram");
     const subNames = telegram.commands.map((c) => c.name());
     expect(subNames).toContain("add");
     expect(subNames).toContain("list");

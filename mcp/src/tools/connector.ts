@@ -11,19 +11,26 @@ const VALID_ACTIONS = [
   "test",
 ] as const;
 
-export function registerTelegramTools(server: McpServer): void {
+const VALID_CONNECTOR_TYPES = ["telegram"] as const;
+
+export function registerConnectorTools(server: McpServer): void {
   server.registerTool(
-    "telegram_command",
+    "connector_command",
     {
-      title: "Telegram CLI Command",
+      title: "Connector CLI Command",
       description:
-        "Generate a revx CLI command for Telegram connection operations. Supports: add, list, delete, enable, disable, test. " +
+        "Generate a revx CLI command for notification connector operations. " +
+        "Supports connector types: telegram. " +
+        "Actions: add, list, delete, enable, disable, test. " +
         "Returns the exact CLI command to run.",
       inputSchema: {
+        connector_type: z
+          .enum(VALID_CONNECTOR_TYPES)
+          .describe("The connector type (currently: telegram)."),
         action: z
           .enum(VALID_ACTIONS)
           .describe(
-            "The telegram operation: add, list, delete, enable, disable, test.",
+            "The connector operation: add, list, delete, enable, disable, test.",
           ),
         bot_token: z
           .string()
@@ -51,12 +58,13 @@ export function registerTelegramTools(server: McpServer): void {
           .describe("Send a test message after adding (adds --test flag)."),
       },
       annotations: {
-        title: "Telegram CLI Command",
+        title: "Connector CLI Command",
         readOnlyHint: true,
         destructiveHint: false,
       },
     },
     async ({
+      connector_type,
       action,
       bot_token,
       chat_id,
@@ -65,9 +73,9 @@ export function registerTelegramTools(server: McpServer): void {
       message,
       test_on_add,
     }) => {
-      const act = action;
+      const base = `revx connector ${connector_type}`;
 
-      switch (act) {
+      switch (action) {
         case "add": {
           if (!bot_token)
             return textResult("Missing required parameter: bot_token.");
@@ -75,7 +83,7 @@ export function registerTelegramTools(server: McpServer): void {
             return textResult("Missing required parameter: chat_id.");
 
           const parts = [
-            "revx telegram add",
+            `${base} add`,
             "--token",
             bot_token.trim(),
             "--chat-id",
@@ -85,18 +93,18 @@ export function registerTelegramTools(server: McpServer): void {
           if (test_on_add) parts.push("--test");
 
           return textResult(
-            `Action: Add a Telegram connection\n\n` +
+            `Action: Add a ${connector_type} connection\n\n` +
               `Command:\n  ${parts.join(" ")}\n\n` +
-              `Description: Adds a Telegram bot connection for alert notifications.` +
+              `Description: Adds a ${connector_type} bot connection for alert notifications.` +
               CLI_INSTALL_HINT,
           );
         }
 
         case "list":
           return textResult(
-            "Action: List all Telegram connections\n\n" +
-              "Command:\n  revx telegram list\n\n" +
-              "For JSON output:\n  revx telegram list --json" +
+            `Action: List all ${connector_type} connections\n\n` +
+              `Command:\n  ${base} list\n\n` +
+              `For JSON output:\n  ${base} list --json` +
               CLI_INSTALL_HINT,
           );
 
@@ -104,8 +112,8 @@ export function registerTelegramTools(server: McpServer): void {
           if (!connection_id)
             return textResult("Missing required parameter: connection_id.");
           return textResult(
-            `Action: Delete Telegram connection ${connection_id}\n\n` +
-              `Command:\n  revx telegram delete ${connection_id}` +
+            `Action: Delete ${connector_type} connection ${connection_id}\n\n` +
+              `Command:\n  ${base} delete ${connection_id}` +
               CLI_INSTALL_HINT,
           );
         }
@@ -114,8 +122,8 @@ export function registerTelegramTools(server: McpServer): void {
           if (!connection_id)
             return textResult("Missing required parameter: connection_id.");
           return textResult(
-            `Action: Enable Telegram connection ${connection_id}\n\n` +
-              `Command:\n  revx telegram enable ${connection_id}` +
+            `Action: Enable ${connector_type} connection ${connection_id}\n\n` +
+              `Command:\n  ${base} enable ${connection_id}` +
               CLI_INSTALL_HINT,
           );
         }
@@ -124,8 +132,8 @@ export function registerTelegramTools(server: McpServer): void {
           if (!connection_id)
             return textResult("Missing required parameter: connection_id.");
           return textResult(
-            `Action: Disable Telegram connection ${connection_id}\n\n` +
-              `Command:\n  revx telegram disable ${connection_id}` +
+            `Action: Disable ${connector_type} connection ${connection_id}\n\n` +
+              `Command:\n  ${base} disable ${connection_id}` +
               CLI_INSTALL_HINT,
           );
         }
@@ -133,10 +141,10 @@ export function registerTelegramTools(server: McpServer): void {
         case "test": {
           if (!connection_id)
             return textResult("Missing required parameter: connection_id.");
-          const parts = ["revx telegram test", connection_id];
+          const parts = [`${base} test`, connection_id];
           if (message) parts.push("--message", `"${message}"`);
           return textResult(
-            `Action: Test Telegram connection ${connection_id}\n\n` +
+            `Action: Test ${connector_type} connection ${connection_id}\n\n` +
               `Command:\n  ${parts.join(" ")}` +
               CLI_INSTALL_HINT,
           );

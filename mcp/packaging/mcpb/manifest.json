@@ -94,6 +94,10 @@
       "description": "Get all currently active (open) orders on your Revolut X account."
     },
     {
+      "name": "get_historical_orders",
+      "description": "Get your historical (completed, cancelled, rejected) orders on Revolut X. Optionally filter by trading pair and date range."
+    },
+    {
       "name": "get_client_trades",
       "description": "Get your personal trade history (fills) for a specific trading pair."
     },
@@ -114,8 +118,8 @@
       "description": "List all supported monitor types for the 'revx monitor' CLI command. Returns each type with description, config fields, and CLI usage example."
     },
     {
-      "name": "telegram_command",
-      "description": "Generate a revx CLI command for Telegram connection operations. Supports: add, list, delete, enable, disable, test. Returns the exact CLI command to run."
+      "name": "connector_command",
+      "description": "Generate a revx CLI command for notification connector operations. Supports connector types: telegram. Actions: add, list, delete, enable, disable, test. Returns the exact CLI command to run."
     }
   ],
   "user_config": {
