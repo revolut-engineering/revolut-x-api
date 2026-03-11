@@ -173,6 +173,7 @@ export function registerMonitorTools(server: McpServer): void {
         title: "Monitor CLI Command",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async ({
@@ -347,6 +348,7 @@ export function registerMonitorTools(server: McpServer): void {
         title: "List Monitor Types",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async () => {

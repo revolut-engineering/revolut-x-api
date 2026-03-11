@@ -231,6 +231,7 @@ export function registerStrategyTools(server: McpServer): void {
         title: "Strategy CLI Command",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async ({
@@ -351,6 +352,7 @@ export function registerStrategyTools(server: McpServer): void {
         title: "Grid Bot Status",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async ({ pair }) => {
@@ -383,6 +385,7 @@ export function registerStrategyTools(server: McpServer): void {
         title: "List Grid Bot States",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async () => {

@@ -61,6 +61,7 @@ export function registerConnectorTools(server: McpServer): void {
         title: "Connector CLI Command",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async ({

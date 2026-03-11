@@ -100,6 +100,14 @@ describe("tool annotations", () => {
     }
   });
 
+  it("every tool has openWorldHint annotation", async () => {
+    const tools = await listTools();
+    for (const tool of tools) {
+      expect(tool.annotations?.openWorldHint).toBeDefined();
+      expect(typeof tool.annotations?.openWorldHint).toBe("boolean");
+    }
+  });
+
   it("tool names are at most 64 characters", async () => {
     const tools = await listTools();
     for (const tool of tools) {

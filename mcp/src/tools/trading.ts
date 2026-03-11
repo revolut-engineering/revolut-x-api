@@ -62,6 +62,7 @@ export function registerTradingTools(server: McpServer): void {
         title: "Order CLI Command",
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
       },
     },
     async ({
