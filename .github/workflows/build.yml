@@ -13,9 +13,9 @@ jobs:
     name: Install Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -25,7 +25,7 @@ jobs:
             cli/package-lock.json
             mcp/package-lock.json
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         id: modules-cache
         with:
           path: |
@@ -52,13 +52,14 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -67,7 +68,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         id: api-dist-cache
         with:
           path: api/dist
@@ -81,13 +82,14 @@ jobs:
     needs: [install, build-api]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -96,7 +98,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -114,13 +116,14 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -141,13 +144,14 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -156,7 +160,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -174,13 +178,14 @@ jobs:
       run:
         working-directory: cli
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -189,7 +194,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -207,13 +212,14 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -222,7 +228,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -230,7 +236,7 @@ jobs:
 
       - run: npm pack
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: revolutx-api
           path: api/revolutx-api-*.tgz
@@ -240,13 +246,14 @@ jobs:
     needs: test-cli
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -255,7 +262,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -280,7 +287,7 @@ jobs:
           "
           npm pack
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: revolutx-cli
           path: cli/revolutx-cli-*.tgz
@@ -293,13 +300,14 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -308,7 +316,7 @@ jobs:
             mcp/node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -317,7 +325,7 @@ jobs:
       - name: Build MCPB archive
         run: bash scripts/build-mcpb.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: revolutx-mcp-mcpb
           path: mcp/dist/revolutx-mcp.mcpb
@@ -327,13 +335,14 @@ jobs:
     needs: [pack-api, pack-cli, pack-mcp]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -348,7 +357,7 @@ jobs:
           cd cli && npx @cyclonedx/cyclonedx-npm --output-file ../sbom-cli.json && cd ..
           cd mcp && npx @cyclonedx/cyclonedx-npm --output-file ../sbom-mcp.json && cd ..
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: sbom
           path: sbom-*.json
