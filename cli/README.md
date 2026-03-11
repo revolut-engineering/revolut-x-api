@@ -83,11 +83,6 @@ revx market candles BTC-USD        # OHLCV candles (default 1h)
   --until 2025-01-02               # End
 revx market orderbook BTC-USD      # Order book snapshot
   --limit 10                       # Depth (1-20)
-revx market trades                 # Public last trades (no auth)
-revx market trades BTC-USD         # All trades for pair (authenticated)
-  --start-date 2025-01-01
-  --end-date 2025-01-02
-  --limit 50
 ```
 
 ### Orders

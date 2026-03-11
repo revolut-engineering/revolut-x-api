@@ -15,23 +15,6 @@ export interface Trade {
   tid: string;
 }
 
-/** Trade from public endpoints (ISO-8601 string timestamps) */
-export interface PublicTrade {
-  tdt: string;
-  aid: string;
-  anm: string;
-  p: string;
-  pc: string;
-  pn: string;
-  q: string;
-  qc: string;
-  qn: string;
-  ve: string;
-  pdt: string;
-  vp: string;
-  tid: string;
-}
-
 export interface TradesOptions {
   startDate?: number;
   endDate?: number;

@@ -69,7 +69,6 @@ describe("CLI program", () => {
     expect(subNames).toContain("ticker");
     expect(subNames).toContain("candles");
     expect(subNames).toContain("orderbook");
-    expect(subNames).toContain("trades");
   });
 
   it("order has subcommands", () => {

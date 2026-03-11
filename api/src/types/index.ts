@@ -38,7 +38,7 @@ export type {
   HistoricalOrdersOptions,
 } from "./orders.js";
 
-export type { Trade, PublicTrade, TradesOptions } from "./trades.js";
+export type { Trade, TradesOptions } from "./trades.js";
 
 export type {
   Ticker,

@@ -13,7 +13,7 @@ import type {
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
 } from "./types/orders.js";
-import type { Trade, PublicTrade, TradesOptions } from "./types/trades.js";
+import type { Trade, TradesOptions } from "./types/trades.js";
 import type {
   Ticker,
   TickersOptions,
@@ -183,22 +183,6 @@ export class RevolutXClient {
     return (await this.request("GET", `/order-book/${symbol}`, params)) as {
       data: OrderBook<OrderBookLevel>;
       metadata: { timestamp: number };
-    };
-  }
-
-  async getLastTrades(): Promise<{
-    data: PublicTrade[];
-    metadata: { timestamp: string };
-  }> {
-    return (await this.request(
-      "GET",
-      "/public/last-trades",
-      undefined,
-      undefined,
-      true,
-    )) as {
-      data: PublicTrade[];
-      metadata: { timestamp: string };
     };
   }
 

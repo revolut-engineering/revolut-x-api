@@ -78,14 +78,6 @@
       "description": "Get OHLCV candlestick data for a trading pair."
     },
     {
-      "name": "get_public_trades",
-      "description": "Get recent public trades for a trading pair."
-    },
-    {
-      "name": "get_last_trades",
-      "description": "Get the last 100 trades executed across all pairs on Revolut X. Note: This endpoint has a stricter rate limit (20 per 10 seconds)."
-    },
-    {
       "name": "order_command",
       "description": "Generate a revx CLI command for order operations. Supports: place_market, place_limit, cancel. Returns the exact CLI command to run."
     },

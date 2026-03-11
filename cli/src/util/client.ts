@@ -14,7 +14,3 @@ export function getClient(opts?: { requireAuth?: boolean }): RevolutXClient {
 
   return cachedClient;
 }
-
-export function getPublicClient(): RevolutXClient {
-  return new RevolutXClient({ autoLoadCredentials: false });
-}

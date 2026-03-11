@@ -6,7 +6,7 @@ Built on the [Revolut X Exchange REST API](https://developer.revolut.com/docs/x-
 
 ## Features
 
-- **Market data** — live tickers, order books, OHLCV candles, public trades for all Revolut X pairs
+- **Market data** — live tickers, order books, OHLCV candles for all Revolut X pairs
 - **Account management** — check balances across all held cryptocurrencies and fiat currencies
 - **Grid trading backtests** — simulate grid strategies on historical data, optimize parameters, analyze P&L
 - **Candlestick analysis** — technical indicators (RSI, MACD, EMA, Bollinger Bands, ATR, OBI, volume)

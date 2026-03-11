@@ -68,7 +68,6 @@ export type {
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
   Trade,
-  PublicTrade,
   TradesOptions,
   Ticker,
   TickersOptions,

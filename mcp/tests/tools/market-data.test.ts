@@ -9,8 +9,6 @@ const mockClient = {
   getOrderBook: vi.fn(),
   getTickers: vi.fn(),
   getCandles: vi.fn(),
-  getAllTrades: vi.fn(),
-  getLastTrades: vi.fn(),
 };
 
 vi.mock("../../src/server.js", () => ({
@@ -179,61 +177,5 @@ describe("market data tools", () => {
     const text = getText(result);
     expect(text).toContain("BTC-USD");
     expect(text).toContain("90000");
-  });
-
-  it("get_public_trades validates symbol", async () => {
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_public_trades",
-      arguments: { symbol: "bad" },
-    });
-    expect(getText(result)).toContain("Invalid symbol format");
-  });
-
-  it("get_public_trades returns formatted data", async () => {
-    mockClient.getAllTrades.mockResolvedValue({
-      data: [
-        {
-          aid: "BTC",
-          p: "100000",
-          pc: "USD",
-          q: "0.1",
-          qc: "BTC",
-          tdt: "2024-01-01T12:00:00",
-        },
-      ],
-      metadata: { timestamp: 1700000000000 },
-    });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_public_trades",
-      arguments: { symbol: "BTC-USD" },
-    });
-    const text = getText(result);
-    expect(text).toContain("100000");
-  });
-
-  it("get_last_trades returns formatted data", async () => {
-    mockClient.getLastTrades.mockResolvedValue({
-      data: [{ aid: "BTC", p: "100000", q: "0.5", tdt: "2024-01-01T12:00:00" }],
-    });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_last_trades",
-      arguments: {},
-    });
-    const text = getText(result);
-    expect(text).toContain("Last trades");
-    expect(text).toContain("100000");
-  });
-
-  it("get_last_trades returns empty message when no trades", async () => {
-    mockClient.getLastTrades.mockResolvedValue({ data: [] });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_last_trades",
-      arguments: {},
-    });
-    expect(getText(result)).toContain("No recent trades found");
   });
 });

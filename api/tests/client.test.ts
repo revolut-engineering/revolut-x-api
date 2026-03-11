@@ -400,40 +400,6 @@ describe("getPrivateTrades", () => {
   });
 });
 
-describe("getLastTrades", () => {
-  it("returns public trades (no auth needed)", async () => {
-    const unauthClient = new RevolutXClient({
-      baseUrl: BASE,
-      maxRetries: 0,
-      autoLoadCredentials: false,
-    });
-    nock(BASE)
-      .get("/api/1.0/public/last-trades")
-      .reply(200, {
-        data: [
-          {
-            tdt: "2025-01-01T00:00:00Z",
-            aid: "BTC",
-            anm: "Bitcoin",
-            p: "95000",
-            pc: "USD",
-            pn: "MONE",
-            q: "0.1",
-            qc: "BTC",
-            qn: "UNIT",
-            ve: "REVX",
-            pdt: "2025-01-01T00:00:00Z",
-            vp: "REVX",
-            tid: "t1",
-          },
-        ],
-        metadata: { timestamp: "2025-01-01T00:00:00Z" },
-      });
-    const result = await unauthClient.getLastTrades();
-    expect(result.data[0].tdt).toBe("2025-01-01T00:00:00Z");
-  });
-});
-
 describe("getPublicOrderBook", () => {
   it("returns public order book (no auth needed)", async () => {
     const unauthClient = new RevolutXClient({

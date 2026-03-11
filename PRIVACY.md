@@ -23,7 +23,7 @@ RevolutX is a **local MCP server** that runs entirely on your machine (via STDIO
 
 ### Exchange Data (fetched on demand)
 
-- Account balances, order books, tickers, candlestick data, public trades, active orders, and trade history are fetched from the Revolut X API on demand when you invoke the corresponding MCP tools.
+- Account balances, order books, tickers, candlestick data, active orders, and trade history are fetched from the Revolut X API on demand when you invoke the corresponding MCP tools.
 - This data is **not persisted** — it is returned to the LLM client and discarded.
 
 ### Alert and Event Data (local SQLite)

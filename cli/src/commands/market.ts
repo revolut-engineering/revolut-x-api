@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import type { Ticker, Candle } from "revolutx-api";
-import { getClient, getPublicClient } from "../util/client.js";
+import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
 import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
 import {
@@ -25,8 +25,7 @@ Examples:
   $ revx market ticker BTC-USD         Get BTC-USD ticker
   $ revx market candles BTC-USD        Get hourly candles
   $ revx market candles BTC-USD --interval 5  Get 5-minute candles
-  $ revx market orderbook BTC-USD      Get order book (top 10)
-  $ revx market trades                 Get recent public trades`,
+  $ revx market orderbook BTC-USD      Get order book (top 10)`,
     );
 
   market
@@ -226,92 +225,6 @@ Examples:
               { header: "Quantity", key: "q", align: "right" },
               { header: "Orders", key: "no", align: "right" },
             ]);
-          }
-        } catch (err) {
-          handleError(err);
-        }
-      },
-    );
-
-  market
-    .command("trades [symbol]")
-    .description(
-      "Get trades (public last-trades if no symbol, or all trades for a pair)",
-    )
-    .option("--start-date <date>", "Start date (ISO or epoch ms)")
-    .option("--end-date <date>", "End date (ISO or epoch ms)")
-    .option("--limit <n>", "Max results")
-    .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
-    .action(
-      async (
-        symbol: string | undefined,
-        opts: {
-          startDate?: string;
-          endDate?: string;
-          limit?: string;
-          json?: boolean;
-          output?: string;
-        },
-      ) => {
-        try {
-          if (!symbol) {
-            const client = getPublicClient();
-            const result = await client.getLastTrades();
-            let trades = result.data;
-
-            if (opts.startDate) {
-              const start = parseTimestamp(opts.startDate);
-              trades = trades.filter((t) => new Date(t.tdt).getTime() >= start);
-            }
-            if (opts.endDate) {
-              const end = parseTimestamp(opts.endDate);
-              trades = trades.filter((t) => new Date(t.tdt).getTime() <= end);
-            }
-            if (opts.limit) {
-              trades = trades.slice(0, parsePositiveInt(opts.limit, "limit"));
-            }
-
-            if (isJsonOutput(opts)) {
-              printJson({ ...result, data: trades });
-            } else {
-              printTable(trades, [
-                { header: "Time", key: "tdt" },
-                { header: "Asset", key: "anm" },
-                { header: "Price", key: "p", align: "right" },
-                { header: "Qty", key: "q", align: "right" },
-                { header: "Side", key: "vp" },
-              ]);
-            }
-          } else {
-            const client = getClient({ requireAuth: true });
-            const tradeOpts: {
-              startDate?: number;
-              endDate?: number;
-              limit?: number;
-            } = {};
-            if (opts.startDate)
-              tradeOpts.startDate = parseTimestamp(opts.startDate);
-            if (opts.endDate) tradeOpts.endDate = parseTimestamp(opts.endDate);
-            if (opts.limit)
-              tradeOpts.limit = parsePositiveInt(opts.limit, "limit");
-
-            const result = await client.getAllTrades(symbol, tradeOpts);
-
-            if (isJsonOutput(opts)) {
-              printJson(result);
-            } else {
-              printTable(result.data, [
-                {
-                  header: "Time",
-                  accessor: (t) => new Date(t.tdt).toISOString(),
-                },
-                { header: "Asset", key: "anm" },
-                { header: "Price", key: "p", align: "right" },
-                { header: "Qty", key: "q", align: "right" },
-                { header: "Trade ID", key: "tid" },
-              ]);
-            }
           }
         } catch (err) {
           handleError(err);

@@ -111,10 +111,6 @@ const book = await client.getOrderBook("BTC-USD", { limit: 10 });
 ```typescript
 const client = new RevolutXClient({ autoLoadCredentials: false });
 
-// Last 100 public trades
-const trades = await client.getLastTrades();
-// → { data: PublicTrade[], metadata: { timestamp } }
-
 // Public order book
 const book = await client.getPublicOrderBook("ETH-USD");
 // → { data: { asks, bids }, metadata: { timestamp } }
