@@ -21,20 +21,30 @@ export {
   saveConfig,
   isConfigured,
   type RevolutXConfig,
+  DEFAULT_TIMEOUT_MS,
+  DEFAULT_MAX_RETRIES,
 } from "./config/settings.js";
 
 export {
   RevolutXError,
   AuthenticationError,
+  ForbiddenError,
   RateLimitError,
   OrderError,
   NotFoundError,
   ConflictError,
+  ServerError,
   NetworkError,
   AuthNotConfiguredError,
+  ValidationError,
 } from "./http/errors.js";
 
-export { RateLimiter, TokenBucket } from "./http/rate-limiter.js";
+export {
+  Logger,
+  type LogLevel,
+  type LogEntry,
+  type LogCallback,
+} from "./logging/logger.js";
 
 export type {
   ErrorResponse,
@@ -74,9 +84,7 @@ export type {
   Candle,
   CandlesOptions,
   OrderBookLevel,
-  OrderBookPublicLevel,
   OrderBook,
   OrderBookOptions,
   TickerMetadata,
-  PublicMetadata,
 } from "./types/index.js";

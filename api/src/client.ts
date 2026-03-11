@@ -1,34 +1,32 @@
-import type { KeyObject } from "node:crypto";
-import { randomUUID } from "node:crypto";
-import { makeRequest, RateLimiter, type RequestOptions } from "./http/index.js";
-import { AuthNotConfiguredError } from "./http/errors.js";
-import { loadPrivateKey } from "./auth/keypair.js";
-import { loadCredentials } from "./auth/credentials.js";
-import type { AccountBalance } from "./types/account.js";
-import type { CurrencyMap, CurrencyPairMap } from "./types/config.js";
+import type {KeyObject} from "node:crypto";
+import {randomUUID} from "node:crypto";
+import {makeRequest, type RequestOptions} from "./http/index.js";
+import {AuthNotConfiguredError, ValidationError} from "./http/errors.js";
+import {loadPrivateKey} from "./auth/keypair.js";
+import {loadCredentials} from "./auth/credentials.js";
+import {DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS,} from "./config/settings.js";
+import {type LogCallback, Logger} from "./logging/logger.js";
+import {placeOrderSchema} from "./validation/schemas.js";
+import type {AccountBalance} from "./types/account.js";
+import type {CurrencyMap, CurrencyPairMap} from "./types/config.js";
 import type {
+  ActiveOrdersOptions,
+  HistoricalOrdersOptions,
   Order,
   OrderPlacementResult,
   PlaceOrderParams,
-  ActiveOrdersOptions,
-  HistoricalOrdersOptions,
 } from "./types/orders.js";
-import type { Trade, TradesOptions } from "./types/trades.js";
+import type {PublicTrade, Trade, TradesOptions} from "./types/trades.js";
 import type {
-  Ticker,
-  TickersOptions,
   Candle,
   CandlesOptions,
-  OrderBookLevel,
-  OrderBookPublicLevel,
   OrderBook,
+  OrderBookLevel,
   OrderBookOptions,
+  Ticker,
+  TickersOptions,
 } from "./types/market.js";
-import type {
-  PaginatedResponse,
-  DataResponse,
-  DataArrayResponse,
-} from "./types/common.js";
+import type {DataArrayResponse, DataResponse, PaginatedResponse,} from "./types/common.js";
 
 const RESOLUTION_MAP: Record<string, number> = {
   "5m": 5,
@@ -52,10 +50,12 @@ export interface RevolutXClientOptions {
   timeout?: number;
   maxRetries?: number;
   autoLoadCredentials?: boolean;
+  logger?: LogCallback;
 }
 
 export class RevolutXClient {
   private readonly requestOptions: RequestOptions;
+  private readonly logger: Logger;
 
   constructor(options: RevolutXClientOptions = {}) {
     let apiKey = options.apiKey;
@@ -66,12 +66,14 @@ export class RevolutXClient {
     }
 
     if (!apiKey && !privateKey && options.autoLoadCredentials !== false) {
-      const creds = loadCredentials();
-      if (creds) {
-        apiKey = creds.apiKey;
-        privateKey = creds.privateKey;
+      const credentials = loadCredentials();
+      if (credentials) {
+        apiKey = credentials.apiKey;
+        privateKey = credentials.privateKey;
       }
     }
+
+    this.logger = new Logger(options.logger);
 
     this.requestOptions = {
       baseUrl:
@@ -80,9 +82,9 @@ export class RevolutXClient {
         "https://revx.revolut.com",
       apiKey,
       privateKey,
-      rateLimiter: new RateLimiter(),
-      timeout: options.timeout ?? 30_000,
-      maxRetries: options.maxRetries ?? 3,
+      timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
+      maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+      logger: this.logger,
     };
   }
 
@@ -98,42 +100,34 @@ export class RevolutXClient {
     }
   }
 
-  private async request(
+  private async request<T>(
     method: string,
     path: string,
     params?: Record<string, unknown>,
     body?: Record<string, unknown>,
-    isPublic?: boolean,
-  ): Promise<unknown> {
-    return makeRequest(
-      this.requestOptions,
-      method,
-      path,
-      params,
-      body,
-      isPublic,
-    );
+  ): Promise<T> {
+    return await makeRequest(
+        this.requestOptions,
+        method,
+        path,
+        params,
+        body,
+    ) as T;
   }
 
   async getBalances(): Promise<AccountBalance[]> {
     this.requireAuth();
-    return (await this.request("GET", "/balances")) as AccountBalance[];
+    return this.request<AccountBalance[]>("GET", "/balances");
   }
 
   async getCurrencies(): Promise<CurrencyMap> {
     this.requireAuth();
-    return (await this.request(
-      "GET",
-      "/configuration/currencies",
-    )) as CurrencyMap;
+    return this.request<CurrencyMap>("GET", "/configuration/currencies");
   }
 
   async getCurrencyPairs(): Promise<CurrencyPairMap> {
     this.requireAuth();
-    return (await this.request(
-      "GET",
-      "/configuration/pairs",
-    )) as CurrencyPairMap;
+    return this.request<CurrencyPairMap>("GET", "/configuration/pairs");
   }
 
   async getTickers(
@@ -142,10 +136,11 @@ export class RevolutXClient {
     this.requireAuth();
     const params: Record<string, unknown> = {};
     if (opts?.symbols?.length) params.symbols = opts.symbols.join(",");
-    return (await this.request("GET", "/tickers", params)) as {
-      data: Ticker[];
-      metadata: { timestamp: number };
-    };
+    return this.request<{ data: Ticker[]; metadata: { timestamp: number } }>(
+      "GET",
+      "/tickers",
+      params,
+    );
   }
 
   async getCandles(
@@ -161,13 +156,13 @@ export class RevolutXClient {
           : (RESOLUTION_MAP[String(opts.interval)] ?? opts.interval);
       params.interval = minutes;
     }
-    if (opts?.since !== undefined) params.since = opts.since;
-    if (opts?.until !== undefined) params.until = opts.until;
-    return (await this.request(
+    if (opts?.startDate !== undefined) params.since = opts.startDate;
+    if (opts?.endDate !== undefined) params.until = opts.endDate;
+    return this.request<DataArrayResponse<Candle>>(
       "GET",
       `/candles/${symbol}`,
       params,
-    )) as DataArrayResponse<Candle>;
+    );
   }
 
   async getOrderBook(
@@ -180,32 +175,24 @@ export class RevolutXClient {
     this.requireAuth();
     const params: Record<string, unknown> = {};
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return (await this.request("GET", `/order-book/${symbol}`, params)) as {
+    return this.request<{
       data: OrderBook<OrderBookLevel>;
       metadata: { timestamp: number };
-    };
-  }
-
-  async getPublicOrderBook(symbol: string): Promise<{
-    data: OrderBook<OrderBookPublicLevel>;
-    metadata: { timestamp: string };
-  }> {
-    return (await this.request(
-      "GET",
-      `/public/order-book/${symbol}`,
-      undefined,
-      undefined,
-      true,
-    )) as {
-      data: OrderBook<OrderBookPublicLevel>;
-      metadata: { timestamp: string };
-    };
+    }>("GET", `/order-book/${symbol}`, params);
   }
 
   async placeOrder(
     params: PlaceOrderParams,
   ): Promise<DataResponse<OrderPlacementResult>> {
     this.requireAuth();
+
+    const validation = placeOrderSchema.safeParse(params);
+    if (!validation.success) {
+      throw new ValidationError(
+        "Invalid order parameters",
+        validation.error.errors,
+      );
+    }
     const body: Record<string, unknown> = {
       client_order_id: params.clientOrderId ?? randomUUID(),
       symbol: params.symbol,
@@ -232,12 +219,12 @@ export class RevolutXClient {
       body.order_configuration = { market: marketConfig };
     }
 
-    return (await this.request(
+    return this.request<DataResponse<OrderPlacementResult>>(
       "POST",
       "/orders",
       undefined,
       body,
-    )) as DataResponse<OrderPlacementResult>;
+    );
   }
 
   async getActiveOrders(
@@ -253,11 +240,11 @@ export class RevolutXClient {
     if (opts?.side) params.side = opts.side;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return (await this.request(
+    return this.request<PaginatedResponse<Order>>(
       "GET",
       "/orders/active",
       params,
-    )) as PaginatedResponse<Order>;
+    );
   }
 
   async getHistoricalOrders(
@@ -274,19 +261,16 @@ export class RevolutXClient {
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return (await this.request(
+    return this.request<PaginatedResponse<Order>>(
       "GET",
       "/orders/historical",
       params,
-    )) as PaginatedResponse<Order>;
+    );
   }
 
   async getOrder(venueOrderId: string): Promise<DataResponse<Order>> {
     this.requireAuth();
-    return (await this.request(
-      "GET",
-      `/orders/${venueOrderId}`,
-    )) as DataResponse<Order>;
+    return this.request<DataResponse<Order>>("GET", `/orders/${venueOrderId}`);
   }
 
   async cancelOrder(venueOrderId: string): Promise<void> {
@@ -294,29 +278,34 @@ export class RevolutXClient {
     await this.request("DELETE", `/orders/${venueOrderId}`);
   }
 
+  async cancelAllOrders(): Promise<void> {
+    this.requireAuth();
+    await this.request("DELETE", "/orders");
+  }
+
   async getOrderFills(venueOrderId: string): Promise<DataArrayResponse<Trade>> {
     this.requireAuth();
-    return (await this.request(
+    return this.request<DataArrayResponse<Trade>>(
       "GET",
       `/orders/fills/${venueOrderId}`,
-    )) as DataArrayResponse<Trade>;
+    );
   }
 
   async getAllTrades(
     symbol: string,
     opts?: TradesOptions,
-  ): Promise<PaginatedResponse<Trade>> {
+  ): Promise<PaginatedResponse<PublicTrade>> {
     this.requireAuth();
     const params: Record<string, unknown> = {};
     if (opts?.startDate !== undefined) params.start_date = opts.startDate;
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return (await this.request(
+    return this.request<PaginatedResponse<PublicTrade>>(
       "GET",
       `/trades/all/${symbol}`,
       params,
-    )) as PaginatedResponse<Trade>;
+    );
   }
 
   async getPrivateTrades(
@@ -329,10 +318,10 @@ export class RevolutXClient {
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return (await this.request(
+    return this.request<PaginatedResponse<Trade>>(
       "GET",
       `/trades/private/${symbol}`,
       params,
-    )) as PaginatedResponse<Trade>;
+    );
   }
 }

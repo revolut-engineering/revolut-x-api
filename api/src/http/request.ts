@@ -1,13 +1,15 @@
 import type { KeyObject } from "node:crypto";
 import { buildAuthHeaders } from "../auth/signer.js";
-import { RateLimiter } from "./rate-limiter.js";
+import type { Logger } from "../logging/logger.js";
 import {
   RevolutXError,
   AuthenticationError,
+  ForbiddenError,
   RateLimitError,
   OrderError,
   NotFoundError,
   ConflictError,
+  ServerError,
   NetworkError,
 } from "./errors.js";
 
@@ -15,9 +17,9 @@ export interface RequestOptions {
   baseUrl: string;
   apiKey?: string;
   privateKey?: KeyObject;
-  rateLimiter: RateLimiter;
   timeout: number;
   maxRetries: number;
+  logger: Logger;
 }
 
 function buildQueryString(params: Record<string, unknown>): string {
@@ -27,7 +29,9 @@ function buildQueryString(params: Record<string, unknown>): string {
     entries.push([key, String(value)]);
   }
   entries.sort((a, b) => a[0].localeCompare(b[0]));
-  return entries.map(([k, v]) => `${k}=${v}`).join("&");
+  return entries
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
 }
 
 async function raiseForStatus(response: Response): Promise<void> {
@@ -41,10 +45,16 @@ async function raiseForStatus(response: Response): Promise<void> {
 
   switch (response.status) {
     case 401:
-    case 403:
       throw new AuthenticationError(message);
-    case 429:
-      throw new RateLimitError(message);
+    case 403:
+      throw new ForbiddenError(message);
+    case 429: {
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const retryAfter = retryAfterHeader
+        ? Number(retryAfterHeader)
+        : undefined;
+      throw new RateLimitError(message, retryAfter);
+    }
     case 400:
       throw new OrderError(message);
     case 404:
@@ -52,6 +62,7 @@ async function raiseForStatus(response: Response): Promise<void> {
     case 409:
       throw new ConflictError(message);
     default:
+      if (response.status >= 500) throw new ServerError(message, response.status);
       throw new RevolutXError(message, response.status);
   }
 }
@@ -62,25 +73,23 @@ export async function makeRequest(
   path: string,
   params?: Record<string, unknown>,
   jsonBody?: Record<string, unknown>,
-  isPublic: boolean = false,
 ): Promise<unknown> {
   const queryString = params ? buildQueryString(params) : "";
   const bodyString = jsonBody ? JSON.stringify(jsonBody) : "";
   const fullPath = `/api/1.0${path}`;
   const url = `${options.baseUrl}${fullPath}${queryString ? `?${queryString}` : ""}`;
 
-  if (isPublic) {
-    await options.rateLimiter.acquirePublic();
-  } else {
-    await options.rateLimiter.acquireGeneral();
-  }
+  options.logger.debug("Making API request", {
+    method,
+    path: fullPath,
+  });
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
 
-  if (!isPublic && options.apiKey && options.privateKey) {
+  if (options.apiKey && options.privateKey) {
     const authHeaders = buildAuthHeaders(
       options.apiKey,
       options.privateKey,
@@ -96,10 +105,16 @@ export async function makeRequest(
 
   for (let attempt = 0; attempt <= options.maxRetries; attempt++) {
     if (attempt > 0) {
-      const delay = Math.pow(2, attempt) * 0.5 + Math.random() * 0.5;
-      await new Promise((r) => setTimeout(r, delay * 1000));
+      const delayMs = Math.pow(2, attempt) * 500 + Math.random() * 500;
+      options.logger.info("Retrying request", {
+        attempt,
+        maxRetries: options.maxRetries,
+        delayMs,
+        path: fullPath,
+      });
+      await new Promise((r) => setTimeout(r, delayMs));
 
-      if (!isPublic && options.apiKey && options.privateKey) {
+      if (options.apiKey && options.privateKey) {
         const authHeaders = buildAuthHeaders(
           options.apiKey,
           options.privateKey,
@@ -122,24 +137,43 @@ export async function makeRequest(
 
       await raiseForStatus(response);
 
-      if (response.status === 204) return {};
+      if (response.status === 204) {
+        options.logger.debug("Request completed", {
+          status: 204,
+          path: fullPath,
+        });
+        return {};
+      }
 
       const text = await response.text();
       if (!text) return {};
+      options.logger.debug("Request completed", {
+        status: response.status,
+        path: fullPath,
+      });
       return JSON.parse(text);
     } catch (error) {
+      options.logger.warn("Request failed", {
+        attempt,
+        path: fullPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (
         error instanceof AuthenticationError ||
+        error instanceof ForbiddenError ||
+        error instanceof RateLimitError ||
         error instanceof OrderError ||
         error instanceof NotFoundError
       ) {
         throw error;
       }
 
-      lastError = error instanceof Error ? error : new Error(String(error));
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error(String(error), { cause: error });
 
       if (
-        error instanceof RateLimitError ||
         error instanceof ConflictError ||
         (error instanceof RevolutXError &&
           error.statusCode &&
@@ -153,7 +187,7 @@ export async function makeRequest(
         (error instanceof DOMException && error.name === "TimeoutError") ||
         (error instanceof Error && error.name === "AbortError")
       ) {
-        lastError = new NetworkError(error.message);
+        lastError = new NetworkError(error.message, { cause: error });
         continue;
       }
 
@@ -161,5 +195,10 @@ export async function makeRequest(
     }
   }
 
+  options.logger.error("Request failed after all retries", {
+    path: fullPath,
+    maxRetries: options.maxRetries,
+    error: lastError instanceof Error ? lastError.message : String(lastError),
+  });
   throw lastError ?? new NetworkError("Request failed after retries");
 }
