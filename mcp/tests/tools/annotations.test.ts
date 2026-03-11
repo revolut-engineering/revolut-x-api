@@ -61,7 +61,7 @@ const EXPECTED_TOOL_NAMES = [
   "grid_optimize",
   "monitor_command",
   "monitor_types",
-  "telegram_command",
+  "connector_command",
 ];
 
 describe("tool annotations", () => {

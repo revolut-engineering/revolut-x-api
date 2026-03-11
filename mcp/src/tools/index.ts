@@ -5,7 +5,7 @@ import { registerMarketDataTools } from "./market-data.js";
 import { registerTradingTools } from "./trading.js";
 import { registerBacktestTools } from "./backtest.js";
 import { registerMonitorTools } from "./alerts.js";
-import { registerTelegramTools } from "./telegram.js";
+import { registerConnectorTools } from "./connector.js";
 
 export function registerAllTools(server: McpServer): void {
   registerSetupTools(server);
@@ -14,5 +14,5 @@ export function registerAllTools(server: McpServer): void {
   registerTradingTools(server);
   registerBacktestTools(server);
   registerMonitorTools(server);
-  registerTelegramTools(server);
+  registerConnectorTools(server);
 }

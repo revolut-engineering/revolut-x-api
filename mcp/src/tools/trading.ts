@@ -248,6 +248,107 @@ export function registerTradingTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "get_historical_orders",
+    {
+      title: "Get Historical Orders",
+      description:
+        "Get your historical (completed, cancelled, rejected) orders on Revolut X. " +
+        "Optionally filter by trading pair and date range.",
+      inputSchema: {
+        symbol: z
+          .string()
+          .optional()
+          .describe(
+            'Filter by trading pair, e.g. "BTC-USD". Omit to get orders for all pairs.',
+          ),
+        start_date: z
+          .number()
+          .optional()
+          .describe("Start date as epoch milliseconds."),
+        end_date: z
+          .number()
+          .optional()
+          .describe("End date as epoch milliseconds."),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Number of orders to return, 1-100 (default 20)."),
+      },
+      annotations: {
+        title: "Get Historical Orders",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ symbol, start_date, end_date, limit }) => {
+      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
+      const { AuthNotConfiguredError } = await import("revolutx-api");
+
+      if (symbol) {
+        symbol = symbol.trim().toUpperCase();
+        const error = validateSymbol(symbol);
+        if (error) return textResult(error);
+      }
+
+      limit = Math.max(1, Math.min(100, limit));
+
+      const opts: Record<string, unknown> = { limit };
+      if (symbol) opts.symbols = [symbol];
+      if (start_date !== undefined) opts.startDate = start_date;
+      if (end_date !== undefined) opts.endDate = end_date;
+
+      let result;
+      try {
+        result = await getRevolutXClient().getHistoricalOrders(opts);
+      } catch (error) {
+        if (error instanceof AuthNotConfiguredError)
+          return textResult(SETUP_GUIDE);
+        throw error;
+      }
+
+      const orders = result.data;
+
+      if (!orders.length) {
+        return textResult("No historical orders found.");
+      }
+
+      const lines = ["Historical orders:\n"];
+      for (const o of orders) {
+        const priceLine = o.price ? `  Price: ${o.price}\n` : "";
+        const avgFillLine = o.average_fill_price
+          ? `  Avg Fill Price: ${o.average_fill_price}\n`
+          : "";
+        lines.push(
+          `  Order ID: ${o.id}\n` +
+            `  Client Order ID: ${o.client_order_id}\n` +
+            `  Symbol: ${o.symbol}\n` +
+            `  Side: ${o.side}\n` +
+            `  Type: ${o.type}\n` +
+            priceLine +
+            avgFillLine +
+            `  Quantity: ${o.quantity}\n` +
+            `  Filled: ${o.filled_quantity}\n` +
+            `  Remaining: ${o.leaves_quantity}\n` +
+            `  Status: ${o.status}\n` +
+            `  Time in force: ${o.time_in_force}\n` +
+            `  Created: ${o.created_date}\n`,
+        );
+      }
+
+      if (result.metadata.next_cursor) {
+        lines.push(
+          `\nMore orders available (cursor: ${result.metadata.next_cursor})`,
+        );
+      }
+
+      return textResult(lines.join("\n"));
+    },
+  );
+
+  server.registerTool(
     "get_client_trades",
     {
       title: "Get Trade History",

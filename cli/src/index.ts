@@ -5,7 +5,7 @@ import { registerAccountCommand } from "./commands/account.js";
 import { registerMarketCommand } from "./commands/market.js";
 import { registerOrderCommand } from "./commands/order.js";
 import { registerTradeCommand } from "./commands/trade.js";
-import { registerTelegramCommand } from "./commands/telegram.js";
+import { registerConnectorCommand } from "./commands/connector.js";
 import { registerMonitorCommand } from "./commands/monitor.js";
 import { registerEventsCommand } from "./commands/events.js";
 
@@ -30,7 +30,7 @@ Examples:
   $ revx order place BTC-USD buy 0.001 --limit 95000
   $ revx order list                       List active orders
   $ revx trade history BTC-USD            Show private trade history
-  $ revx telegram add --token <token> --chat-id <id>
+  $ revx connector telegram add --token <token> --chat-id <id>
   $ revx monitor price BTC-USD --direction above --threshold 100000
   $ revx monitor rsi ETH-USD --direction above --threshold 70
   $ revx events                           View alert events`,
@@ -41,7 +41,7 @@ Examples:
   registerMarketCommand(program);
   registerOrderCommand(program);
   registerTradeCommand(program);
-  registerTelegramCommand(program);
+  registerConnectorCommand(program);
   registerMonitorCommand(program);
   registerEventsCommand(program);
 

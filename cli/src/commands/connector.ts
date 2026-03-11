@@ -61,19 +61,23 @@ const CONN_COLUMNS: ColumnDef<TelegramConnection>[] = [
   { header: "Created", accessor: (c) => c.created_at.slice(0, 19) },
 ];
 
-export function registerTelegramCommand(program: Command): void {
-  const telegram = program
+export function registerConnectorCommand(program: Command): void {
+  const connector = program
+    .command("connector")
+    .description("Notification connector management");
+
+  const telegram = connector
     .command("telegram")
     .description("Telegram connection management")
     .addHelpText(
       "after",
       `
 Examples:
-  $ revx telegram add --token <token> --chat-id <id>  Add connection
-  $ revx telegram add --token <token> --chat-id <id> --test
-  $ revx telegram list                                List connections
-  $ revx telegram test <id>                           Send test message
-  $ revx telegram delete <id>                         Delete connection`,
+  $ revx connector telegram add --token <token> --chat-id <id>  Add connection
+  $ revx connector telegram add --token <token> --chat-id <id> --test
+  $ revx connector telegram list                                List connections
+  $ revx connector telegram test <id>                           Send test message
+  $ revx connector telegram delete <id>                         Delete connection`,
     );
 
   telegram

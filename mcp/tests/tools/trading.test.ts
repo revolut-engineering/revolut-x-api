@@ -5,6 +5,7 @@ import { registerTradingTools } from "../../src/tools/trading.js";
 
 const mockClient = {
   getActiveOrders: vi.fn(),
+  getHistoricalOrders: vi.fn(),
   getPrivateTrades: vi.fn(),
 };
 
@@ -246,5 +247,124 @@ describe("trading read-only tools", () => {
     const text = getText(result);
     expect(text).toContain("order-1");
     expect(text).toContain("90000");
+  });
+
+  it("get_historical_orders returns formatted list", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          id: "hist-1",
+          client_order_id: "co-hist-1",
+          symbol: "BTC-USD",
+          side: "buy",
+          type: "limit",
+          price: "92000",
+          average_fill_price: "91500",
+          quantity: "0.5",
+          filled_quantity: "0.5",
+          leaves_quantity: "0",
+          status: "filled",
+          time_in_force: "GTC",
+          created_date: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {},
+    });
+    const text = getText(result);
+    expect(text).toContain("Historical orders:");
+    expect(text).toContain("hist-1");
+    expect(text).toContain("92000");
+    expect(text).toContain("Avg Fill Price: 91500");
+  });
+
+  it("get_historical_orders handles empty result", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {},
+    });
+    expect(getText(result)).toContain("No historical orders found");
+  });
+
+  it("get_historical_orders returns setup guide on auth error", async () => {
+    const { AuthNotConfiguredError } = await import("revolutx-api");
+    mockClient.getHistoricalOrders.mockRejectedValue(
+      new AuthNotConfiguredError(),
+    );
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {},
+    });
+    expect(getText(result)).toContain("Setup guide text");
+  });
+
+  it("get_historical_orders validates symbol when provided", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: { symbol: "bad" },
+    });
+    expect(getText(result)).toContain("Invalid symbol format");
+  });
+
+  it("get_historical_orders passes symbol and date filters", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    await client.callTool({
+      name: "get_historical_orders",
+      arguments: {
+        symbol: "ETH-EUR",
+        start_date: 1700000000000,
+        end_date: 1700086400000,
+        limit: 10,
+      },
+    });
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith({
+      symbols: ["ETH-EUR"],
+      startDate: 1700000000000,
+      endDate: 1700086400000,
+      limit: 10,
+    });
+  });
+
+  it("get_historical_orders shows cursor when more results available", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          id: "hist-2",
+          client_order_id: "co-hist-2",
+          symbol: "ETH-USD",
+          side: "sell",
+          type: "market",
+          quantity: "1",
+          filled_quantity: "1",
+          leaves_quantity: "0",
+          status: "filled",
+          time_in_force: "IOC",
+          created_date: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000, next_cursor: "abc123" },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {},
+    });
+    const text = getText(result);
+    expect(text).toContain("More orders available (cursor: abc123)");
   });
 });
