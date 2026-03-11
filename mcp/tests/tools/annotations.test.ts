@@ -11,6 +11,7 @@ vi.mock("../../src/server.js", () => ({
 vi.mock("revolutx-api", () => ({
   AuthNotConfiguredError: class extends Error {},
   ensureConfigDir: vi.fn(),
+  getConfigDir: vi.fn(() => "/fake/config"),
   getPrivateKeyFile: vi.fn(() => "/fake/path/private.pem"),
   getPublicKeyFile: vi.fn(() => "/fake/path/public.pem"),
   generateKeypair: vi.fn(),
@@ -56,17 +57,18 @@ const EXPECTED_TOOL_NAMES = [
   "get_active_orders",
   "get_historical_orders",
   "get_client_trades",
-  "grid_backtest",
-  "grid_optimize",
   "monitor_command",
   "monitor_types",
   "connector_command",
+  "strategy_command",
+  "grid_status",
+  "grid_states_list",
 ];
 
 describe("tool annotations", () => {
-  it("all 18 tools are registered", async () => {
+  it("all 19 tools are registered", async () => {
     const tools = await listTools();
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(19);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });

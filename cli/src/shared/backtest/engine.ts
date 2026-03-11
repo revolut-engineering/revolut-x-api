@@ -12,7 +12,6 @@ export interface BacktestResult {
   totalTrades: number;
   totalBuys: number;
   totalSells: number;
-  totalFees: Decimal;
   realizedPnl: Decimal;
   finalBtc: Decimal;
   finalUsd: Decimal;
@@ -37,7 +36,6 @@ function createEmptyResult(): BacktestResult {
     totalTrades: 0,
     totalBuys: 0,
     totalSells: 0,
-    totalFees: new Decimal(0),
     realizedPnl: new Decimal(0),
     finalBtc: new Decimal(0),
     finalUsd: new Decimal(0),
@@ -79,14 +77,12 @@ export function simulateCandle(
   result: BacktestResult,
   usdBalance: Decimal,
   gridLevels: number,
-  feeRate: Decimal = new Decimal(0),
 ): Decimal {
   for (const level of levels) {
     if (level.hasBuyOrder && low.lte(level.price)) {
       const btcBought = usdPerLevel
         .div(level.price)
         .toDecimalPlaces(5, Decimal.ROUND_DOWN);
-      const fee = usdPerLevel.times(feeRate);
 
       level.hasBuyOrder = false;
       level.hasPosition = true;
@@ -95,7 +91,6 @@ export function simulateCandle(
       usdBalance = usdBalance.minus(usdPerLevel);
       result.totalBuys += 1;
       result.totalTrades += 1;
-      result.totalFees = result.totalFees.plus(fee);
       result.tradeLog.push(
         `BUY  @ $${level.price} | ${btcBought} BTC | -$${usdPerLevel}`,
       );
@@ -110,10 +105,8 @@ export function simulateCandle(
         const usdReceived = btcToSell
           .times(sellLevel.price)
           .toDecimalPlaces(2, Decimal.ROUND_DOWN);
-        const fee = usdReceived.times(feeRate);
 
-        const costBasis = btcToSell.times(level.price);
-        const profit = usdReceived.minus(costBasis).minus(fee);
+        const profit = usdReceived.minus(usdPerLevel);
 
         level.hasPosition = false;
         level.btcHeld = new Decimal(0);
@@ -122,7 +115,6 @@ export function simulateCandle(
         usdBalance = usdBalance.plus(usdReceived);
         result.totalSells += 1;
         result.totalTrades += 1;
-        result.totalFees = result.totalFees.plus(fee);
         result.realizedPnl = result.realizedPnl.plus(profit);
         result.tradeLog.push(
           `SELL @ $${sellLevel.price} | ${btcToSell} BTC | ` +
@@ -140,7 +132,6 @@ export function runBacktest(
   gridLevels: number,
   rangePct: Decimal,
   investment: Decimal,
-  feeRate: Decimal = new Decimal(0),
 ): BacktestResult {
   if (candles.length === 0) {
     return createEmptyResult();
@@ -170,7 +161,6 @@ export function runBacktest(
       result,
       usdBalance,
       gridLevels,
-      feeRate,
     );
 
     let btcValue = new Decimal(0);
@@ -200,7 +190,6 @@ export function optimizeGridParams(
   gridLevelsRange?: number[],
   rangePctRange?: Decimal[],
   investment: Decimal = new Decimal(1000),
-  feeRate: Decimal = new Decimal(0),
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
@@ -226,7 +215,7 @@ export function optimizeGridParams(
 
   for (const levels of gridLevelsRange) {
     for (const rangePct of rangePctRange) {
-      const bt = runBacktest(candles, levels, rangePct, investment, feeRate);
+      const bt = runBacktest(candles, levels, rangePct, investment);
 
       const totalValue = bt.finalUsd.plus(bt.finalBtc.times(finalPrice));
       const totalReturn = totalValue.minus(investment);

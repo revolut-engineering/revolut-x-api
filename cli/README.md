@@ -48,6 +48,8 @@ revx account balances                       # Check balances
 revx market ticker BTC-USD                  # Get price
 revx order place BTC-USD buy 0.001 --limit 95000  # Place limit buy
 revx monitor price BTC-USD --threshold 100000     # Monitor price level
+revx strategy grid backtest BTC-USD               # Backtest grid strategy
+revx strategy grid run BTC-USD --investment 500   # Run live grid bot
 ```
 
 ## Commands
@@ -169,6 +171,84 @@ All monitor subcommands accept `--interval <sec>` to set the check interval in s
 | `obi <pair>` | `--direction <above\|below>`, `--threshold <value>` | direction: `above`, threshold: `0.3` |
 | `price-change <pair>` | `--direction <rise\|fall>`, `--threshold <value>`, `--lookback <n>` | direction: `rise`, threshold: `5.0`, lookback: `24` |
 | `atr-breakout <pair>` | `--period <n>`, `--multiplier <n>` | period: `14`, multiplier: `1.5` |
+
+### Strategy
+
+Automated trading strategies that run as foreground processes with a live dashboard.
+
+#### Grid Bot
+
+A grid trading strategy that places buy orders below the current price and sell orders above it, capturing profit from price oscillation within a range.
+
+##### Backtest
+
+Run a backtest on historical candle data:
+
+```bash
+revx strategy grid backtest BTC-USD
+revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
+revx strategy grid backtest ETH-USD --days 60 --interval 4h --fee-rate 0.1
+revx strategy grid backtest BTC-USD --json
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--levels <n>` | Number of grid levels | `10` |
+| `--range <pct>` | Grid range as percentage (e.g. `10` for ±10%) | `10` |
+| `--investment <usd>` | Capital in USD | `1000` |
+| `--days <n>` | Days of historical data | `30` |
+| `--interval <res>` | Candle resolution (`5m`, `15m`, `30m`, `1h`, `4h`, `1d`) | `1h` |
+| `--fee-rate <rate>` | Fee rate as percentage (e.g. `0.1` for 0.1%) | `0` |
+| `--json` | Output as JSON | — |
+
+##### Optimize
+
+Test multiple parameter combinations and rank by return:
+
+```bash
+revx strategy grid optimize BTC-USD
+revx strategy grid optimize BTC-USD --investment 5000 --days 60
+revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--investment <usd>` | Capital in USD | `1000` |
+| `--days <n>` | Days of historical data | `30` |
+| `--interval <res>` | Candle resolution | `1h` |
+| `--fee-rate <rate>` | Fee rate as percentage | `0` |
+| `--levels <csv>` | Comma-separated level counts to test | `5,8,10,12,15,20,25,30` |
+| `--ranges <csv>` | Comma-separated range percentages to test | `3,5,7,10,12,15,20` |
+| `--top <n>` | Number of top results to show | `10` |
+| `--json` | Output as JSON | — |
+
+##### Run (Live Trading)
+
+Run a live grid bot as a foreground process with a real-time dashboard:
+
+```bash
+revx strategy grid run BTC-USD --investment 500
+revx strategy grid run BTC-USD --levels 10 --range 5 --investment 1000 --interval 30
+revx strategy grid run BTC-USD --investment 500 --split
+revx strategy grid run BTC-USD --investment 100 --dry-run
+revx strategy grid run BTC-USD --resume
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--investment <usd>` | Capital in USD to deploy (required) | — |
+| `--levels <n>` | Number of grid levels | `10` |
+| `--range <pct>` | Grid range as percentage (e.g. `5` for ±5%) | `5` |
+| `--split` | Market-buy 50% of investment at start | — |
+| `--interval <sec>` | Polling interval in seconds | `30` |
+| `--dry-run` | Simulate without placing real orders | — |
+| `--resume` | Resume from previously saved state | — |
+
+**Persistence:** The grid bot saves its state (grid levels, order IDs, trade log, P&L) to disk after every change. If the bot is stopped (Ctrl+C), open orders are cancelled and the state is preserved for future resume.
+
+**Reconciliation:** When using `--resume`, the bot checks each saved order against the exchange. Orders that filled while offline are processed (sell orders placed for filled buys, buys re-placed for filled sells). Orders still active on the exchange are kept as-is to preserve queue position.
+
+**Telegram notifications:** If Telegram connections are configured (via `revx connector telegram add`), the grid bot automatically sends notifications on order fills, startup, and shutdown.
 
 ### Connector
 

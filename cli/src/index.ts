@@ -8,6 +8,7 @@ import { registerTradeCommand } from "./commands/trade.js";
 import { registerConnectorCommand } from "./commands/connector.js";
 import { registerMonitorCommand } from "./commands/monitor.js";
 import { registerEventsCommand } from "./commands/events.js";
+import { registerStrategyCommand } from "./commands/strategy.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -33,6 +34,8 @@ Examples:
   $ revx connector telegram add --token <token> --chat-id <id>
   $ revx monitor price BTC-USD --direction above --threshold 100000
   $ revx monitor rsi ETH-USD --direction above --threshold 70
+  $ revx strategy grid backtest BTC-USD    Backtest a grid strategy
+  $ revx strategy grid run BTC-USD --investment 500
   $ revx events                           View alert events`,
     );
 
@@ -44,6 +47,7 @@ Examples:
   registerConnectorCommand(program);
   registerMonitorCommand(program);
   registerEventsCommand(program);
+  registerStrategyCommand(program);
 
   return program;
 }
