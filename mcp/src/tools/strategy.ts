@@ -16,6 +16,7 @@ interface GridLevelState {
   sellOrderId: string | null;
   hasPosition: boolean;
   baseHeld: string;
+  fillCost: string;
 }
 
 interface GridTradeEntry {
@@ -30,6 +31,7 @@ interface GridTradeEntry {
 interface GridState {
   id: string;
   pair: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
   config: {
@@ -40,8 +42,9 @@ interface GridState {
     intervalSec: number;
     dryRun: boolean;
   };
+  splitExecuted: boolean;
   gridPrice: string;
-  usdPerLevel: string;
+  quotePerLevel: string;
   levels: GridLevelState[];
   stats: {
     totalBuys: number;
@@ -62,7 +65,15 @@ function loadGridState(pair: string): GridState | null {
   try {
     const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
     if (data && typeof data === "object" && "id" in data) {
-      return data as GridState;
+      const state = data as GridState;
+      if (
+        !state.quotePerLevel &&
+        (data as Record<string, unknown>).usdPerLevel
+      ) {
+        state.quotePerLevel = (data as Record<string, unknown>)
+          .usdPerLevel as string;
+      }
+      return state;
     }
     return null;
   } catch {
@@ -100,7 +111,7 @@ function formatGridState(state: GridState): string {
   lines.push(`Range: ±${rangePct}%`);
   lines.push(`Levels: ${state.config.levels}`);
   lines.push(`Investment: $${state.config.investment}`);
-  lines.push(`Per Level: $${state.usdPerLevel}`);
+  lines.push(`Per Level: $${state.quotePerLevel}`);
   lines.push(`Interval: ${state.config.intervalSec}s`);
   lines.push("");
 
@@ -116,27 +127,44 @@ function formatGridState(state: GridState): string {
   let positions = 0;
   let buyOrders = 0;
   let sellOrders = 0;
+  let heldCount = 0;
   for (const lv of state.levels) {
     if (lv.hasPosition) positions++;
     if (lv.buyOrderId) buyOrders++;
     if (lv.sellOrderId) sellOrders++;
+    const sellAbove =
+      lv.index + 1 < state.levels.length &&
+      !!state.levels[lv.index + 1]?.sellOrderId;
+    if (lv.hasPosition && !sellAbove) heldCount++;
   }
-  lines.push(
-    `${positions} with position, ${buyOrders} buy orders, ${sellOrders} sell orders`,
-  );
+  const parts = [`${buyOrders} buy orders`, `${sellOrders} sell orders`];
+  if (positions > 0) parts.push(`${positions} positions`);
+  if (heldCount > 0) parts.push(`${heldCount} HELD (no sell above)`);
+  lines.push(parts.join(", "));
 
   for (const lv of [...state.levels].sort(
     (a, b) => parseFloat(b.price) - parseFloat(a.price),
   )) {
+    const hasSell = !!lv.sellOrderId;
+    const hasPos = lv.hasPosition;
+    const sellAbove =
+      lv.index + 1 < state.levels.length &&
+      !!state.levels[lv.index + 1]?.sellOrderId;
+    const isHeld = hasPos && !sellAbove;
+
     let status: string;
-    if (lv.hasPosition) {
+    if (hasSell) {
+      const buyBelow = state.levels[lv.index - 1];
+      const baseAmt = buyBelow?.hasPosition ? buyBelow.baseHeld : "";
+      status = baseAmt ? `SELL ${baseAmt}` : "SELL";
+    } else if (isHeld) {
+      status = `HELD ${lv.baseHeld}`;
+    } else if (hasPos && sellAbove) {
       status = `POS  ${lv.baseHeld}`;
-    } else if (lv.sellOrderId) {
-      status = "SELL pending";
     } else if (lv.buyOrderId) {
       status = "BUY  pending";
     } else {
-      status = "—";
+      status = "\u2014";
     }
     lines.push(
       `  #${String(lv.index + 1).padStart(2)}  $${lv.price.padEnd(12)}  ${status}`,
@@ -178,54 +206,82 @@ export function registerStrategyTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            'Capital in USD (default "1000" for backtest/optimize, required for run).',
+            "Capital to deploy in the quote currency of the trading pair " +
+              "(e.g. USD for BTC-USD, EUR for BTC-EUR, BTC for ETH-BTC). " +
+              'Default "1000" for backtest/optimize. Required for run. Must be a positive number.',
           ),
         levels: z
           .string()
           .optional()
           .describe(
-            'Grid levels. Single number for backtest/run (default "10"), comma-separated for optimize (default "5,8,10,12,15,20,25,30").',
+            "Grid level count(s). " +
+              'For backtest/run: a single integer between 3 and 50 (default "10"). ' +
+              'For optimize: comma-separated integers each between 3 and 50 (default "5,8,10,12,15,20,25,30").',
           ),
         range: z
           .string()
           .optional()
           .describe(
-            'Grid range as percentage for backtest/run, e.g. "10" for ±10% (default "10" backtest, "5" run).',
+            "Grid range as a percentage of the entry price (backtest/run only). " +
+              'A positive number where "10" means the grid spans ±10% around the entry price. ' +
+              'Default "10" for backtest, "5" for run.',
           ),
         ranges: z
           .string()
           .optional()
           .describe(
-            'Comma-separated range percentages for optimize (default "3,5,7,10,12,15,20").',
+            "Comma-separated range percentages to test (optimize only). " +
+              'Each value is a positive number, e.g. "3,5,7,10,12,15,20" (default). ' +
+              "The total combinations (levels × ranges) must not exceed 200.",
           ),
         days: z
           .string()
           .optional()
           .describe(
-            'Days of historical data for backtest/optimize (default "30").',
+            'Days of historical candle data to fetch for backtest/optimize (default "30").',
           ),
         interval: z
           .string()
           .optional()
           .describe(
-            'Candle resolution for backtest/optimize (default "1h"), or polling interval in seconds for run (default "30").',
+            "For backtest/optimize: candle resolution. " +
+              'Valid values: 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w. Default "1h". ' +
+              "For run: polling interval in seconds (minimum 5). Default 10.",
           ),
         top: z
           .number()
           .optional()
-          .describe("Number of top results for optimize (default 10)."),
+          .describe(
+            "Number of top results to display for optimize. Clamped to 1–50. Default 10.",
+          ),
         split: z
           .boolean()
           .optional()
-          .describe("Market-buy 50% of investment at start (run only)."),
+          .describe(
+            "Run only. When true, places a market buy for 50% of the investment at startup " +
+              "so the bot immediately holds base currency to place sell orders from.",
+          ),
         dry_run: z
           .boolean()
           .optional()
-          .describe("Simulate without placing real orders (run only)."),
-        resume: z
+          .describe(
+            "Run only. When true, simulates the strategy without placing real orders. " +
+              "Useful for testing configuration before going live.",
+          ),
+        json: z
           .boolean()
           .optional()
-          .describe("Resume from previously saved state (run only)."),
+          .describe(
+            "Backtest/optimize only. When true, adds --json to the command so output is " +
+              "printed as a JSON object instead of the formatted table.",
+          ),
+        output: z
+          .string()
+          .optional()
+          .describe(
+            'Backtest/optimize only. Output format flag. Pass "json" to add --output json ' +
+              "to the command (alternative to the json boolean flag).",
+          ),
       },
       annotations: {
         title: "Strategy CLI Command",
@@ -246,7 +302,8 @@ export function registerStrategyTools(server: McpServer): void {
       top,
       split,
       dry_run,
-      resume,
+      json,
+      output,
     }) => {
       if (!pair || !pair.trim()) return textResult("pair is required.");
       pair = pair.trim().toUpperCase();
@@ -261,6 +318,8 @@ export function registerStrategyTools(server: McpServer): void {
           if (investment) parts.push("--investment", investment.trim());
           if (days) parts.push("--days", days.trim());
           if (interval) parts.push("--interval", interval.trim());
+          if (json) parts.push("--json");
+          if (output) parts.push("--output", output.trim());
 
           return textResult(
             `Action: Run a grid backtest on historical data\n\n` +
@@ -279,6 +338,8 @@ export function registerStrategyTools(server: McpServer): void {
           if (levels) parts.push("--levels", levels.trim());
           if (ranges) parts.push("--ranges", ranges.trim());
           if (top !== undefined) parts.push("--top", String(top));
+          if (json) parts.push("--json");
+          if (output) parts.push("--output", output.trim());
 
           return textResult(
             `Action: Optimize grid parameters\n\n` +
@@ -290,23 +351,8 @@ export function registerStrategyTools(server: McpServer): void {
         }
 
         case "run": {
-          if (resume) {
-            const parts = ["revx strategy grid run", pair, "--resume"];
-            if (interval) parts.push("--interval", interval.trim());
-
-            return textResult(
-              `Action: Resume a live grid bot from saved state\n\n` +
-                `Command:\n  ${parts.join(" ")}\n\n` +
-                `This resumes a previously saved grid bot, reconciling any orders ` +
-                `that filled while offline. Press Ctrl+C to stop.` +
-                CLI_INSTALL_HINT,
-            );
-          }
-
           if (!investment) {
-            return textResult(
-              "investment is required for the run action (or use resume: true to continue from saved state).",
-            );
+            return textResult("investment is required for the run action.");
           }
 
           const parts = [
@@ -326,7 +372,8 @@ export function registerStrategyTools(server: McpServer): void {
             `Action: Start a live grid trading bot${modeLabel}\n\n` +
               `Command:\n  ${parts.join(" ")}\n\n` +
               `This starts a foreground process with a real-time dashboard. ` +
-              `Press Ctrl+C to stop. State is saved automatically for resume.` +
+              `Press Ctrl+C to stop. If leftover orders exist from a previous ` +
+              `session, they are automatically reconciled on startup.` +
               CLI_INSTALL_HINT,
           );
         }
@@ -379,8 +426,8 @@ export function registerStrategyTools(server: McpServer): void {
     {
       title: "List Grid Bot States",
       description:
-        "List all saved grid bot states. Returns the trading pairs that have saved state files, " +
-        "which can be inspected with grid_status or resumed with the strategy run command.",
+        "List all saved grid bot states. Returns the trading pairs that have saved state files " +
+        "(from crashes or partial cancellations), which can be inspected with grid_status.",
       annotations: {
         title: "List Grid Bot States",
         readOnlyHint: true,

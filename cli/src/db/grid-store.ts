@@ -16,6 +16,7 @@ export interface GridLevelState {
   sellOrderId: string | null;
   hasPosition: boolean;
   baseHeld: string;
+  fillCost: string;
 }
 
 export interface GridTradeEntry {
@@ -30,6 +31,7 @@ export interface GridTradeEntry {
 export interface GridState {
   id: string;
   pair: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
   config: {
@@ -40,10 +42,11 @@ export interface GridState {
     intervalSec: number;
     dryRun: boolean;
   };
+  splitExecuted: boolean;
   gridPrice: string;
   quotePrecision: string;
   basePrecision: string;
-  usdPerLevel: string;
+  quotePerLevel: string;
   levels: GridLevelState[];
   stats: {
     totalBuys: number;
@@ -82,7 +85,15 @@ export function loadGridState(pair: string): GridState | null {
   try {
     const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
     if (data && typeof data === "object" && "id" in data) {
-      return data as GridState;
+      const state = data as GridState;
+      if (
+        !state.quotePerLevel &&
+        (data as Record<string, unknown>).usdPerLevel
+      ) {
+        state.quotePerLevel = (data as Record<string, unknown>)
+          .usdPerLevel as string;
+      }
+      return state;
     }
     return null;
   } catch {

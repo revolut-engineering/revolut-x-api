@@ -15,7 +15,6 @@ import {
   createGrid,
 } from "../shared/backtest/index.js";
 import { ForegroundGridBot, type GridBotConfig } from "../engine/grid-bot.js";
-import { loadGridState } from "../db/grid-store.js";
 import { loadConnections } from "../db/store.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
@@ -154,6 +153,14 @@ async function handleBacktest(
   const result = runBacktest(candles, gridLevels, rangePct, investment);
 
   if (isJsonOutput(opts)) {
+    const finalPrice = candles[candles.length - 1].close;
+    const baseVal = result.finalBase.times(finalPrice);
+    const totalVal = result.finalQuote.plus(baseVal);
+    const netRet = totalVal.minus(investment);
+    const retPct = investment.isZero()
+      ? 0
+      : netRet.div(investment).times(100).toNumber();
+    const annualized = (Math.pow(1 + retPct / 100, 365 / days) - 1) * 100;
     printJson({
       pair,
       gridLevels,
@@ -165,19 +172,21 @@ async function handleBacktest(
       totalBuys: result.totalBuys,
       totalSells: result.totalSells,
       realizedPnl: result.realizedPnl.toNumber(),
-      finalBtc: result.finalBtc.toNumber(),
-      finalUsd: result.finalUsd.toNumber(),
+      finalBase: result.finalBase.toNumber(),
+      finalQuote: result.finalQuote.toNumber(),
       maxDrawdown: result.maxDrawdown.times(100).toNumber(),
+      returnPct: retPct,
+      annualizedReturnPct: parseFloat(annualized.toFixed(2)),
     });
     return;
   }
 
-  const startPrice = candles[0].close;
+  const startPrice = candles[0].open;
   const finalPrice = candles[candles.length - 1].close;
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
   const upper = startPrice.times(new Decimal(1).plus(rangePct));
-  const btcValue = result.finalBtc.times(finalPrice);
-  const totalValue = result.finalUsd.plus(btcValue);
+  const baseValue = result.finalBase.times(finalPrice);
+  const totalValue = result.finalQuote.plus(baseValue);
   const netReturn = totalValue.minus(investment);
   const returnPct = investment.isZero()
     ? new Decimal(0)
@@ -185,7 +194,10 @@ async function handleBacktest(
 
   const levels = createGrid(startPrice, gridLevels, rangePct);
   const buyLevels = levels.filter((lv) => lv.hasBuyOrder).length;
-  const usdPerLevel = investment.div(Math.max(buyLevels, 1)).toDecimalPlaces(2);
+  const [base, quote] = pair.split("-");
+  const quotePerLevel = investment
+    .div(Math.max(buyLevels, 1))
+    .toDecimalPlaces(2);
 
   const w = 56;
   const h = "\u2550";
@@ -213,7 +225,7 @@ async function handleBacktest(
     ),
   );
   console.log(pad("Levels", `${gridLevels} (${buyLevels} buy)`));
-  console.log(pad("USD / Level", `$${usdPerLevel}`));
+  console.log(pad(`${quote} / Level`, `$${quotePerLevel}`));
   console.log(`\u2551${" ".repeat(w)}\u2551`);
   console.log(`\u2560${h.repeat(w)}\u2563`);
   console.log(
@@ -228,11 +240,11 @@ async function handleBacktest(
     ),
   );
   console.log(pad("Realized P&L", `$${result.realizedPnl.toFixed(2)}`));
-  console.log(pad("Final USD", `$${result.finalUsd.toFixed(2)}`));
+  console.log(pad(`Final ${quote}`, `$${result.finalQuote.toFixed(2)}`));
   console.log(
     pad(
-      "Final BTC",
-      `${result.finalBtc.toFixed(5)} (~$${btcValue.toFixed(2)})`,
+      `Final ${base}`,
+      `${result.finalBase.toFixed(5)} (~$${baseValue.toFixed(2)})`,
     ),
   );
   console.log(pad("Total Value", `$${totalValue.toFixed(2)}`));
@@ -247,6 +259,10 @@ async function handleBacktest(
   console.log(
     pad("Max Drawdown", `${result.maxDrawdown.times(100).toFixed(2)}%`),
   );
+  const annualizedPct =
+    (Math.pow(1 + returnPct.toNumber() / 100, 365 / days) - 1) * 100;
+  const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
+  console.log(pad("Annualized", annColor(`${annualizedPct.toFixed(2)}%`)));
   console.log(`\u2551${" ".repeat(w)}\u2551`);
 
   if (result.tradeLog.length > 0) {
@@ -267,6 +283,12 @@ async function handleBacktest(
   }
 
   console.log(`\u255A${h.repeat(w)}\u255D`);
+  console.log(
+    chalk.dim(
+      "\n  Note: Backtest does not model spread/slippage or post_only rejections.\n" +
+        "  Live performance will differ, especially in illiquid or fast-moving markets.",
+    ),
+  );
 }
 
 async function handleOptimize(
@@ -355,21 +377,27 @@ async function handleOptimize(
     levelsList,
     rangesList,
     investment,
+    days,
   );
 
   if (isJsonOutput(opts)) {
     printJson(
-      results.slice(0, topN).map((r) => ({
-        rank: results.indexOf(r) + 1,
-        gridLevels: r.gridLevels,
-        rangePct: r.rangePct.times(100).toNumber(),
-        totalReturn: r.totalReturn.toNumber(),
-        returnPct: r.returnPct.toNumber(),
-        totalTrades: r.totalTrades,
-        maxDrawdown: r.maxDrawdown.times(100).toNumber(),
-        profitPerTrade: r.profitPerTrade.toNumber(),
-        sharpeApprox: r.sharpeApprox.toNumber(),
-      })),
+      results.slice(0, topN).map((r) => {
+        const annualized =
+          (Math.pow(1 + r.returnPct.toNumber() / 100, 365 / days) - 1) * 100;
+        return {
+          rank: results.indexOf(r) + 1,
+          gridLevels: r.gridLevels,
+          rangePct: r.rangePct.times(100).toNumber(),
+          totalReturn: r.totalReturn.toNumber(),
+          returnPct: r.returnPct.toNumber(),
+          annualizedReturnPct: parseFloat(annualized.toFixed(2)),
+          totalTrades: r.totalTrades,
+          maxDrawdown: r.maxDrawdown.times(100).toNumber(),
+          profitPerTrade: r.profitPerTrade.toNumber(),
+          calmarApprox: r.calmarApprox.toNumber(),
+        };
+      }),
     );
     return;
   }
@@ -409,8 +437,8 @@ async function handleOptimize(
   if (results.length > 0) {
     console.log("");
     const bestReturn = results[0];
-    const bestSharpe = results.reduce((b, r) =>
-      r.sharpeApprox.gt(b.sharpeApprox) ? r : b,
+    const bestCalmar = results.reduce((b, r) =>
+      r.calmarApprox.gt(b.calmarApprox) ? r : b,
     );
     const lowestDd = results.reduce((b, r) =>
       r.maxDrawdown.lt(b.maxDrawdown) ? r : b,
@@ -423,7 +451,7 @@ async function handleOptimize(
       ],
       [
         "Best Risk-Adj",
-        `${bestSharpe.gridLevels} levels, ${bestSharpe.rangePct.times(100).toFixed(1)}% range -> Sharpe ${bestSharpe.sharpeApprox.toFixed(2)}`,
+        `${bestCalmar.gridLevels} levels, ${bestCalmar.rangePct.times(100).toFixed(1)}% range -> Calmar ${bestCalmar.calmarApprox.toFixed(2)}`,
       ],
       [
         "Lowest Drawdown",
@@ -442,7 +470,6 @@ async function handleRun(
     split?: boolean;
     interval: string;
     dryRun?: boolean;
-    resume?: boolean;
   },
 ): Promise<void> {
   pair = validatePair(pair);
@@ -456,16 +483,6 @@ async function handleRun(
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
   const intervalSec = Math.max(5, parseInt(opts.interval, 10) || 30);
-
-  if (opts.resume) {
-    const existing = loadGridState(pair);
-    if (!existing) {
-      console.error(
-        `No saved state found for ${pair}. Remove --resume to start a new grid.`,
-      );
-      process.exit(1);
-    }
-  }
 
   const connections = loadConnections().filter((c) => c.enabled);
   if (connections.length === 0) {
@@ -490,7 +507,6 @@ async function handleRun(
     splitInvestment: opts.split === true,
     intervalSec,
     dryRun: opts.dryRun === true,
-    resume: opts.resume === true,
   };
 
   const bot = new ForegroundGridBot(config);
@@ -524,14 +540,13 @@ Examples:
   $ revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000 --days 30
   $ revx strategy grid optimize BTC-USD --investment 1000 --days 30 --interval 1h
   $ revx strategy grid run BTC-USD --levels 10 --range 5 --investment 500 --interval 30
-  $ revx strategy grid run BTC-USD --resume
   $ revx strategy grid run BTC-USD --levels 5 --range 2 --investment 100 --dry-run`,
     );
 
   const grid = strategy
     .command("grid")
     .description(
-      "Grid trading strategy — places buy/sell orders at evenly spaced price levels",
+      "Grid trading strategy — places buy/sell orders at geometrically spaced price levels",
     );
 
   grid
@@ -539,7 +554,7 @@ Examples:
     .description("Run a grid backtest on historical candle data")
     .option("--levels <n>", "Number of grid levels", "10")
     .option("--range <pct>", "Grid range as percentage, e.g. 10 for ±10%", "10")
-    .option("--investment <usd>", "Capital in USD", "1000")
+    .option("--investment <amount>", "Capital in quote currency", "1000")
     .option("--days <n>", "Days of historical data", "30")
     .option(
       "--interval <res>",
@@ -553,7 +568,7 @@ Examples:
   grid
     .command("optimize <pair>")
     .description("Test multiple grid parameter combinations and rank by return")
-    .option("--investment <usd>", "Capital in USD", "1000")
+    .option("--investment <amount>", "Capital in quote currency", "1000")
     .option("--days <n>", "Days of historical data", "30")
     .option("--interval <res>", "Candle resolution", "1h")
     .option(
@@ -574,12 +589,14 @@ Examples:
   grid
     .command("run <pair>")
     .description("Run a live grid trading bot (foreground process)")
-    .requiredOption("--investment <usd>", "Capital in USD to deploy")
+    .requiredOption(
+      "--investment <amount>",
+      "Capital in quote currency to deploy",
+    )
     .option("--levels <n>", "Number of grid levels", "10")
     .option("--range <pct>", "Grid range as percentage, e.g. 5 for ±5%", "5")
     .option("--split", "Market-buy 50% of investment at start")
-    .option("--interval <sec>", "Polling interval in seconds", "30")
+    .option("--interval <sec>", "Polling interval in seconds", "10")
     .option("--dry-run", "Simulate without placing real orders")
-    .option("--resume", "Resume from previously saved state")
     .action(handleRun);
 }

@@ -231,7 +231,6 @@ revx strategy grid run BTC-USD --investment 500
 revx strategy grid run BTC-USD --levels 10 --range 5 --investment 1000 --interval 30
 revx strategy grid run BTC-USD --investment 500 --split
 revx strategy grid run BTC-USD --investment 100 --dry-run
-revx strategy grid run BTC-USD --resume
 ```
 
 | Flag | Description | Default |
@@ -242,11 +241,10 @@ revx strategy grid run BTC-USD --resume
 | `--split` | Market-buy 50% of investment at start | — |
 | `--interval <sec>` | Polling interval in seconds | `30` |
 | `--dry-run` | Simulate without placing real orders | — |
-| `--resume` | Resume from previously saved state | — |
 
-**Persistence:** The grid bot saves its state (grid levels, order IDs, trade log, P&L) to disk after every change. If the bot is stopped (Ctrl+C), open orders are cancelled and the state is preserved for future resume.
+**Persistence:** State is saved periodically during the session for crash safety. On clean shutdown (Ctrl+C), all open orders are cancelled and the state file is deleted — the next session starts fresh. If some orders could not be cancelled (network error, etc.), the state file is kept for automatic reconciliation on the next startup.
 
-**Reconciliation:** When using `--resume`, the bot checks each saved order against the exchange. Orders that filled while offline are processed (sell orders placed for filled buys, buys re-placed for filled sells). Orders still active on the exchange are kept as-is to preserve queue position.
+**Reconciliation:** If a state file exists from a previous crash or partial cancellation, the bot automatically reconciles on startup. Orders that filled while offline are accounted for (P&L tracked). Leftover active orders matching the new grid's price levels are adopted; non-matching ones are cancelled. A completely new grid is then initialized.
 
 **Telegram notifications:** If Telegram connections are configured (via `revx connector telegram add`), the grid bot automatically sends notifications on order fills, startup, and shutdown.
 

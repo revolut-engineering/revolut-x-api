@@ -5,7 +5,7 @@ export interface GridLevel {
   index: number;
   hasBuyOrder: boolean;
   hasPosition: boolean;
-  btcHeld: Decimal;
+  baseHeld: Decimal;
 }
 
 export interface BacktestResult {
@@ -13,8 +13,8 @@ export interface BacktestResult {
   totalBuys: number;
   totalSells: number;
   realizedPnl: Decimal;
-  finalBtc: Decimal;
-  finalUsd: Decimal;
+  finalBase: Decimal;
+  finalQuote: Decimal;
   maxDrawdown: Decimal;
   tradeLog: string[];
 }
@@ -28,7 +28,7 @@ export interface OptimizationResult {
   totalTrades: number;
   maxDrawdown: Decimal;
   profitPerTrade: Decimal;
-  sharpeApprox: Decimal;
+  calmarApprox: Decimal;
 }
 
 function createEmptyResult(): BacktestResult {
@@ -37,8 +37,8 @@ function createEmptyResult(): BacktestResult {
     totalBuys: 0,
     totalSells: 0,
     realizedPnl: new Decimal(0),
-    finalBtc: new Decimal(0),
-    finalUsd: new Decimal(0),
+    finalBase: new Decimal(0),
+    finalQuote: new Decimal(0),
     maxDrawdown: new Decimal(0),
     tradeLog: [],
   };
@@ -51,17 +51,17 @@ export function createGrid(
 ): GridLevel[] {
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
   const upper = startPrice.times(new Decimal(1).plus(rangePct));
-  const step = upper.minus(lower).div(gridLevels - 1);
+  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
 
   const levels: GridLevel[] = [];
   for (let i = 0; i < gridLevels; i++) {
-    const price = lower.plus(step.times(i)).toDecimalPlaces(2);
+    const price = lower.times(ratio.pow(i)).toDecimalPlaces(2);
     const level: GridLevel = {
       price,
       index: i,
       hasBuyOrder: price.lt(startPrice),
       hasPosition: false,
-      btcHeld: new Decimal(0),
+      baseHeld: new Decimal(0),
     };
     levels.push(level);
   }
@@ -69,62 +69,106 @@ export function createGrid(
   return levels;
 }
 
-export function simulateCandle(
+function runBuyPass(
   levels: GridLevel[],
   low: Decimal,
-  high: Decimal,
-  usdPerLevel: Decimal,
+  quotePerLevel: Decimal,
   result: BacktestResult,
-  usdBalance: Decimal,
-  gridLevels: number,
+  quoteBalance: Decimal,
 ): Decimal {
   for (const level of levels) {
     if (level.hasBuyOrder && low.lte(level.price)) {
-      const btcBought = usdPerLevel
+      const baseBought = quotePerLevel
         .div(level.price)
         .toDecimalPlaces(5, Decimal.ROUND_DOWN);
 
       level.hasBuyOrder = false;
       level.hasPosition = true;
-      level.btcHeld = btcBought;
+      level.baseHeld = baseBought;
 
-      usdBalance = usdBalance.minus(usdPerLevel);
+      quoteBalance = quoteBalance.minus(quotePerLevel);
       result.totalBuys += 1;
       result.totalTrades += 1;
       result.tradeLog.push(
-        `BUY  @ $${level.price} | ${btcBought} BTC | -$${usdPerLevel}`,
+        `BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel}`,
       );
     }
   }
+  return quoteBalance;
+}
 
+function runSellPass(
+  levels: GridLevel[],
+  high: Decimal,
+  quotePerLevel: Decimal,
+  result: BacktestResult,
+  quoteBalance: Decimal,
+  gridLevels: number,
+): Decimal {
   for (const level of levels) {
     if (level.hasPosition && level.index < gridLevels - 1) {
       const sellLevel = levels[level.index + 1];
       if (high.gte(sellLevel.price)) {
-        const btcToSell = level.btcHeld;
-        const usdReceived = btcToSell
+        const baseToSell = level.baseHeld;
+        const quoteReceived = baseToSell
           .times(sellLevel.price)
           .toDecimalPlaces(2, Decimal.ROUND_DOWN);
 
-        const profit = usdReceived.minus(usdPerLevel);
+        const profit = quoteReceived.minus(quotePerLevel);
 
         level.hasPosition = false;
-        level.btcHeld = new Decimal(0);
+        level.baseHeld = new Decimal(0);
         level.hasBuyOrder = true;
 
-        usdBalance = usdBalance.plus(usdReceived);
+        quoteBalance = quoteBalance.plus(quoteReceived);
         result.totalSells += 1;
         result.totalTrades += 1;
         result.realizedPnl = result.realizedPnl.plus(profit);
         result.tradeLog.push(
-          `SELL @ $${sellLevel.price} | ${btcToSell} BTC | ` +
-            `+$${usdReceived} | profit=$${profit.toFixed(2)}`,
+          `SELL @ ${sellLevel.price} | qty ${baseToSell} | ` +
+            `+${quoteReceived} | profit=${profit.toFixed(2)}`,
         );
       }
     }
   }
+  return quoteBalance;
+}
 
-  return usdBalance;
+export function simulateCandle(
+  levels: GridLevel[],
+  open: Decimal,
+  low: Decimal,
+  high: Decimal,
+  close: Decimal,
+  quotePerLevel: Decimal,
+  result: BacktestResult,
+  quoteBalance: Decimal,
+  gridLevels: number,
+): Decimal {
+  const bearish = open.gt(close);
+  if (bearish) {
+    quoteBalance = runSellPass(
+      levels,
+      high,
+      quotePerLevel,
+      result,
+      quoteBalance,
+      gridLevels,
+    );
+    quoteBalance = runBuyPass(levels, low, quotePerLevel, result, quoteBalance);
+  } else {
+    quoteBalance = runBuyPass(levels, low, quotePerLevel, result, quoteBalance);
+    quoteBalance = runSellPass(
+      levels,
+      high,
+      quotePerLevel,
+      result,
+      quoteBalance,
+      gridLevels,
+    );
+  }
+
+  return quoteBalance;
 }
 
 export function runBacktest(
@@ -137,50 +181,53 @@ export function runBacktest(
     return createEmptyResult();
   }
 
-  const startPrice = candles[0].close;
+  const startPrice = candles[0].open;
   const levels = createGrid(startPrice, gridLevels, rangePct);
 
   let buyLevels = 0;
   for (const lv of levels) {
     if (lv.hasBuyOrder) buyLevels++;
   }
-  const usdPerLevel = investment
+  const quotePerLevel = investment
     .div(Math.max(buyLevels, 1))
     .toDecimalPlaces(2, Decimal.ROUND_DOWN);
 
   const result = createEmptyResult();
-  let usdBalance = investment;
+  let quoteBalance = investment;
   let peakValue = investment;
 
   for (const candle of candles) {
-    usdBalance = simulateCandle(
+    quoteBalance = simulateCandle(
       levels,
+      candle.open,
       candle.low,
       candle.high,
-      usdPerLevel,
+      candle.close,
+      quotePerLevel,
       result,
-      usdBalance,
+      quoteBalance,
       gridLevels,
     );
 
-    let btcValue = new Decimal(0);
+    let totalBaseHeld = new Decimal(0);
     for (const lv of levels) {
-      btcValue = btcValue.plus(lv.btcHeld.times(candle.close));
+      totalBaseHeld = totalBaseHeld.plus(lv.baseHeld);
     }
-    const totalValue = usdBalance.plus(btcValue);
-    peakValue = Decimal.max(peakValue, totalValue);
+    const highValue = quoteBalance.plus(totalBaseHeld.times(candle.high));
+    peakValue = Decimal.max(peakValue, highValue);
+    const lowValue = quoteBalance.plus(totalBaseHeld.times(candle.low));
     if (peakValue.gt(0)) {
-      const drawdown = peakValue.minus(totalValue).div(peakValue);
+      const drawdown = peakValue.minus(lowValue).div(peakValue);
       result.maxDrawdown = Decimal.max(result.maxDrawdown, drawdown);
     }
   }
 
-  let finalBtc = new Decimal(0);
+  let finalBase = new Decimal(0);
   for (const lv of levels) {
-    finalBtc = finalBtc.plus(lv.btcHeld);
+    finalBase = finalBase.plus(lv.baseHeld);
   }
-  result.finalBtc = finalBtc;
-  result.finalUsd = usdBalance;
+  result.finalBase = finalBase;
+  result.finalQuote = quoteBalance;
 
   return result;
 }
@@ -190,6 +237,7 @@ export function optimizeGridParams(
   gridLevelsRange?: number[],
   rangePctRange?: Decimal[],
   investment: Decimal = new Decimal(1000),
+  days: number = 30,
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
@@ -217,7 +265,7 @@ export function optimizeGridParams(
     for (const rangePct of rangePctRange) {
       const bt = runBacktest(candles, levels, rangePct, investment);
 
-      const totalValue = bt.finalUsd.plus(bt.finalBtc.times(finalPrice));
+      const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
       const totalReturn = totalValue.minus(investment);
       const returnPct = investment.isZero()
         ? new Decimal(0)
@@ -226,9 +274,10 @@ export function optimizeGridParams(
       const profitPerTrade =
         bt.totalSells > 0 ? bt.realizedPnl.div(bt.totalSells) : new Decimal(0);
 
-      const sharpe = bt.maxDrawdown.gt(0)
-        ? returnPct.div(bt.maxDrawdown.times(100))
-        : returnPct;
+      const annualizedReturn = returnPct.div(100).times(365).div(days);
+      const calmar = bt.maxDrawdown.gt(0)
+        ? annualizedReturn.div(bt.maxDrawdown)
+        : annualizedReturn;
 
       results.push({
         gridLevels: levels,
@@ -239,7 +288,7 @@ export function optimizeGridParams(
         totalTrades: bt.totalTrades,
         maxDrawdown: bt.maxDrawdown,
         profitPerTrade,
-        sharpeApprox: sharpe,
+        calmarApprox: calmar,
       });
     }
   }
