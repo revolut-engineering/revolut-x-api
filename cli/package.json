@@ -1,6 +1,6 @@
 {
   "name": "revolutx-cli",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Command-line interface for Revolut X Exchange",
   "type": "module",
   "main": "dist/index.js",
