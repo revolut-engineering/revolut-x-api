@@ -87,6 +87,11 @@ jobs:
 
       - name: Build MCPB archive
         run: cd mcp && bash scripts/build-mcpb.sh
+        
+      - name: Pack skill archive
+        run: |
+          cd skills
+          zip -r "revolut-x-trading-${VERSION}.skill" revolut-x-trading/
 
       - name: Upload release assets
         env:
@@ -96,6 +101,7 @@ jobs:
             "api/revolutx-api-${VERSION}.tgz" \
             "cli/revolutx-cli-${VERSION}.tgz" \
             "mcp/dist/revolutx-mcp.mcpb" \
+            "skills/revolut-x-trading-${VERSION}.skill" \
             --clobber
 
       - name: Commit version bump back to repo

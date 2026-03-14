@@ -329,6 +329,22 @@ jobs:
         with:
           name: revolutx-mcp-mcpb
           path: mcp/dist/revolutx-mcp.mcpb
+  
+  pack-skill:
+    name: Pack Skill
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build skill archive
+        run: |
+          cd skills
+          zip -r revolut-x-trading.skill revolut-x-trading/
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: revolutx-trading-skill
+          path: skills/revolut-x-trading.skill
 
   sbom:
     name: Generate SBOM
