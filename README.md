@@ -18,6 +18,7 @@ This monorepo also includes standalone packages:
 
 - **[`api/`](api/)** — typed HTTP client for the Revolut X Exchange REST API (zero runtime dependencies)
 - **[`cli/`](cli/)** — `revx` command-line interface for trading from the terminal
+- **[`skills/revolut-x-trading/`](skills/revolut-x-trading/)** — Claude Code skill for Revolut X trading
 
 ## Installation
 
@@ -205,35 +206,6 @@ Start                |         Open |         High |          Low |        Close
 2026-02-28T01:00:00  |      3392.40 |      3410.00 |      3388.50 |      3408.75 |         987.30
 2026-02-28T02:00:00  |      3408.75 |      3415.60 |      3400.10 |      3413.00 |         856.20
 ...
-```
-
-### 6. Run a grid trading backtest
-
-> "Backtest a grid strategy on BTC-USD with 10 levels and 5% range"
-
-**Tool called:** `grid_backtest` with `symbol: "BTC-USD"`, `grid_levels: 10`, `range_pct: "5"`, `investment: "1000"`, `resolution: "1h"`
-
-```
-Grid Backtest Results for BTC-USD
-==================================================
-Data: 100 candles (1h resolution)
-Price range: $95120.00 - $98450.00
-Start price: $97235.00
-Grid range: $92373.25 - $102096.75 (5.0%)
-Grid levels: 10 | Buy levels: 5 | USD/level: $200.00
-Fee rate: 0.00%
-
-Performance
---------------------------------------------------
-Total trades: 14 (7 buys, 7 sells)
-Total fees: $0.00
-Realized P&L: $42.35
-Final USD: $1042.35
-Final BTC: 0.00000 (~$0.00)
-Total portfolio: $1042.35
-Net return: $42.35 (4.24%)
-Max drawdown: 1.82%
-```
 
 ## Privacy Policy
 
