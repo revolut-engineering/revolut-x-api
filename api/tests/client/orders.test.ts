@@ -417,35 +417,44 @@ describe("Orders", () => {
   });
 
   describe("getOrderFills", () => {
-    it("returns trade fills for an order", async () => {
+    const mockFill = {
+      tid: "12345678123412341234123456789abc",
+      aid: "BTC",
+      anm: "Bitcoin",
+      p: "95000",
+      pc: "USD",
+      pn: "MONE",
+      q: "0.001",
+      qc: "BTC",
+      qn: "UNIT",
+      ve: "REVX",
+      pdt: 1700000000000,
+      vp: "REVX",
+      tdt: 1700000000000,
+      oid: "d0184248-2de5-4b2a-9fe2-0cf42670da47",
+      s: "buy" as const,
+      im: true,
+    };
+
+    it("returns mapped trade fills for an order", async () => {
       const client = createTestClient();
       nock(BASE_URL)
         .get("/api/1.0/orders/fills/order-123")
-        .reply(200, {
-          data: [
-            {
-              tdt: 1700000000000,
-              aid: "BTC",
-              anm: "Bitcoin",
-              p: "95000",
-              pc: "USD",
-              pn: "MONE",
-              q: "0.001",
-              qc: "BTC",
-              qn: "UNIT",
-              ve: "REVX",
-              pdt: 1700000000000,
-              vp: "REVX",
-              tid: "trade-1",
-            },
-          ],
-        });
+        .reply(200, { data: [mockFill] });
 
       const result = await client.getOrderFills("order-123");
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].tid).toBe("trade-1");
-      expect(result.data[0].q).toBe("0.001");
+      expect(result.data[0]).toMatchObject({
+        id: "12345678-1234-1234-1234-123456789abc",
+        symbol: "BTC/USD",
+        price: "95000",
+        quantity: "0.001",
+        side: "buy",
+        orderId: "d0184248-2de5-4b2a-9fe2-0cf42670da47",
+        maker: true,
+        timestamp: 1700000000000,
+      });
     });
 
     it("returns empty array for unfilled order", async () => {
@@ -459,50 +468,22 @@ describe("Orders", () => {
       expect(result.data).toEqual([]);
     });
 
-    it("handles partially filled orders", async () => {
+    it("handles multiple fills", async () => {
       const client = createTestClient();
       nock(BASE_URL)
         .get("/api/1.0/orders/fills/order-789")
         .reply(200, {
           data: [
-            {
-              tdt: 1700000000000,
-              aid: "BTC",
-              anm: "Bitcoin",
-              p: "95000",
-              pc: "USD",
-              pn: "MONE",
-              q: "0.0005",
-              qc: "BTC",
-              qn: "UNIT",
-              ve: "REVX",
-              pdt: 1700000000000,
-              vp: "REVX",
-              tid: "trade-1",
-            },
-            {
-              tdt: 1700000100000,
-              aid: "BTC",
-              anm: "Bitcoin",
-              p: "95010",
-              pc: "USD",
-              pn: "MONE",
-              q: "0.0005",
-              qc: "BTC",
-              qn: "UNIT",
-              ve: "REVX",
-              pdt: 1700000100000,
-              vp: "REVX",
-              tid: "trade-2",
-            },
+            { ...mockFill, p: "95000", q: "0.0005", tdt: 1700000000000 },
+            { ...mockFill, p: "95010", q: "0.0005", tdt: 1700000100000 },
           ],
         });
 
       const result = await client.getOrderFills("order-789");
 
       expect(result.data).toHaveLength(2);
-      expect(result.data[0].p).toBe("95000");
-      expect(result.data[1].p).toBe("95010");
+      expect(result.data[0].price).toBe("95000");
+      expect(result.data[1].price).toBe("95010");
     });
   });
 });

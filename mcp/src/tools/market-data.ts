@@ -6,6 +6,9 @@ import {
   validateSymbol,
   VALID_RESOLUTIONS,
   handleApiError,
+  fetchAllChunked,
+  candleChunkMs,
+  fetchAllCandlesChunked,
 } from "./_helpers.js";
 
 export function registerMarketDataTools(server: McpServer): void {
@@ -41,17 +44,14 @@ export function registerMarketDataTools(server: McpServer): void {
         return textResult("No currencies found.");
       }
 
-      const lines = [
-        `${"Symbol".padStart(8)} | ${"Name".padEnd(20)} | ${"Type".padEnd(8)} | ${"Scale".padStart(5)} | ${"Status".padEnd(8)}`,
-      ];
-      lines.push("-".repeat(60));
+      const lines = [`Currencies (${entries.length} total):\n`];
       for (const [sym, info] of entries as [string, Currency][]) {
         lines.push(
-          `${sym.padStart(8)} | ` +
-            `${info.name.padEnd(20)} | ` +
-            `${info.asset_type.padEnd(8)} | ` +
-            `${String(info.scale).padStart(5)} | ` +
-            `${info.status.padEnd(8)}`,
+          `  Symbol: ${sym}\n` +
+            `  Name: ${info.name}\n` +
+            `  Type: ${info.asset_type}\n` +
+            `  Scale: ${info.scale}\n` +
+            `  Status: ${info.status}\n`,
         );
       }
       return textResult(lines.join("\n"));
@@ -90,18 +90,18 @@ export function registerMarketDataTools(server: McpServer): void {
         return textResult("No currency pairs found.");
       }
 
-      const lines = [
-        `${"Pair".padEnd(12)} | ${"Min Size".padStart(12)} | ${"Max Size".padStart(12)} | ` +
-          `${"Base Step".padStart(10)} | ${"Status".padEnd(8)}`,
-      ];
-      lines.push("-".repeat(65));
+      const lines = [`Currency Pairs (${entries.length} total):\n`];
       for (const [pairName, info] of entries as [string, CurrencyPair][]) {
         lines.push(
-          `${pairName.padEnd(12)} | ` +
-            `${info.min_order_size.padStart(12)} | ` +
-            `${info.max_order_size.padStart(12)} | ` +
-            `${info.base_step.padStart(10)} | ` +
-            `${info.status.padEnd(8)}`,
+          `  Pair: ${pairName}\n` +
+            `  Base: ${info.base}\n` +
+            `  Quote: ${info.quote}\n` +
+            `  Base Step: ${info.base_step}\n` +
+            `  Quote Step: ${info.quote_step}\n` +
+            `  Min Order Size: ${info.min_order_size}\n` +
+            `  Max Order Size: ${info.max_order_size}\n` +
+            `  Min Order Size (Quote): ${info.min_order_size_quote}\n` +
+            `  Status: ${info.status}\n`,
         );
       }
       return textResult(lines.join("\n"));
@@ -151,31 +151,31 @@ export function registerMarketDataTools(server: McpServer): void {
 
       const outputLines = [`Order Book: ${symbol}\n`];
 
-      outputLines.push("ASKS (Sell)".padStart(35));
+      outputLines.push("ASKS (Sell)".padStart(30));
       outputLines.push(
-        `${"Price".padStart(14)} ${"Currency".padStart(8)} | ${"Quantity".padStart(14)} ${"Unit".padStart(6)} | ${"Orders".padStart(6)}`,
+        `${"Price".padStart(14)} | ${"Quantity".padStart(14)} | ${"Orders".padStart(6)}`,
       );
-      outputLines.push("-".repeat(58));
+      outputLines.push("-".repeat(42));
       for (const ask of [...asks].reverse()) {
         outputLines.push(
-          `${ask.p.padStart(14)} ${ask.pc.padStart(8)} | ` +
-            `${ask.q.padStart(14)} ${ask.qc.padStart(6)} | ` +
-            `${ask.no.padStart(6)}`,
+          `${ask.price.padStart(14)} | ` +
+            `${ask.quantity.padStart(14)} | ` +
+            `${String(ask.orderCount).padStart(6)}`,
         );
       }
 
       outputLines.push("");
 
-      outputLines.push("BIDS (Buy)".padStart(35));
+      outputLines.push("BIDS (Buy)".padStart(30));
       outputLines.push(
-        `${"Price".padStart(14)} ${"Currency".padStart(8)} | ${"Quantity".padStart(14)} ${"Unit".padStart(6)} | ${"Orders".padStart(6)}`,
+        `${"Price".padStart(14)} | ${"Quantity".padStart(14)} | ${"Orders".padStart(6)}`,
       );
-      outputLines.push("-".repeat(58));
+      outputLines.push("-".repeat(42));
       for (const bid of bids) {
         outputLines.push(
-          `${bid.p.padStart(14)} ${bid.pc.padStart(8)} | ` +
-            `${bid.q.padStart(14)} ${bid.qc.padStart(6)} | ` +
-            `${bid.no.padStart(6)}`,
+          `${bid.price.padStart(14)} | ` +
+            `${bid.quantity.padStart(14)} | ` +
+            `${String(bid.orderCount).padStart(6)}`,
         );
       }
 
@@ -188,7 +188,13 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Tickers",
       description:
-        "Get current ticker data for all trading pairs. Returns bid, ask, mid, and last price for each pair.",
+        "Get current ticker data for trading pairs. Returns bid, ask, mid, and last price for each pair.",
+      inputSchema: {
+        symbols: z
+          .array(z.string())
+          .optional()
+          .describe('Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"]. Omit to get all pairs.'),
+      },
       annotations: {
         title: "Get Tickers",
         readOnlyHint: true,
@@ -196,12 +202,12 @@ export function registerMarketDataTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async () => {
+    async ({ symbols }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       let result;
       try {
-        result = await getRevolutXClient().getTickers();
+        result = await getRevolutXClient().getTickers({ symbols });
       } catch (error) {
         const handled = await handleApiError(error, SETUP_GUIDE);
         if (handled) return handled;
@@ -232,19 +238,23 @@ export function registerMarketDataTools(server: McpServer): void {
     "get_candles",
     {
       title: "Get Candlestick Data",
-      description: "Get OHLCV candlestick data for a trading pair.",
+      description:
+        "Get OHLCV candlestick data for a trading pair. " +
+        "When start_date and end_date are provided, automatically fetches all pages in " +
+        "1000-candle chunks. Without a date range, returns a single batch.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         resolution: z
           .string()
           .default("1h")
           .describe(
-            'Candle interval — "5m", "15m", "30m", "1h", "4h", "1d", "2d", "4d", "1w", "2w", "4w" (default "1h")',
+            'Candle interval — "1m", "5m", "15m", "30m", "1h", "4h", "1d", "2d", "4d", "1w", "2w", "4w" (default "1h")',
           ),
         limit: z
           .number()
-          .default(50)
-          .describe("Max number of candles (default 50)"),
+          .min(1)
+          .default(1000)
+          .describe("Max number of candles to return (default 1000)."),
         start_date: z
           .number()
           .optional()
@@ -275,20 +285,37 @@ export function registerMarketDataTools(server: McpServer): void {
         );
       }
 
-      let result;
+      type Candle = Awaited<
+        ReturnType<ReturnType<typeof getRevolutXClient>["getCandles"]>
+      >["data"][number];
+      let candles: Candle[];
+
       try {
-        result = await getRevolutXClient().getCandles(symbol, {
-          interval: resolution,
-          startDate: start_date,
-          endDate: end_date,
-        });
+        if (start_date !== undefined && end_date !== undefined) {
+          candles = await fetchAllCandlesChunked(
+            (startDate, endDate) =>
+              getRevolutXClient().getCandles(symbol!, {
+                interval: resolution,
+                startDate,
+                endDate,
+              }),
+            start_date,
+            end_date,
+            candleChunkMs(resolution),
+          );
+        } else {
+          const result = await getRevolutXClient().getCandles(symbol, {
+            interval: resolution,
+            startDate: start_date,
+            endDate: end_date,
+          });
+          candles = result.data;
+        }
       } catch (err) {
         const handled = await handleApiError(err, SETUP_GUIDE);
         if (handled) return handled;
         throw err;
       }
-
-      const candles = result.data.slice(0, limit);
 
       if (!candles.length) {
         return textResult(
@@ -296,12 +323,13 @@ export function registerMarketDataTools(server: McpServer): void {
         );
       }
 
-      const lines = [`Candles for ${symbol} (${resolution}):\n`];
+      const sliced = candles.slice(0, limit);
+      const lines = [`Candles for ${symbol} (${resolution}, ${sliced.length} total):\n`];
       lines.push(
         `${"Start".padEnd(20)} | ${"Open".padStart(12)} | ${"High".padStart(12)} | ${"Low".padStart(12)} | ${"Close".padStart(12)} | ${"Volume".padStart(14)}`,
       );
       lines.push("-".repeat(95));
-      for (const c of candles) {
+      for (const c of sliced) {
         lines.push(
           `${String(c.start).padEnd(20)} | ` +
             `${c.open.padStart(12)} | ` +
@@ -319,15 +347,32 @@ export function registerMarketDataTools(server: McpServer): void {
     "get_public_trades",
     {
       title: "Get Public Trades",
-      description: "Get recent public trades for a trading pair.",
+      description:
+        "Get public trades for a trading pair. " +
+        "When start_date and end_date are provided, automatically fetches all pages across " +
+        "7-day chunks. Without a date range, returns a single page — use cursor to paginate manually.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
+        start_date: z
+          .number()
+          .optional()
+          .describe("Start of date range as epoch milliseconds."),
+        end_date: z
+          .number()
+          .optional()
+          .describe("End of date range as epoch milliseconds."),
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            "Pagination cursor from a previous response. Only used when no date range is provided.",
+          ),
         limit: z
           .number()
           .min(1)
           .max(100)
-          .default(20)
-          .describe("Number of trades to return, 1-100 (default 20)"),
+          .default(100)
+          .describe("Trades per page, 1-100 (default 100)"),
       },
       annotations: {
         title: "Get Public Trades",
@@ -336,7 +381,7 @@ export function registerMarketDataTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ symbol, limit }) => {
+    async ({ symbol, start_date, end_date, cursor, limit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       symbol = symbol.trim().toUpperCase();
@@ -345,37 +390,61 @@ export function registerMarketDataTools(server: McpServer): void {
 
       limit = Math.max(1, Math.min(100, limit));
 
-      let result;
+      type PublicTrade = Awaited<
+        ReturnType<ReturnType<typeof getRevolutXClient>["getAllTrades"]>
+      >["data"][number];
+      let allTrades: PublicTrade[];
+      let nextCursor: string | undefined;
+
       try {
-        result = await getRevolutXClient().getAllTrades(symbol, { limit });
+        if (start_date !== undefined && end_date !== undefined) {
+          allTrades = await fetchAllChunked(
+            (startDate, endDate, cur) =>
+              getRevolutXClient().getAllTrades(symbol!, {
+                startDate,
+                endDate,
+                cursor: cur,
+                limit,
+              }),
+            start_date,
+            end_date,
+          );
+        } else {
+          const result = await getRevolutXClient().getAllTrades(symbol, {
+            startDate: start_date,
+            endDate: end_date,
+            cursor,
+            limit,
+          });
+          allTrades = result.data;
+          nextCursor = result.metadata.next_cursor;
+        }
       } catch (err) {
         const handled = await handleApiError(err, SETUP_GUIDE);
         if (handled) return handled;
         throw err;
       }
 
-      const trades = result.data;
-      if (!trades.length)
-        return textResult(`No recent trades found for ${symbol}.`);
+      if (!allTrades.length)
+        return textResult(`No trades found for ${symbol}.`);
 
-      const lines = [`Recent trades for ${symbol}:\n`];
+      const lines = [`Public trades for ${symbol} (${allTrades.length} total):\n`];
       lines.push(
-        `${"Asset".padStart(8)} | ${"Price".padStart(14)} ${"Cur".padStart(4)} | ${"Quantity".padStart(14)} ${"Cur".padStart(4)} | Time`,
+        `${"ID".padEnd(36)} | ${"Symbol".padStart(10)} | ${"Price".padStart(14)} | ${"Quantity".padStart(14)} | Time`,
       );
-      lines.push("-".repeat(65));
-      for (const t of trades) {
+      lines.push("-".repeat(100));
+      for (const t of allTrades) {
         lines.push(
-          `${t.aid.padStart(8)} | ` +
-            `${t.p.padStart(14)} ${t.pc.padStart(4)} | ` +
-            `${t.q.padStart(14)} ${t.qc.padStart(4)} | ` +
-            `${t.tdt}`,
+          `${t.id.padEnd(36)} | ` +
+            `${t.symbol.padStart(10)} | ` +
+            `${t.price.padStart(14)} | ` +
+            `${t.quantity.padStart(14)} | ` +
+            `${new Date(t.timestamp).toISOString()}`,
         );
       }
 
-      if (result.metadata.next_cursor) {
-        lines.push(
-          `\nMore trades available (cursor: ${result.metadata.next_cursor})`,
-        );
+      if (nextCursor) {
+        lines.push(`\nMore trades available (cursor: ${nextCursor})`);
       }
 
       return textResult(lines.join("\n"));

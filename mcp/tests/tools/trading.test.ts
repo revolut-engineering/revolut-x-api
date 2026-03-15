@@ -7,6 +7,7 @@ const mockClient = {
   getActiveOrders: vi.fn(),
   getHistoricalOrders: vi.fn(),
   getPrivateTrades: vi.fn(),
+  getOrderFills: vi.fn(),
 };
 
 vi.mock("../../src/server.js", () => ({
@@ -228,6 +229,17 @@ describe("order_command", () => {
       "Missing required parameter: venue_order_id",
     );
   });
+
+  it("cancel_all generates correct CLI command", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "order_command",
+      arguments: { action: "cancel_all" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Cancel all open orders");
+    expect(text).toContain("revx order cancel-all");
+  });
 });
 
 describe("trading read-only tools", () => {
@@ -292,7 +304,7 @@ describe("trading read-only tools", () => {
       arguments: {},
     });
     const text = getText(result);
-    expect(text).toContain("Historical orders:");
+    expect(text).toContain("Historical orders (");
     expect(text).toContain("hist-1");
     expect(text).toContain("92000");
     expect(text).toContain("Avg Fill Price: 91500");
@@ -382,5 +394,120 @@ describe("trading read-only tools", () => {
     });
     const text = getText(result);
     expect(text).toContain("More orders available (cursor: abc123)");
+  });
+});
+
+describe("get_client_trades", () => {
+  it("returns all trade fields", async () => {
+    mockClient.getPrivateTrades.mockResolvedValue({
+      data: [
+        {
+          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          orderId: "d0184248-2de5-4b5a-9a1c-123456789abc",
+          symbol: "BTC/USD",
+          side: "buy",
+          price: "95000",
+          quantity: "0.001",
+          maker: false,
+          timestamp: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_client_trades",
+      arguments: { symbol: "BTC-USD" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Your trades for BTC-USD");
+    expect(text).toContain("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    expect(text).toContain("d0184248-2de5-4b5a-9a1c-123456789abc");
+    expect(text).toContain("BTC/USD");
+    expect(text).toContain("buy");
+    expect(text).toContain("95000");
+    expect(text).toContain("0.001");
+    expect(text).toContain("false");
+    expect(text).toContain("2023-11-14T");
+  });
+
+  it("shows cursor when more trades available", async () => {
+    mockClient.getPrivateTrades.mockResolvedValue({
+      data: [
+        {
+          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          orderId: "d0184248-2de5-4b5a-9a1c-123456789abc",
+          symbol: "ETH/USD",
+          side: "sell",
+          price: "3000",
+          quantity: "1",
+          maker: true,
+          timestamp: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000, next_cursor: "xyz789" },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_client_trades",
+      arguments: { symbol: "ETH-USD" },
+    });
+    expect(getText(result)).toContain("More trades available (cursor: xyz789)");
+  });
+
+  it("returns empty message when no trades", async () => {
+    mockClient.getPrivateTrades.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_client_trades",
+      arguments: { symbol: "BTC-USD" },
+    });
+    expect(getText(result)).toContain("No trade history found for BTC-USD");
+  });
+});
+
+describe("get_order_fills", () => {
+  it("returns all fill fields", async () => {
+    mockClient.getOrderFills.mockResolvedValue({
+      data: [
+        {
+          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          orderId: "d0184248-2de5-4b5a-9a1c-123456789abc",
+          symbol: "BTC/USD",
+          side: "buy",
+          price: "95000",
+          quantity: "0.001",
+          maker: false,
+          timestamp: 1700000000000,
+        },
+      ],
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_fills",
+      arguments: { order_id: "d0184248-2de5-4b5a-9a1c-123456789abc" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Fills for order d0184248-2de5-4b5a-9a1c-123456789abc");
+    expect(text).toContain("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    expect(text).toContain("BTC/USD");
+    expect(text).toContain("buy");
+    expect(text).toContain("95000");
+    expect(text).toContain("0.001");
+    expect(text).toContain("false");
+    expect(text).toContain("2023-11-14T");
+  });
+
+  it("returns empty message when no fills", async () => {
+    mockClient.getOrderFills.mockResolvedValue({ data: [] });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_fills",
+      arguments: { order_id: "d0184248-2de5-4b5a-9a1c-123456789abc" },
+    });
+    expect(getText(result)).toContain("No fills found for order d0184248-2de5-4b5a-9a1c-123456789abc");
   });
 });

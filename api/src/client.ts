@@ -17,6 +17,16 @@ import type {
   PlaceOrderParams,
 } from "./types/orders.js";
 import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
+import {
+  type WireTrade,
+  type WirePublicTrade,
+  mapTrade,
+  mapPublicTrade,
+} from "./mappers/trades.js";
+import {
+  type WireOrderBookLevel,
+  mapOrderBookLevel,
+} from "./mappers/market.js";
 import type {
   Candle,
   CandlesOptions,
@@ -33,6 +43,7 @@ import type {
 } from "./types/common.js";
 
 const RESOLUTION_MAP: Record<string, number> = {
+  "1m": 1,
   "5m": 5,
   "15m": 15,
   "30m": 30,
@@ -179,10 +190,17 @@ export class RevolutXClient {
     this.requireAuth();
     const params: Record<string, unknown> = {};
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return this.request<{
-      data: OrderBook<OrderBookLevel>;
+    const raw = await this.request<{
+      data: OrderBook<WireOrderBookLevel>;
       metadata: { timestamp: number };
     }>("GET", `/order-book/${symbol}`, params);
+    return {
+      data: {
+        asks: raw.data.asks.map(mapOrderBookLevel),
+        bids: raw.data.bids.map(mapOrderBookLevel),
+      },
+      metadata: raw.metadata,
+    };
   }
 
   async placeOrder(
@@ -289,15 +307,19 @@ export class RevolutXClient {
 
   async getOrderFills(venueOrderId: string): Promise<DataArrayResponse<Trade>> {
     this.requireAuth();
-    return this.request<DataArrayResponse<Trade>>(
+    const raw = await this.request<DataArrayResponse<WireTrade>>(
       "GET",
       `/orders/fills/${venueOrderId}`,
     );
+    return {
+      ...raw,
+      data: raw.data.map(mapTrade),
+    };
   }
 
   async getAllTrades(
-    symbol: string,
-    opts?: TradesOptions,
+      symbol: string,
+      opts?: TradesOptions,
   ): Promise<PaginatedResponse<PublicTrade>> {
     this.requireAuth();
     const params: Record<string, unknown> = {};
@@ -305,11 +327,15 @@ export class RevolutXClient {
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return this.request<PaginatedResponse<PublicTrade>>(
+    const raw = await this.request<PaginatedResponse<WirePublicTrade>>(
       "GET",
       `/trades/all/${symbol}`,
       params,
     );
+    return {
+      ...raw,
+      data: raw.data.map(mapPublicTrade),
+    };
   }
 
   async getPrivateTrades(
@@ -322,10 +348,14 @@ export class RevolutXClient {
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return this.request<PaginatedResponse<Trade>>(
+    const raw = await this.request<PaginatedResponse<WireTrade>>(
       "GET",
       `/trades/private/${symbol}`,
       params,
     );
+    return {
+      ...raw,
+      data: raw.data.map(mapTrade),
+    };
   }
 }

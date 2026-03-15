@@ -28,7 +28,28 @@ describe("Trades", () => {
       const result = await client.getAllTrades("BTC-USD");
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].tid).toBe("trade-1");
+      expect(result.data[0].id).toBe("12345678-1234-1234-1234-123456789abc");
+    });
+
+    it("maps wire fields to clean schema", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/trades/all/BTC-USD")
+        .reply(200, {
+          data: [mockTrade],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getAllTrades("BTC-USD");
+
+      expect(result.data[0]).toMatchObject({
+        id: "12345678-1234-1234-1234-123456789abc",
+
+        symbol: "BTC/USD",
+        price: "95000",
+        quantity: "0.001",
+        timestamp: 1700000000000,
+      });
     });
 
     it("filters by date range", async () => {
@@ -84,24 +105,6 @@ describe("Trades", () => {
 
       expect(result.data).toEqual([]);
     });
-
-    it("includes trade details (price, quantity, timestamp)", async () => {
-      const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/trades/all/BTC-USD")
-        .reply(200, {
-          data: [mockTrade],
-          metadata: { timestamp: 1700000000000 },
-        });
-
-      const result = await client.getAllTrades("BTC-USD");
-
-      expect(result.data[0]).toMatchObject({
-        p: "95000",
-        q: "0.001",
-        tdt: 1700000000000,
-      });
-    });
   });
 
   describe("getPrivateTrades", () => {
@@ -117,7 +120,67 @@ describe("Trades", () => {
       const result = await client.getPrivateTrades("BTC-USD");
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].tid).toBe("trade-1");
+      expect(result.data[0].id).toBe("12345678-1234-1234-1234-123456789abc");
+    });
+
+    it("maps wire fields to clean schema", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/trades/private/BTC-USD")
+        .reply(200, {
+          data: [mockTrade],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getPrivateTrades("BTC-USD");
+
+      expect(result.data[0]).toMatchObject({
+        id: "12345678-1234-1234-1234-123456789abc",
+
+        symbol: "BTC/USD",
+        price: "95000",
+        quantity: "0.001",
+        side: "buy",
+        orderId: "d0184248-2de5-4b2a-9fe2-0cf42670da47",
+        maker: false,
+        timestamp: 1700000000000,
+      });
+    });
+
+    it("passes side through as-is", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/trades/private/BTC-USD")
+        .reply(200, {
+          data: [
+            { ...mockTrade, s: "buy" },
+            { ...mockTrade, s: "sell" },
+          ],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getPrivateTrades("BTC-USD");
+
+      expect(result.data[0].side).toBe("buy");
+      expect(result.data[1].side).toBe("sell");
+    });
+
+    it("maps is-maker flag to boolean", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/trades/private/BTC-USD")
+        .reply(200, {
+          data: [
+            { ...mockTrade, im: true },
+            { ...mockTrade, im: false },
+          ],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getPrivateTrades("BTC-USD");
+
+      expect(result.data[0].maker).toBe(true);
+      expect(result.data[1].maker).toBe(false);
     });
 
     it("returns empty array when user has no trades", async () => {
@@ -171,28 +234,6 @@ describe("Trades", () => {
       await client.getPrivateTrades("SOL-USD", {
         cursor: "page2",
         limit: 50,
-      });
-    });
-
-    it("includes all trade information", async () => {
-      const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/trades/private/BTC-USD")
-        .reply(200, {
-          data: [mockTrade],
-          metadata: { timestamp: 1700000000000 },
-        });
-
-      const result = await client.getPrivateTrades("BTC-USD");
-
-      expect(result.data[0]).toMatchObject({
-        aid: "BTC",
-        anm: "Bitcoin",
-        p: "95000",
-        pc: "USD",
-        q: "0.001",
-        qc: "BTC",
-        ve: "REVX",
       });
     });
   });

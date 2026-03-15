@@ -234,7 +234,7 @@ export class ForegroundGridBot {
     if (!bestBid || !bestAsk) {
       throw new Error(`No order book data for ${this._config.pair}`);
     }
-    return new Decimal(bestBid.p).plus(new Decimal(bestAsk.p)).div(2);
+    return new Decimal(bestBid.price).plus(new Decimal(bestAsk.price)).div(2);
   }
 
   private async _checkBalance(quoteCurrency: string): Promise<Decimal | null> {

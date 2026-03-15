@@ -20,6 +20,7 @@ import { loadConnections } from "../db/store.js";
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
 const VALID_RESOLUTIONS = new Set([
+  "1m",
   "5m",
   "15m",
   "30m",

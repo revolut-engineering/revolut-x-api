@@ -80,6 +80,7 @@ describe("CLI program", () => {
     expect(subNames).toContain("history");
     expect(subNames).toContain("get");
     expect(subNames).toContain("cancel");
+    expect(subNames).toContain("cancel-all");
     expect(subNames).toContain("fills");
   });
 

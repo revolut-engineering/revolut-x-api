@@ -215,15 +215,15 @@ Examples:
           } else {
             console.log("\nAsks (sell):");
             printTable(result.data.asks.reverse(), [
-              { header: "Price", key: "p", align: "right" },
-              { header: "Quantity", key: "q", align: "right" },
-              { header: "Orders", key: "no", align: "right" },
+              { header: "Price", key: "price", align: "right" },
+              { header: "Quantity", key: "quantity", align: "right" },
+              { header: "Orders", key: "orderCount", align: "right" },
             ]);
             console.log("\nBids (buy):");
             printTable(result.data.bids, [
-              { header: "Price", key: "p", align: "right" },
-              { header: "Quantity", key: "q", align: "right" },
-              { header: "Orders", key: "no", align: "right" },
+              { header: "Price", key: "price", align: "right" },
+              { header: "Quantity", key: "quantity", align: "right" },
+              { header: "Orders", key: "orderCount", align: "right" },
             ]);
           }
         } catch (err) {

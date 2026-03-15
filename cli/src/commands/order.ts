@@ -37,6 +37,7 @@ Examples:
   $ revx order history --symbol BTC-USD                Order history for pair
   $ revx order get <order-id>                          Get order details
   $ revx order cancel <order-id>                       Cancel an order
+  $ revx order cancel-all                              Cancel all open orders
   $ revx order fills <order-id>                        Get order fills`,
     );
 
@@ -248,6 +249,19 @@ Examples:
     });
 
   order
+    .command("cancel-all")
+    .description("Cancel all open orders")
+    .action(async () => {
+      try {
+        const client = getClient({ requireAuth: true });
+        await client.cancelAllOrders();
+        printSuccess("All open orders cancelled.");
+      } catch (err) {
+        handleError(err);
+      }
+    });
+
+  order
     .command("fills <order-id>")
     .description("Get fills for an order")
     .option("--json", "Output as JSON")
@@ -262,14 +276,16 @@ Examples:
             printJson(result);
           } else {
             printTable(result.data, [
-              { header: "Trade ID", key: "tid" },
+              { header: "Trade ID", key: "id" },
+              { header: "Symbol", key: "symbol" },
+              { header: "Side", key: "side" },
+              { header: "Price", key: "price", align: "right" },
+              { header: "Qty", key: "quantity", align: "right" },
+              { header: "Maker", key: "maker" },
               {
                 header: "Time",
-                accessor: (t) => new Date(t.tdt).toISOString(),
+                accessor: (t) => new Date(t.timestamp).toISOString(),
               },
-              { header: "Asset", key: "anm" },
-              { header: "Price", key: "p", align: "right" },
-              { header: "Qty", key: "q", align: "right" },
             ]);
           }
         } catch (err) {

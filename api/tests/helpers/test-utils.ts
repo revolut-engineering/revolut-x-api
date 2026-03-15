@@ -115,7 +115,7 @@ export const mockOrderBookLevel = {
 };
 
 export const mockTrade = {
-  tdt: 1700000000000,
+  tid: "12345678123412341234123456789abc",
   aid: "BTC",
   anm: "Bitcoin",
   p: "95000",
@@ -127,7 +127,10 @@ export const mockTrade = {
   ve: "REVX",
   pdt: 1700000000000,
   vp: "REVX",
-  tid: "trade-1",
+  tdt: 1700000000000,
+  oid: "d0184248-2de5-4b2a-9fe2-0cf42670da47",
+  s: "buy" as const,
+  im: false,
 };
 
 export function createTimestamp(): number {

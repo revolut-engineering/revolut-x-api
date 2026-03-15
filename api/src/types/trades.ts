@@ -1,36 +1,20 @@
-/** Trade from authenticated endpoints (epoch ms timestamps) */
-export interface Trade {
-  tdt: number;
-  aid: string;
-  anm: string;
-  p: string;
-  pc: string;
-  pn: string;
-  q: string;
-  qc: string;
-  qn: string;
-  ve: string;
-  pdt: number;
-  vp: string;
-  tid: string;
-  im: string;
-  s: string;
+export interface PublicTrade {
+  id: string;
+  symbol: string;
+  price: string;
+  quantity: string;
+  timestamp: number;
 }
 
-export interface PublicTrade {
-  tdt: string;
-  aid: string;
-  anm: string;
-  p: string;
-  pc: string;
-  pn: string;
-  q: string;
-  qc: string;
-  qn: string;
-  ve: string;
-  pdt: string;
-  vp: string;
-  tid: string;
+export interface Trade {
+  id: string;
+  symbol: string;
+  price: string;
+  quantity: string;
+  side: "buy" | "sell";
+  orderId: string;
+  maker: boolean;
+  timestamp: number;
 }
 
 export interface TradesOptions {

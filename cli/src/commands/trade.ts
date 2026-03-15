@@ -55,14 +55,16 @@ Examples:
             printJson(result);
           } else {
             printTable(result.data, [
-              { header: "Trade ID", key: "tid" },
+              { header: "Trade ID", key: "id" },
+              { header: "Symbol", key: "symbol" },
+              { header: "Side", key: "side" },
+              { header: "Price", key: "price", align: "right" },
+              { header: "Qty", key: "quantity", align: "right" },
+              { header: "Maker", key: "maker" },
               {
                 header: "Time",
-                accessor: (t) => new Date(t.tdt).toISOString(),
+                accessor: (t) => new Date(t.timestamp).toISOString(),
               },
-              { header: "Asset", key: "anm" },
-              { header: "Price", key: "p", align: "right" },
-              { header: "Qty", key: "q", align: "right" },
             ]);
           }
         } catch (err) {

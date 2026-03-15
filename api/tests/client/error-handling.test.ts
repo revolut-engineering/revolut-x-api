@@ -8,7 +8,7 @@ import {
   OrderError,
   RateLimitError,
   ServerError,
-  NetworkError,
+  ConflictError,
 } from "../../src/http/errors.js";
 
 beforeAll(() => {
@@ -303,6 +303,21 @@ describe("Error Handling", () => {
       expect(nock.pendingMocks()).toHaveLength(0);
     });
 
+    it("does not retry on 409 conflict errors", async () => {
+      const client = createTestClient({ maxRetries: 3 });
+      nock(BASE_URL)
+        .get("/api/1.0/balances")
+        .reply(409, { message: "Request timestamp is in the future" });
+
+      const start = Date.now();
+      await expect(client.getBalances()).rejects.toThrow(ConflictError);
+      const elapsed = Date.now() - start;
+
+      // Should fail immediately without retries
+      expect(elapsed).toBeLessThan(100);
+      expect(nock.pendingMocks()).toHaveLength(0);
+    });
+
     it("treats both 401 and 403 as non-retryable", async () => {
       const client = createTestClient({ maxRetries: 2 });
 
@@ -346,20 +361,14 @@ describe("Error Handling", () => {
       expect(nock.pendingMocks()).toHaveLength(0);
     });
 
-    it("retries on 409 and succeeds", async () => {
+    it("throws ConflictError immediately on 409 without retry", async () => {
       const client = createTestClient({ maxRetries: 1 });
       nock(BASE_URL)
         .get("/api/1.0/balances")
         .reply(409, { message: "Request timestamp is in the future" });
-      nock(BASE_URL)
-        .get("/api/1.0/balances")
-        .reply(200, [
-          { currency: "USD", available: "5000", reserved: "0", total: "5000" },
-        ]);
 
-      const result = await client.getBalances();
-
-      expect(result).toHaveLength(1);
+      await expect(client.getBalances()).rejects.toThrow(ConflictError);
+      expect(nock.pendingMocks()).toHaveLength(0);
     });
 
     it("throws ServerError on 5xx responses", async () => {
@@ -433,46 +442,14 @@ describe("Error Handling", () => {
   });
 
   describe("Network errors", () => {
-    it("wraps network errors in NetworkError", async () => {
-      const client = createTestClient({ maxRetries: 0, timeout: 100 });
-      nock(BASE_URL)
-        .get("/api/1.0/balances")
-        .replyWithError(new TypeError("fetch failed"));
-
-      await expect(client.getBalances()).rejects.toThrow(NetworkError);
-    });
-
-    it("retries on timeout", async () => {
+    it("throws network errors immediately without retry", async () => {
       const client = createTestClient({ maxRetries: 1, timeout: 100 });
       nock(BASE_URL)
         .get("/api/1.0/balances")
         .replyWithError(new TypeError("fetch failed"));
-      nock(BASE_URL)
-        .get("/api/1.0/balances")
-        .reply(200, [
-          { currency: "BTC", available: "1.0", reserved: "0", total: "1.0" },
-        ]);
 
-      const result = await client.getBalances();
-
-      expect(result).toHaveLength(1);
-    });
-  });
-
-  describe("Error cause preservation", () => {
-    it("preserves original error as cause", async () => {
-      const client = createTestClient({ maxRetries: 0, timeout: 50 });
-      nock(BASE_URL)
-        .get("/api/1.0/balances")
-        .replyWithError(new TypeError("Connection refused"));
-
-      try {
-        await client.getBalances();
-        expect.fail("Should have thrown");
-      } catch (err) {
-        expect(err).toBeInstanceOf(NetworkError);
-        expect((err as Error).cause).toBeDefined();
-      }
+      await expect(client.getBalances()).rejects.toThrow(TypeError);
+      expect(nock.pendingMocks()).toHaveLength(0);
     });
   });
 });

@@ -10,7 +10,6 @@ import {
   NotFoundError,
   ConflictError,
   ServerError,
-  NetworkError,
 } from "./errors.js";
 
 export interface RequestOptions {
@@ -159,40 +158,12 @@ export async function makeRequest(
         path: fullPath,
         error: error instanceof Error ? error.message : String(error),
       });
-      if (
-        error instanceof AuthenticationError ||
-        error instanceof ForbiddenError ||
-        error instanceof RateLimitError ||
-        error instanceof OrderError ||
-        error instanceof NotFoundError
-      ) {
+
+      if (!(error instanceof ServerError)) {
         throw error;
       }
 
-      lastError =
-        error instanceof Error
-          ? error
-          : new Error(String(error), { cause: error });
-
-      if (
-        error instanceof ConflictError ||
-        (error instanceof RevolutXError &&
-          error.statusCode &&
-          error.statusCode >= 500)
-      ) {
-        continue;
-      }
-
-      if (
-        error instanceof TypeError ||
-        (error instanceof DOMException && error.name === "TimeoutError") ||
-        (error instanceof Error && error.name === "AbortError")
-      ) {
-        lastError = new NetworkError(error.message, { cause: error });
-        continue;
-      }
-
-      throw error;
+      lastError = error;
     }
   }
 
@@ -201,5 +172,5 @@ export async function makeRequest(
     maxRetries: options.maxRetries,
     error: lastError instanceof Error ? lastError.message : String(lastError),
   });
-  throw lastError ?? new NetworkError("Request failed after retries");
+  throw lastError!;
 }

@@ -26,19 +26,9 @@ export interface CandlesOptions {
 }
 
 export interface OrderBookLevel {
-  aid: string;
-  anm: string;
-  s: "SELL" | "BUYI";
-  p: string;
-  pc: string;
-  pn: string;
-  q: string;
-  qc: string;
-  qn: string;
-  ve: string;
-  no: string;
-  ts: string;
-  pdt: number;
+  price: string;
+  quantity: string;
+  orderCount: number;
 }
 
 export interface OrderBook<T> {

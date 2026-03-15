@@ -180,7 +180,7 @@ describe("Market Data", () => {
         .reply(200, {
           data: {
             asks: [mockOrderBookLevel],
-            bids: [{ ...mockOrderBookLevel, s: "BUYI", p: "95000" }],
+            bids: [{ ...mockOrderBookLevel, s: "BUYI", p: "95000", no: "3" }],
           },
           metadata: { timestamp: 1700000000000 },
         });
@@ -189,8 +189,8 @@ describe("Market Data", () => {
 
       expect(result.data.asks).toHaveLength(1);
       expect(result.data.bids).toHaveLength(1);
-      expect(result.data.asks[0].s).toBe("SELL");
-      expect(result.data.bids[0].s).toBe("BUYI");
+      expect(result.data.asks[0].price).toBe("95100");
+      expect(result.data.bids[0].price).toBe("95000");
     });
 
     it("respects limit parameter", async () => {
@@ -223,10 +223,9 @@ describe("Market Data", () => {
       const result = await client.getOrderBook("ETH-USD");
 
       expect(result.data.asks[0]).toMatchObject({
-        p: "95100",
-        q: "1",
-        pc: "USD",
-        qc: "BTC",
+        price: "95100",
+        quantity: "1",
+        orderCount: 2,
       });
     });
   });
