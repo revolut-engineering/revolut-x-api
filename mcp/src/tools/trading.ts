@@ -7,6 +7,7 @@ import {
   validateDecimal,
   validateUUID,
   CLI_INSTALL_HINT,
+  handleApiError,
 } from "./_helpers.js";
 
 const VALID_ORDER_ACTIONS = ["place_market", "place_limit", "cancel"] as const;
@@ -198,6 +199,26 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Active Orders",
       description:
         "Get all currently active (open) orders on your Revolut X account.",
+      inputSchema: {
+        symbols: z
+          .array(z.string())
+          .optional()
+          .describe('Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"].'),
+        side: z
+          .enum(["buy", "sell"])
+          .optional()
+          .describe('Filter by side: "buy" or "sell".'),
+        order_states: z
+          .array(z.enum(["pending_new", "new", "partially_filled"]))
+          .optional()
+          .describe(
+            'Filter by order state: "pending_new", "new", "partially_filled".',
+          ),
+        order_types: z
+          .array(z.enum(["limit", "conditional", "tpsl"]))
+          .optional()
+          .describe('Filter by order type: "limit", "conditional", "tpsl".'),
+      },
       annotations: {
         title: "Get Active Orders",
         readOnlyHint: true,
@@ -205,16 +226,20 @@ export function registerTradingTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async () => {
+    async ({ symbols, side, order_states, order_types }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       let result;
       try {
-        result = await getRevolutXClient().getActiveOrders();
+        result = await getRevolutXClient().getActiveOrders({
+          symbols,
+          side,
+          orderStates: order_states,
+          orderTypes: order_types,
+        });
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(error, SETUP_GUIDE);
+        if (handled) return handled;
         throw error;
       }
 
@@ -254,7 +279,7 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Historical Orders",
       description:
         "Get your historical (completed, cancelled, rejected) orders on Revolut X. " +
-        "Optionally filter by trading pair and date range.",
+        "Optionally filter by trading pair, state, type, and date range.",
       inputSchema: {
         symbol: z
           .string()
@@ -262,6 +287,16 @@ export function registerTradingTools(server: McpServer): void {
           .describe(
             'Filter by trading pair, e.g. "BTC-USD". Omit to get orders for all pairs.',
           ),
+        order_states: z
+          .array(z.enum(["filled", "cancelled", "rejected", "replaced"]))
+          .optional()
+          .describe(
+            'Filter by order state: "filled", "cancelled", "rejected", "replaced".',
+          ),
+        order_types: z
+          .array(z.enum(["market", "limit"]))
+          .optional()
+          .describe('Filter by order type: "market", "limit".'),
         start_date: z
           .number()
           .optional()
@@ -284,9 +319,15 @@ export function registerTradingTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ symbol, start_date, end_date, limit }) => {
+    async ({
+      symbol,
+      order_states,
+      order_types,
+      start_date,
+      end_date,
+      limit,
+    }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       if (symbol) {
         symbol = symbol.trim().toUpperCase();
@@ -296,17 +337,19 @@ export function registerTradingTools(server: McpServer): void {
 
       limit = Math.max(1, Math.min(100, limit));
 
-      const opts: Record<string, unknown> = { limit };
-      if (symbol) opts.symbols = [symbol];
-      if (start_date !== undefined) opts.startDate = start_date;
-      if (end_date !== undefined) opts.endDate = end_date;
-
       let result;
       try {
-        result = await getRevolutXClient().getHistoricalOrders(opts);
+        result = await getRevolutXClient().getHistoricalOrders({
+          symbols: symbol ? [symbol] : undefined,
+          orderStates: order_states,
+          orderTypes: order_types,
+          startDate: start_date,
+          endDate: end_date,
+          limit,
+        });
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(error, SETUP_GUIDE);
+        if (handled) return handled;
         throw error;
       }
 
@@ -373,7 +416,6 @@ export function registerTradingTools(server: McpServer): void {
     },
     async ({ symbol, limit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
@@ -385,8 +427,8 @@ export function registerTradingTools(server: McpServer): void {
       try {
         result = await getRevolutXClient().getPrivateTrades(symbol, { limit });
       } catch (err) {
-        if (err instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(err, SETUP_GUIDE);
+        if (handled) return handled;
         throw err;
       }
 

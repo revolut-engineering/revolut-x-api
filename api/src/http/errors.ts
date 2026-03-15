@@ -25,10 +25,10 @@ export class RateLimitError extends RevolutXError {
   readonly retryAfter?: number;
 
   constructor(
-      message: string = "Rate limit exceeded",
-      retryAfter?: number,
-      options?: ErrorOptions,
-) {
+    message: string = "Rate limit exceeded",
+    retryAfter?: number,
+    options?: ErrorOptions,
+  ) {
     super(message, 429, options);
     this.name = "RateLimitError";
     this.retryAfter = retryAfter;

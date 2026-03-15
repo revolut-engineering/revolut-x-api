@@ -104,9 +104,9 @@ describe("Error Handling", () => {
 
     it("throws ForbiddenError for resource access restriction", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/orders/restricted-order-id")
-        .reply(403, { message: "You don't have permission to view this order" });
+      nock(BASE_URL).get("/api/1.0/orders/restricted-order-id").reply(403, {
+        message: "You don't have permission to view this order",
+      });
 
       try {
         await client.getOrder("restricted-order-id");

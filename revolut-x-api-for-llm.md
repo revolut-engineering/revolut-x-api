@@ -79,12 +79,9 @@ signature = base64.b64encode(signed.signature).decode()
 
 ---
 
-## Base URLs
+## Base URL
 
-| Environment | URL |
-|-------------|-----|
-| Production | `https://revx.revolut.com/api/1.0` |
-| Development | `https://revx.revolut.codes/api/1.0` |
+`https://revx.revolut.com/api/1.0`
 
 ---
 

@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import nock from "nock";
-import { createTestClient, BASE_URL, mockTrade } from "../helpers/test-utils.js";
+import {
+  createTestClient,
+  BASE_URL,
+  mockTrade,
+} from "../helpers/test-utils.js";
 
 beforeAll(() => {
   nock.disableNetConnect();

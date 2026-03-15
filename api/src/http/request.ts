@@ -62,7 +62,8 @@ async function raiseForStatus(response: Response): Promise<void> {
     case 409:
       throw new ConflictError(message);
     default:
-      if (response.status >= 500) throw new ServerError(message, response.status);
+      if (response.status >= 500)
+        throw new ServerError(message, response.status);
       throw new RevolutXError(message, response.status);
   }
 }

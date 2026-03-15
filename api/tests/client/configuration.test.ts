@@ -76,11 +76,9 @@ describe("Configuration", () => {
   describe("getCurrencyPairs", () => {
     it("returns currency pair map", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/configuration/pairs")
-        .reply(200, {
-          "BTC/USD": mockCurrencyPair,
-        });
+      nock(BASE_URL).get("/api/1.0/configuration/pairs").reply(200, {
+        "BTC/USD": mockCurrencyPair,
+      });
 
       const result = await client.getCurrencyPairs();
 
@@ -102,11 +100,9 @@ describe("Configuration", () => {
 
     it("includes min/max order sizes", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/configuration/pairs")
-        .reply(200, {
-          "BTC/USD": mockCurrencyPair,
-        });
+      nock(BASE_URL).get("/api/1.0/configuration/pairs").reply(200, {
+        "BTC/USD": mockCurrencyPair,
+      });
 
       const result = await client.getCurrencyPairs();
 
@@ -117,11 +113,9 @@ describe("Configuration", () => {
 
     it("includes step sizes for precision", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/configuration/pairs")
-        .reply(200, {
-          "BTC/USD": mockCurrencyPair,
-        });
+      nock(BASE_URL).get("/api/1.0/configuration/pairs").reply(200, {
+        "BTC/USD": mockCurrencyPair,
+      });
 
       const result = await client.getCurrencyPairs();
 

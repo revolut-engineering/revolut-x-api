@@ -169,5 +169,4 @@ async function cancelOrder(orderId) {
 | `/api/1.0/public/last-trades` | GET | ❌ | Latest 100 trades across all pairs (no auth) |
 | `/api/1.0/public/order-book/{symbol}` | GET | ❌ | Order book snapshot, max 5 levels (no auth) |
 
-Production base URL: `https://revx.revolut.com/api/1.0`
-Sandbox base URL: `https://revx.revolut.codes/api/1.0`
+Base URL: `https://revx.revolut.com/api/1.0`
