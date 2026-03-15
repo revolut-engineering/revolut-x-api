@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Currency, CurrencyPair } from "revolutx-api";
-import { textResult, validateSymbol, VALID_RESOLUTIONS } from "./_helpers.js";
+import {
+  textResult,
+  validateSymbol,
+  VALID_RESOLUTIONS,
+  handleApiError,
+} from "./_helpers.js";
 
 export function registerMarketDataTools(server: McpServer): void {
   server.registerTool(
@@ -19,14 +24,13 @@ export function registerMarketDataTools(server: McpServer): void {
     },
     async () => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       let currencies;
       try {
         currencies = await getRevolutXClient().getCurrencies();
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(error, SETUP_GUIDE);
+        if (handled) return handled;
         throw error;
       }
 
@@ -69,14 +73,13 @@ export function registerMarketDataTools(server: McpServer): void {
     },
     async () => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       let pairs;
       try {
         pairs = await getRevolutXClient().getCurrencyPairs();
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(error, SETUP_GUIDE);
+        if (handled) return handled;
         throw error;
       }
 
@@ -128,7 +131,6 @@ export function registerMarketDataTools(server: McpServer): void {
     },
     async ({ symbol, limit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
@@ -140,8 +142,8 @@ export function registerMarketDataTools(server: McpServer): void {
       try {
         result = await getRevolutXClient().getOrderBook(symbol, { limit });
       } catch (err) {
-        if (err instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(err, SETUP_GUIDE);
+        if (handled) return handled;
         throw err;
       }
 
@@ -196,14 +198,13 @@ export function registerMarketDataTools(server: McpServer): void {
     },
     async () => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       let result;
       try {
         result = await getRevolutXClient().getTickers();
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(error, SETUP_GUIDE);
+        if (handled) return handled;
         throw error;
       }
 
@@ -244,6 +245,14 @@ export function registerMarketDataTools(server: McpServer): void {
           .number()
           .default(50)
           .describe("Max number of candles (default 50)"),
+        start_date: z
+          .number()
+          .optional()
+          .describe("Start of time range as epoch milliseconds."),
+        end_date: z
+          .number()
+          .optional()
+          .describe("End of time range as epoch milliseconds."),
       },
       annotations: {
         title: "Get Candlestick Data",
@@ -252,9 +261,8 @@ export function registerMarketDataTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ symbol, resolution, limit }) => {
+    async ({ symbol, resolution, limit, start_date, end_date }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
@@ -271,10 +279,12 @@ export function registerMarketDataTools(server: McpServer): void {
       try {
         result = await getRevolutXClient().getCandles(symbol, {
           interval: resolution,
+          startDate: start_date,
+          endDate: end_date,
         });
       } catch (err) {
-        if (err instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(err, SETUP_GUIDE);
+        if (handled) return handled;
         throw err;
       }
 
@@ -328,7 +338,6 @@ export function registerMarketDataTools(server: McpServer): void {
     },
     async ({ symbol, limit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("revolutx-api");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
@@ -340,8 +349,8 @@ export function registerMarketDataTools(server: McpServer): void {
       try {
         result = await getRevolutXClient().getAllTrades(symbol, { limit });
       } catch (err) {
-        if (err instanceof AuthNotConfiguredError)
-          return textResult(SETUP_GUIDE);
+        const handled = await handleApiError(err, SETUP_GUIDE);
+        if (handled) return handled;
         throw err;
       }
 

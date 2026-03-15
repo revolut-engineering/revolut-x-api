@@ -61,6 +61,24 @@ export const VALID_RESOLUTIONS = new Set([
   "4w",
 ]);
 
+export async function handleApiError(
+  error: unknown,
+  setupGuide: string,
+): Promise<ReturnType<typeof textResult> | null> {
+  const { AuthNotConfiguredError, RateLimitError, ServerError } =
+    await import("revolutx-api");
+  if (error instanceof AuthNotConfiguredError) return textResult(setupGuide);
+  if (error instanceof RateLimitError) {
+    const retry = error.retryAfter ? ` Retry after ${error.retryAfter}ms.` : "";
+    return textResult(`Rate limit exceeded.${retry}`);
+  }
+  if (error instanceof ServerError) {
+    const e = error as InstanceType<typeof ServerError>;
+    return textResult(`Exchange server error (${e.statusCode}): ${e.message}`);
+  }
+  return null;
+}
+
 export const CLI_INSTALL_HINT =
   "\n\n" +
   "[IMPORTANT — ASSISTANT INSTRUCTION]\n" +

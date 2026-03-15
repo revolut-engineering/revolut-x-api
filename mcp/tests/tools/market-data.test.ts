@@ -20,7 +20,23 @@ vi.mock("revolutx-api", async () => {
   class AuthNotConfiguredError extends Error {
     name = "AuthNotConfiguredError";
   }
-  return { AuthNotConfiguredError };
+  class RateLimitError extends Error {
+    name = "RateLimitError";
+    retryAfter?: number;
+    constructor(message = "Rate limit exceeded", retryAfter?: number) {
+      super(message);
+      this.retryAfter = retryAfter;
+    }
+  }
+  class ServerError extends Error {
+    name = "ServerError";
+    statusCode: number;
+    constructor(message: string, statusCode: number) {
+      super(message);
+      this.statusCode = statusCode;
+    }
+  }
+  return { AuthNotConfiguredError, RateLimitError, ServerError };
 });
 
 async function createClient(): Promise<Client> {
