@@ -103,7 +103,7 @@ describe("Orders", () => {
 
     it("generates client order ID if not provided", async () => {
       const client = createTestClient();
-      let capturedBody: any;
+      let capturedBody: Record<string, unknown>;
 
       nock(BASE_URL)
         .post("/api/1.0/orders", (body) => {
@@ -130,7 +130,7 @@ describe("Orders", () => {
 
     it("uses provided client order ID", async () => {
       const client = createTestClient();
-      let capturedBody: any;
+      let capturedBody: Record<string, unknown>;
 
       nock(BASE_URL)
         .post("/api/1.0/orders", (body) => {
@@ -157,7 +157,7 @@ describe("Orders", () => {
 
     it("includes execution instructions for limit orders", async () => {
       const client = createTestClient();
-      let capturedBody: any;
+      let capturedBody: Record<string, unknown>;
 
       nock(BASE_URL)
         .post("/api/1.0/orders", (body) => {
@@ -182,9 +182,10 @@ describe("Orders", () => {
         },
       });
 
-      expect(
-        capturedBody.order_configuration.limit.execution_instructions,
-      ).toEqual(["post_only"]);
+      const config = capturedBody.order_configuration as {
+        limit: { execution_instructions: string[] };
+      };
+      expect(config.limit.execution_instructions).toEqual(["post_only"]);
     });
   });
 
