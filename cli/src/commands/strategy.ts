@@ -96,10 +96,10 @@ async function fetchCandles(
   days: number,
 ): Promise<ParsedCandle[]> {
   const client = getClient({ requireAuth: true });
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const startDate = Date.now() - days * 24 * 60 * 60 * 1000;
   const resp = await client.getCandles(pair, {
     interval: resolution,
-    since,
+    startDate,
   });
   return parseCandles(resp.data);
 }
