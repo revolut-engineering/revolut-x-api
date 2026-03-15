@@ -8,6 +8,9 @@ import {
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 
+export const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_MAX_RETRIES = 3;
+
 export interface RevolutXConfig {
   api_key?: string;
   private_key_path?: string;

@@ -96,8 +96,8 @@ const btc = await client.getTickers({ symbols: ["BTC-USD"] });
 // OHLCV candles
 const candles = await client.getCandles("BTC-USD", {
   interval: 60,        // minutes (or "1h", "4h", "1d", etc.)
-  since: 1700000000000,
-  until: 1700086400000,
+  startDate: 1700000000000,
+  endDate: 1700086400000,
 });
 // → { data: Candle[] }
 
@@ -105,17 +105,6 @@ const candles = await client.getCandles("BTC-USD", {
 const book = await client.getOrderBook("BTC-USD", { limit: 10 });
 // → { data: { asks, bids }, metadata: { timestamp } }
 ```
-
-### Public Market Data (no auth required)
-
-```typescript
-const client = new RevolutXClient({ autoLoadCredentials: false });
-
-// Public order book
-const book = await client.getPublicOrderBook("ETH-USD");
-// → { data: { asks, bids }, metadata: { timestamp } }
-```
-
 ### Orders
 
 ```typescript
@@ -150,8 +139,11 @@ const history = await client.getHistoricalOrders({
 // Get specific order
 const order = await client.getOrder("venue-order-id");
 
-// Cancel order
+// Cancel single order
 await client.cancelOrder("venue-order-id");
+
+// Cancel all active orders
+await client.cancelAllOrders();
 ```
 
 ### Trades
@@ -204,19 +196,26 @@ All errors extend `RevolutXError`:
 | Error | HTTP Status | When |
 |-------|-------------|------|
 | `AuthNotConfiguredError` | — | No API key or private key configured |
-| `AuthenticationError` | 401, 403 | Invalid API key or signature |
-| `RateLimitError` | 429 | Rate limit exceeded |
+| `AuthenticationError` | 401 | Invalid API key or signature |
+| `ForbiddenError` | 403 | Access denied |
+| `RateLimitError` | 429 | Rate limit exceeded — check `retryAfter` (ms) |
+| `ValidationError` | 400 | Request failed schema validation |
 | `OrderError` | 400 | Invalid order parameters |
 | `NotFoundError` | 404 | Resource not found |
-| `NetworkError` | — | Connection failed after retries |
+| `ConflictError` | 409 | Conflicting request (e.g. timestamp skew) |
+| `ServerError` | 5xx | Server-side error — check `statusCode` |
+| `NetworkError` | — | Connection or timeout failure |
 
 ```typescript
-import { AuthenticationError, OrderError } from "revolutx-api";
+import { RateLimitError, OrderError } from "revolutx-api";
 
 try {
   await client.placeOrder({ ... });
 } catch (err) {
-  if (err instanceof OrderError) {
+  if (err instanceof RateLimitError) {
+    const waitMs = err.retryAfter ?? 1000;
+    console.log(`Rate limited. Retry after ${waitMs}ms`);
+  } else if (err instanceof OrderError) {
     console.error("Order rejected:", err.message);
   }
 }
@@ -224,12 +223,7 @@ try {
 
 ## Rate Limiting
 
-Built-in token-bucket rate limiter respects Revolut X limits:
-
-- **Authenticated endpoints:** 1000 requests/minute
-- **Public endpoints:** 20 requests/10 seconds
-
-Rate limiting is automatic — the client waits when approaching limits.
+The client does not throttle requests proactively. When the server responds with `429`, a `RateLimitError` is thrown immediately. Check the `retryAfter` property for the server-indicated wait time in milliseconds before retrying.
 
 ## Symbol Format
 

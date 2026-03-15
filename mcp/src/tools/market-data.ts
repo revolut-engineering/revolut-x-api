@@ -304,4 +304,72 @@ export function registerMarketDataTools(server: McpServer): void {
       return textResult(lines.join("\n"));
     },
   );
+
+  server.registerTool(
+    "get_public_trades",
+    {
+      title: "Get Public Trades",
+      description: "Get recent public trades for a trading pair.",
+      inputSchema: {
+        symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Number of trades to return, 1-100 (default 20)"),
+      },
+      annotations: {
+        title: "Get Public Trades",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ symbol, limit }) => {
+      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
+      const { AuthNotConfiguredError } = await import("revolutx-api");
+
+      symbol = symbol.trim().toUpperCase();
+      const error = validateSymbol(symbol);
+      if (error) return textResult(error);
+
+      limit = Math.max(1, Math.min(100, limit));
+
+      let result;
+      try {
+        result = await getRevolutXClient().getAllTrades(symbol, { limit });
+      } catch (err) {
+        if (err instanceof AuthNotConfiguredError)
+          return textResult(SETUP_GUIDE);
+        throw err;
+      }
+
+      const trades = result.data;
+      if (!trades.length)
+        return textResult(`No recent trades found for ${symbol}.`);
+
+      const lines = [`Recent trades for ${symbol}:\n`];
+      lines.push(
+        `${"Asset".padStart(8)} | ${"Price".padStart(14)} ${"Cur".padStart(4)} | ${"Quantity".padStart(14)} ${"Cur".padStart(4)} | Time`,
+      );
+      lines.push("-".repeat(65));
+      for (const t of trades) {
+        lines.push(
+          `${t.aid.padStart(8)} | ` +
+            `${t.p.padStart(14)} ${t.pc.padStart(4)} | ` +
+            `${t.q.padStart(14)} ${t.qc.padStart(4)} | ` +
+            `${t.tdt}`,
+        );
+      }
+
+      if (result.metadata.next_cursor) {
+        lines.push(
+          `\nMore trades available (cursor: ${result.metadata.next_cursor})`,
+        );
+      }
+
+      return textResult(lines.join("\n"));
+    },
+  );
 }

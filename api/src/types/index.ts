@@ -46,9 +46,7 @@ export type {
   Candle,
   CandlesOptions,
   OrderBookLevel,
-  OrderBookPublicLevel,
   OrderBook,
   OrderBookOptions,
   TickerMetadata,
-  PublicMetadata,
 } from "./market.js";

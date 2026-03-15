@@ -34,7 +34,7 @@ export function registerAccountTools(server: McpServer): void {
       }
 
       const lines = [
-        `${"Currency".padStart(10)} | ${"Available".padStart(16)} | ${"Reserved".padStart(14)} | ${"Total".padStart(16)}`,
+        `${"Currency".padStart(10)} | ${"Available".padStart(16)} | ${"Reserved".padStart(14)} | ${"Staked".padStart(14)} | ${"Total".padStart(16)}`,
       ];
       lines.push("-".repeat(65));
       for (const b of balances) {
@@ -42,6 +42,7 @@ export function registerAccountTools(server: McpServer): void {
           `${b.currency.padStart(10)} | ` +
             `${b.available.padStart(16)} | ` +
             `${b.reserved.padStart(14)} | ` +
+            `${(b.staked ?? "0").padStart(14)} | ` +
             `${b.total.padStart(16)}`,
         );
       }

@@ -1,5 +1,4 @@
 export { makeRequest, type RequestOptions } from "./request.js";
-export { RateLimiter, TokenBucket } from "./rate-limiter.js";
 export {
   RevolutXError,
   AuthenticationError,
@@ -7,6 +6,7 @@ export {
   OrderError,
   NotFoundError,
   ConflictError,
+  ServerError,
   NetworkError,
   AuthNotConfiguredError,
 } from "./errors.js";
