@@ -97,11 +97,9 @@ describe("Authentication", () => {
 
     it("throws ForbiddenError (403) for valid credentials with insufficient permissions", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .post("/api/1.0/orders")
-        .reply(403, {
-          message: "API key does not have trading permissions",
-        });
+      nock(BASE_URL).post("/api/1.0/orders").reply(403, {
+        message: "API key does not have trading permissions",
+      });
 
       try {
         await client.placeOrder({

@@ -1,14 +1,14 @@
-import type {KeyObject} from "node:crypto";
-import {randomUUID} from "node:crypto";
-import {makeRequest, type RequestOptions} from "./http/index.js";
-import {AuthNotConfiguredError, ValidationError} from "./http/errors.js";
-import {loadPrivateKey} from "./auth/keypair.js";
-import {loadCredentials} from "./auth/credentials.js";
-import {DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS,} from "./config/settings.js";
-import {type LogCallback, Logger} from "./logging/logger.js";
-import {placeOrderSchema} from "./validation/schemas.js";
-import type {AccountBalance} from "./types/account.js";
-import type {CurrencyMap, CurrencyPairMap} from "./types/config.js";
+import type { KeyObject } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { makeRequest, type RequestOptions } from "./http/index.js";
+import { AuthNotConfiguredError, ValidationError } from "./http/errors.js";
+import { loadPrivateKey } from "./auth/keypair.js";
+import { loadCredentials } from "./auth/credentials.js";
+import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
+import { type LogCallback, Logger } from "./logging/logger.js";
+import { placeOrderSchema } from "./validation/schemas.js";
+import type { AccountBalance } from "./types/account.js";
+import type { CurrencyMap, CurrencyPairMap } from "./types/config.js";
 import type {
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
@@ -16,7 +16,7 @@ import type {
   OrderPlacementResult,
   PlaceOrderParams,
 } from "./types/orders.js";
-import type {PublicTrade, Trade, TradesOptions} from "./types/trades.js";
+import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
 import type {
   Candle,
   CandlesOptions,
@@ -26,7 +26,11 @@ import type {
   Ticker,
   TickersOptions,
 } from "./types/market.js";
-import type {DataArrayResponse, DataResponse, PaginatedResponse,} from "./types/common.js";
+import type {
+  DataArrayResponse,
+  DataResponse,
+  PaginatedResponse,
+} from "./types/common.js";
 
 const RESOLUTION_MAP: Record<string, number> = {
   "5m": 5,
@@ -106,13 +110,13 @@ export class RevolutXClient {
     params?: Record<string, unknown>,
     body?: Record<string, unknown>,
   ): Promise<T> {
-    return await makeRequest(
-        this.requestOptions,
-        method,
-        path,
-        params,
-        body,
-    ) as T;
+    return (await makeRequest(
+      this.requestOptions,
+      method,
+      path,
+      params,
+      body,
+    )) as T;
   }
 
   async getBalances(): Promise<AccountBalance[]> {

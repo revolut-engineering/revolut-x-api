@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import nock from "nock";
-import { createTestClient, BASE_URL, mockOrder } from "../helpers/test-utils.js";
+import {
+  createTestClient,
+  BASE_URL,
+  mockOrder,
+} from "../helpers/test-utils.js";
 
 beforeAll(() => {
   nock.disableNetConnect();
@@ -178,9 +182,9 @@ describe("Orders", () => {
         },
       });
 
-      expect(capturedBody.order_configuration.limit.execution_instructions).toEqual([
-        "post_only",
-      ]);
+      expect(
+        capturedBody.order_configuration.limit.execution_instructions,
+      ).toEqual(["post_only"]);
     });
   });
 
@@ -348,11 +352,9 @@ describe("Orders", () => {
   describe("getOrder", () => {
     it("returns single order by ID", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/orders/order-123")
-        .reply(200, {
-          data: mockOrder,
-        });
+      nock(BASE_URL).get("/api/1.0/orders/order-123").reply(200, {
+        data: mockOrder,
+      });
 
       const result = await client.getOrder("order-123");
 
@@ -362,11 +364,9 @@ describe("Orders", () => {
 
     it("includes all order details", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/orders/order-456")
-        .reply(200, {
-          data: mockOrder,
-        });
+      nock(BASE_URL).get("/api/1.0/orders/order-456").reply(200, {
+        data: mockOrder,
+      });
 
       const result = await client.getOrder("order-456");
 
@@ -384,9 +384,7 @@ describe("Orders", () => {
       const client = createTestClient();
       nock(BASE_URL).delete("/api/1.0/orders/order-123").reply(204);
 
-      await expect(
-        client.cancelOrder("order-123"),
-      ).resolves.toBeUndefined();
+      await expect(client.cancelOrder("order-123")).resolves.toBeUndefined();
     });
 
     it("handles various order IDs", async () => {
@@ -451,11 +449,9 @@ describe("Orders", () => {
 
     it("returns empty array for unfilled order", async () => {
       const client = createTestClient();
-      nock(BASE_URL)
-        .get("/api/1.0/orders/fills/order-456")
-        .reply(200, {
-          data: [],
-        });
+      nock(BASE_URL).get("/api/1.0/orders/fills/order-456").reply(200, {
+        data: [],
+      });
 
       const result = await client.getOrderFills("order-456");
 
