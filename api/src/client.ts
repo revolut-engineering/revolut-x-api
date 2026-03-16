@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { makeRequest, type RequestOptions } from "./http/index.js";
 import { AuthNotConfiguredError, ValidationError } from "./http/errors.js";
 import { loadPrivateKey } from "./auth/keypair.js";
-import { loadCredentials } from "./auth/credentials.js";
+import { loadCredentials } from "./auth/index.js";
 import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
 import { type LogCallback, Logger } from "./logging/logger.js";
 import { placeOrderSchema } from "./validation/schemas.js";
@@ -18,14 +18,14 @@ import type {
 } from "./types/orders.js";
 import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
 import {
-  type WireTrade,
-  type WirePublicTrade,
-  mapTrade,
   mapPublicTrade,
+  mapTrade,
+  type WirePublicTrade,
+  type WireTrade,
 } from "./mappers/trades.js";
 import {
-  type WireOrderBookLevel,
   mapOrderBookLevel,
+  type WireOrderBookLevel,
 } from "./mappers/market.js";
 import type {
   Candle,
@@ -165,11 +165,10 @@ export class RevolutXClient {
     this.requireAuth();
     const params: Record<string, unknown> = {};
     if (opts?.interval !== undefined) {
-      const minutes =
+      params.interval =
         typeof opts.interval === "number"
           ? opts.interval
           : (RESOLUTION_MAP[String(opts.interval)] ?? opts.interval);
-      params.interval = minutes;
     }
     if (opts?.startDate !== undefined) params.since = opts.startDate;
     if (opts?.endDate !== undefined) params.until = opts.endDate;
@@ -318,8 +317,8 @@ export class RevolutXClient {
   }
 
   async getAllTrades(
-      symbol: string,
-      opts?: TradesOptions,
+    symbol: string,
+    opts?: TradesOptions,
   ): Promise<PaginatedResponse<PublicTrade>> {
     this.requireAuth();
     const params: Record<string, unknown> = {};

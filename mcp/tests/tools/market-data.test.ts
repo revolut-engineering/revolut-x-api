@@ -184,8 +184,20 @@ describe("market data tools", () => {
   it("get_tickers passes symbols filter", async () => {
     mockClient.getTickers.mockResolvedValue({
       data: [
-        { symbol: "BTC-USD", bid: "99000", ask: "100000", mid: "99500", last_price: "99800" },
-        { symbol: "ETH-USD", bid: "2900", ask: "3000", mid: "2950", last_price: "2980" },
+        {
+          symbol: "BTC-USD",
+          bid: "99000",
+          ask: "100000",
+          mid: "99500",
+          last_price: "99800",
+        },
+        {
+          symbol: "ETH-USD",
+          bid: "2900",
+          ask: "3000",
+          mid: "2950",
+          last_price: "2980",
+        },
       ],
       metadata: { timestamp: 1700000000000 },
     });
@@ -194,7 +206,9 @@ describe("market data tools", () => {
       name: "get_tickers",
       arguments: { symbols: ["BTC-USD", "ETH-USD"] },
     });
-    expect(mockClient.getTickers).toHaveBeenCalledWith({ symbols: ["BTC-USD", "ETH-USD"] });
+    expect(mockClient.getTickers).toHaveBeenCalledWith({
+      symbols: ["BTC-USD", "ETH-USD"],
+    });
   });
 
   it("get_candles validates resolution", async () => {
@@ -234,12 +248,26 @@ describe("market data tools", () => {
     mockClient.getCandles
       .mockResolvedValueOnce({
         data: [
-          { start: "2024-01-01T00:00", open: "90000", high: "91000", low: "89000", close: "90500", volume: "100" },
+          {
+            start: "2024-01-01T00:00",
+            open: "90000",
+            high: "91000",
+            low: "89000",
+            close: "90500",
+            volume: "100",
+          },
         ],
       })
       .mockResolvedValueOnce({
         data: [
-          { start: "2024-02-10T00:00", open: "95000", high: "96000", low: "94000", close: "95500", volume: "200" },
+          {
+            start: "2024-02-10T00:00",
+            open: "95000",
+            high: "96000",
+            low: "94000",
+            close: "95500",
+            volume: "200",
+          },
         ],
       });
     const client = await createClient();
@@ -250,7 +278,12 @@ describe("market data tools", () => {
     const end = start + 2 * 1000 * 3600 * 1000;
     const result = await client.callTool({
       name: "get_candles",
-      arguments: { symbol: "BTC-USD", resolution: "1h", start_date: start, end_date: end },
+      arguments: {
+        symbol: "BTC-USD",
+        resolution: "1h",
+        start_date: start,
+        end_date: end,
+      },
     });
     const text = getText(result);
     expect(mockClient.getCandles).toHaveBeenCalledTimes(2);

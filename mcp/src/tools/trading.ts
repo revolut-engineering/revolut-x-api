@@ -11,7 +11,12 @@ import {
   fetchAllChunked,
 } from "./_helpers.js";
 
-const VALID_ORDER_ACTIONS = ["place_market", "place_limit", "cancel", "cancel_all"] as const;
+const VALID_ORDER_ACTIONS = [
+  "place_market",
+  "place_limit",
+  "cancel",
+  "cancel_all",
+] as const;
 
 export function registerTradingTools(server: McpServer): void {
   server.registerTool(
@@ -24,7 +29,9 @@ export function registerTradingTools(server: McpServer): void {
       inputSchema: {
         action: z
           .enum(VALID_ORDER_ACTIONS)
-          .describe("The order operation: place_market, place_limit, cancel, cancel_all."),
+          .describe(
+            "The order operation: place_market, place_limit, cancel, cancel_all.",
+          ),
         symbol: z
           .string()
           .optional()
@@ -550,7 +557,8 @@ export function registerTradingTools(server: McpServer): void {
     "get_order_fills",
     {
       title: "Get Order Fills",
-      description: "Get all fills (trade executions) for a specific order by its order ID.",
+      description:
+        "Get all fills (trade executions) for a specific order by its order ID.",
       inputSchema: {
         order_id: z.string().describe("The order ID to retrieve fills for."),
       },

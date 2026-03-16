@@ -491,7 +491,9 @@ describe("get_order_fills", () => {
       arguments: { order_id: "d0184248-2de5-4b5a-9a1c-123456789abc" },
     });
     const text = getText(result);
-    expect(text).toContain("Fills for order d0184248-2de5-4b5a-9a1c-123456789abc");
+    expect(text).toContain(
+      "Fills for order d0184248-2de5-4b5a-9a1c-123456789abc",
+    );
     expect(text).toContain("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
     expect(text).toContain("BTC/USD");
     expect(text).toContain("buy");
@@ -508,6 +510,8 @@ describe("get_order_fills", () => {
       name: "get_order_fills",
       arguments: { order_id: "d0184248-2de5-4b5a-9a1c-123456789abc" },
     });
-    expect(getText(result)).toContain("No fills found for order d0184248-2de5-4b5a-9a1c-123456789abc");
+    expect(getText(result)).toContain(
+      "No fills found for order d0184248-2de5-4b5a-9a1c-123456789abc",
+    );
   });
 });

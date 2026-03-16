@@ -193,7 +193,9 @@ export function registerMarketDataTools(server: McpServer): void {
         symbols: z
           .array(z.string())
           .optional()
-          .describe('Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"]. Omit to get all pairs.'),
+          .describe(
+            'Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"]. Omit to get all pairs.',
+          ),
       },
       annotations: {
         title: "Get Tickers",
@@ -324,7 +326,9 @@ export function registerMarketDataTools(server: McpServer): void {
       }
 
       const sliced = candles.slice(0, limit);
-      const lines = [`Candles for ${symbol} (${resolution}, ${sliced.length} total):\n`];
+      const lines = [
+        `Candles for ${symbol} (${resolution}, ${sliced.length} total):\n`,
+      ];
       lines.push(
         `${"Start".padEnd(20)} | ${"Open".padStart(12)} | ${"High".padStart(12)} | ${"Low".padStart(12)} | ${"Close".padStart(12)} | ${"Volume".padStart(14)}`,
       );
@@ -428,7 +432,9 @@ export function registerMarketDataTools(server: McpServer): void {
       if (!allTrades.length)
         return textResult(`No trades found for ${symbol}.`);
 
-      const lines = [`Public trades for ${symbol} (${allTrades.length} total):\n`];
+      const lines = [
+        `Public trades for ${symbol} (${allTrades.length} total):\n`,
+      ];
       lines.push(
         `${"ID".padEnd(36)} | ${"Symbol".padStart(10)} | ${"Price".padStart(14)} | ${"Quantity".padStart(14)} | Time`,
       );
