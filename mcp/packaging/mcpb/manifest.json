@@ -94,6 +94,10 @@
       "description": "Get your personal trade history (fills) for a specific trading pair."
     },
     {
+      "name": "get_order_fills",
+      "description": "Get fill details for a specific order. Returns individual trade executions that filled the order."
+    },
+    {
       "name": "strategy_command",
       "description": "Generate a revx CLI command for grid trading strategy operations. Supports: backtest (test on historical data), optimize (find best parameters), run (live trading). Returns the exact CLI command to run."
     },
@@ -104,6 +108,14 @@
     {
       "name": "grid_states_list",
       "description": "List all saved grid bot states. Returns the trading pairs that have saved state files, which can be inspected with grid_status or resumed with the strategy run command."
+    },
+    {
+      "name": "grid_backtest",
+      "description": "Run a grid trading backtest on historical candle data from Revolut X. Simulates a grid strategy with geometrically spaced price levels. Returns total trades, realized P&L, net return, max drawdown, and annualized return."
+    },
+    {
+      "name": "grid_optimize",
+      "description": "Test multiple grid parameter combinations and return ranked results. Runs grid backtest for every combination of grid levels and range percentages, then ranks by total return, Calmar ratio, and drawdown."
     },
     {
       "name": "monitor_command",

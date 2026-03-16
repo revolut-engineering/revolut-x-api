@@ -6,7 +6,6 @@ import {
   validateSymbol,
   VALID_RESOLUTIONS,
   handleApiError,
-  fetchAllChunked,
   candleChunkMs,
   fetchAllCandlesChunked,
 } from "./_helpers.js";
@@ -343,116 +342,6 @@ export function registerMarketDataTools(server: McpServer): void {
             `${c.volume.padStart(14)}`,
         );
       }
-      return textResult(lines.join("\n"));
-    },
-  );
-
-  server.registerTool(
-    "get_public_trades",
-    {
-      title: "Get Public Trades",
-      description:
-        "Get public trades for a trading pair. " +
-        "When start_date and end_date are provided, automatically fetches all pages across " +
-        "7-day chunks. Without a date range, returns a single page — use cursor to paginate manually.",
-      inputSchema: {
-        symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
-        start_date: z
-          .number()
-          .optional()
-          .describe("Start of date range as epoch milliseconds."),
-        end_date: z
-          .number()
-          .optional()
-          .describe("End of date range as epoch milliseconds."),
-        cursor: z
-          .string()
-          .optional()
-          .describe(
-            "Pagination cursor from a previous response. Only used when no date range is provided.",
-          ),
-        limit: z
-          .number()
-          .min(1)
-          .max(100)
-          .default(100)
-          .describe("Trades per page, 1-100 (default 100)"),
-      },
-      annotations: {
-        title: "Get Public Trades",
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ symbol, start_date, end_date, cursor, limit }) => {
-      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-
-      symbol = symbol.trim().toUpperCase();
-      const error = validateSymbol(symbol);
-      if (error) return textResult(error);
-
-      limit = Math.max(1, Math.min(100, limit));
-
-      type PublicTrade = Awaited<
-        ReturnType<ReturnType<typeof getRevolutXClient>["getAllTrades"]>
-      >["data"][number];
-      let allTrades: PublicTrade[];
-      let nextCursor: string | undefined;
-
-      try {
-        if (start_date !== undefined && end_date !== undefined) {
-          allTrades = await fetchAllChunked(
-            (startDate, endDate, cur) =>
-              getRevolutXClient().getAllTrades(symbol!, {
-                startDate,
-                endDate,
-                cursor: cur,
-                limit,
-              }),
-            start_date,
-            end_date,
-          );
-        } else {
-          const result = await getRevolutXClient().getAllTrades(symbol, {
-            startDate: start_date,
-            endDate: end_date,
-            cursor,
-            limit,
-          });
-          allTrades = result.data;
-          nextCursor = result.metadata.next_cursor;
-        }
-      } catch (err) {
-        const handled = await handleApiError(err, SETUP_GUIDE);
-        if (handled) return handled;
-        throw err;
-      }
-
-      if (!allTrades.length)
-        return textResult(`No trades found for ${symbol}.`);
-
-      const lines = [
-        `Public trades for ${symbol} (${allTrades.length} total):\n`,
-      ];
-      lines.push(
-        `${"ID".padEnd(36)} | ${"Symbol".padStart(10)} | ${"Price".padStart(14)} | ${"Quantity".padStart(14)} | Time`,
-      );
-      lines.push("-".repeat(100));
-      for (const t of allTrades) {
-        lines.push(
-          `${t.id.padEnd(36)} | ` +
-            `${t.symbol.padStart(10)} | ` +
-            `${t.price.padStart(14)} | ` +
-            `${t.quantity.padStart(14)} | ` +
-            `${new Date(t.timestamp).toISOString()}`,
-        );
-      }
-
-      if (nextCursor) {
-        lines.push(`\nMore trades available (cursor: ${nextCursor})`);
-      }
-
       return textResult(lines.join("\n"));
     },
   );

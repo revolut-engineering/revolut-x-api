@@ -9,7 +9,6 @@ const mockClient = {
   getOrderBook: vi.fn(),
   getTickers: vi.fn(),
   getCandles: vi.fn(),
-  getAllTrades: vi.fn(),
 };
 
 vi.mock("../../src/server.js", () => ({
@@ -290,62 +289,5 @@ describe("market data tools", () => {
     expect(text).toContain("2 total");
     expect(text).toContain("90000");
     expect(text).toContain("95000");
-  });
-
-  it("get_public_trades returns formatted list", async () => {
-    mockClient.getAllTrades.mockResolvedValue({
-      data: [
-        {
-          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          symbol: "BTC/USD",
-          price: "100000",
-          quantity: "0.5",
-          timestamp: 1700000000000,
-        },
-      ],
-      metadata: { timestamp: 1700000000000 },
-    });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_public_trades",
-      arguments: { symbol: "BTC-USD" },
-    });
-    const text = getText(result);
-    expect(text).toContain("Public trades for BTC-USD");
-    expect(text).toContain("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
-    expect(text).toContain("BTC/USD");
-    expect(text).toContain("100000");
-    expect(text).toContain("0.5");
-    expect(text).toContain("2023-11-14T");
-  });
-
-  it("get_public_trades shows cursor when more available", async () => {
-    mockClient.getAllTrades.mockResolvedValue({
-      data: [
-        {
-          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          symbol: "ETH/USD",
-          price: "3000",
-          quantity: "1",
-          timestamp: 1700000000000,
-        },
-      ],
-      metadata: { timestamp: 1700000000000, next_cursor: "xyz789" },
-    });
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_public_trades",
-      arguments: { symbol: "ETH-USD" },
-    });
-    expect(getText(result)).toContain("More trades available (cursor: xyz789)");
-  });
-
-  it("get_public_trades validates symbol format", async () => {
-    const client = await createClient();
-    const result = await client.callTool({
-      name: "get_public_trades",
-      arguments: { symbol: "invalid" },
-    });
-    expect(getText(result)).toContain("Invalid symbol format");
   });
 });
