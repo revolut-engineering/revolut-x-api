@@ -80,7 +80,7 @@ revx market pairs                  # List all trading pairs
 revx market tickers                # All tickers
 revx market ticker BTC-USD         # Single pair ticker
 revx market candles BTC-USD        # OHLCV candles (default 1h)
-  --interval 60                    # Minutes: 5,15,30,60,240,1440,...
+  --interval 60                    # Minutes: 1,5,15,30,60,240,1440,...
   --since 2025-01-01               # Start (ISO date or epoch ms)
   --until 2025-01-02               # End
 revx market orderbook BTC-USD      # Order book snapshot
@@ -187,7 +187,7 @@ Run a backtest on historical candle data:
 ```bash
 revx strategy grid backtest BTC-USD
 revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
-revx strategy grid backtest ETH-USD --days 60 --interval 4h --fee-rate 0.1
+revx strategy grid backtest ETH-USD --days 60 --interval 4h
 revx strategy grid backtest BTC-USD --json
 ```
 
@@ -195,10 +195,9 @@ revx strategy grid backtest BTC-USD --json
 |---|---|---|
 | `--levels <n>` | Number of grid levels | `10` |
 | `--range <pct>` | Grid range as percentage (e.g. `10` for ±10%) | `10` |
-| `--investment <usd>` | Capital in USD | `1000` |
+| `--investment <amount>` | Capital in quote currency | `1000` |
 | `--days <n>` | Days of historical data | `30` |
-| `--interval <res>` | Candle resolution (`5m`, `15m`, `30m`, `1h`, `4h`, `1d`) | `1h` |
-| `--fee-rate <rate>` | Fee rate as percentage (e.g. `0.1` for 0.1%) | `0` |
+| `--interval <res>` | Candle resolution (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`) | `1h` |
 | `--json` | Output as JSON | — |
 
 ##### Optimize
@@ -213,10 +212,9 @@ revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 
 | Flag | Description | Default |
 |---|---|---|
-| `--investment <usd>` | Capital in USD | `1000` |
+| `--investment <amount>` | Capital in quote currency | `1000` |
 | `--days <n>` | Days of historical data | `30` |
 | `--interval <res>` | Candle resolution | `1h` |
-| `--fee-rate <rate>` | Fee rate as percentage | `0` |
 | `--levels <csv>` | Comma-separated level counts to test | `5,8,10,12,15,20,25,30` |
 | `--ranges <csv>` | Comma-separated range percentages to test | `3,5,7,10,12,15,20` |
 | `--top <n>` | Number of top results to show | `10` |
@@ -235,7 +233,7 @@ revx strategy grid run BTC-USD --investment 100 --dry-run
 
 | Flag | Description | Default |
 |---|---|---|
-| `--investment <usd>` | Capital in USD to deploy (required) | — |
+| `--investment <amount>` | Capital in quote currency (required) | — |
 | `--levels <n>` | Number of grid levels | `10` |
 | `--range <pct>` | Grid range as percentage (e.g. `5` for ±5%) | `5` |
 | `--split` | Market-buy 50% of investment at start | — |

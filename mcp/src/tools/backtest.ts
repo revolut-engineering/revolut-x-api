@@ -247,7 +247,7 @@ export function registerBacktestTools(server: McpServer): void {
           .string()
           .default("1h")
           .describe(
-            'Candle interval: 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w (default "1h").',
+            'Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w (default "1h").',
           ),
         days: z
           .number()

@@ -559,7 +559,7 @@ Examples:
     .option("--days <n>", "Days of historical data", "30")
     .option(
       "--interval <res>",
-      "Candle resolution (5m, 15m, 30m, 1h, 4h, 1d)",
+      "Candle resolution (1m, 5m, 15m, 30m, 1h, 4h, 1d)",
       "1h",
     )
     .option("--json", "Output as JSON")

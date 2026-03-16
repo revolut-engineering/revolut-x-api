@@ -245,7 +245,7 @@ export function registerStrategyTools(server: McpServer): void {
           .optional()
           .describe(
             "For backtest/optimize: candle resolution. " +
-              'Valid values: 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w. Default "1h". ' +
+              'Valid values: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w. Default "1h". ' +
               "For run: polling interval in seconds (minimum 5). Default 10.",
           ),
         top: z
