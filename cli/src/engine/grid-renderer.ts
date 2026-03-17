@@ -28,6 +28,7 @@ export interface DashboardData {
   tickCount: number;
   lastError: string | null;
   warnings: string[];
+  telegramConnections: number;
   intervalSec: number;
 }
 
@@ -206,6 +207,13 @@ export function renderDashboard(data: DashboardData): string {
   );
   lines.push(
     padLine(`  ${chalk.dim("Uptime".padEnd(14))}${fmtUptime(uptime)}`, innerW),
+  );
+  const telegramStr =
+    data.telegramConnections > 0
+      ? `${data.telegramConnections} connection${data.telegramConnections !== 1 ? "s" : ""}`
+      : chalk.yellow("None");
+  lines.push(
+    padLine(`  ${chalk.dim("Telegram".padEnd(14))}${telegramStr}`, innerW),
   );
 
   if (data.lastError || data.warnings.length > 0) {

@@ -5,6 +5,7 @@ import {
   TYPE_LABELS,
   type MonitorSpec,
 } from "../engine/monitor.js";
+import { loadConnections } from "../db/store.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
@@ -119,11 +120,25 @@ async function startMonitor(
 
   const intervalSec = Math.max(5, parseInt(interval, 10) || 10);
 
+  const connections = loadConnections().filter((c) => c.enabled);
+  if (connections.length === 0) {
+    console.log(
+      chalk.yellow(
+        "Warning: No Telegram connections. Alerts will display but no notifications will be sent.",
+      ),
+    );
+    console.log(
+      chalk.yellow(
+        "Add one with: revx connector telegram add --token <token> --chat-id <id>\n",
+      ),
+    );
+  }
+
   const spec: MonitorSpec = { pair, alertType, config, intervalSec };
 
-  ForegroundMonitor.printBanner(spec);
+  ForegroundMonitor.printBanner(spec, connections.length);
 
-  const monitor = new ForegroundMonitor(spec);
+  const monitor = new ForegroundMonitor(spec, connections);
 
   const shutdown = () => {
     console.log(chalk.dim("\n  \u25CB Monitor stopped"));

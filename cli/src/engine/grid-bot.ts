@@ -11,6 +11,8 @@ import {
   type GridLevelState,
   type GridTradeEntry,
 } from "../db/grid-store.js";
+import { loadConnections, type TelegramConnection } from "../db/store.js";
+import { sendWithRetries } from "./notify.js";
 import {
   renderDashboard,
   renderShutdownSummary,
@@ -49,10 +51,15 @@ export class ForegroundGridBot {
   private _lastError: string | null = null;
   private _warnings: string[] = [];
   private _pairInfo: CurrencyPair | null = null;
+  private _connections: TelegramConnection[] = [];
   private _boundaryAlerted = false;
 
   constructor(config: GridBotConfig) {
     this._config = config;
+  }
+
+  get connectionCount(): number {
+    return this._connections.length;
   }
 
   stop(): void {
@@ -71,6 +78,7 @@ export class ForegroundGridBot {
     this._running = true;
     this._startTime = Date.now();
     this._client = new RevolutXClient();
+    this._connections = loadConnections().filter((c) => c.enabled);
 
     if (!this._client.isAuthenticated) {
       throw new Error(
@@ -86,6 +94,16 @@ export class ForegroundGridBot {
     } else {
       await this._initNewGrid();
     }
+    const activeConfig = this._state!.config;
+    const rangePctDisplay = new Decimal(activeConfig.rangePct)
+      .times(100)
+      .toFixed(1);
+    const modeLabel = activeConfig.dryRun ? " [DRY RUN]" : "";
+    this._notify(
+      `Grid Bot started${modeLabel}: ${this._state!.pair} | ` +
+        `${activeConfig.levels} levels | \u00B1${rangePctDisplay}% | ` +
+        `${activeConfig.investment} ${this._state!.pair.split("-")[1] ?? ""}`,
+    );
     await this._loop();
   }
 
@@ -142,6 +160,13 @@ export class ForegroundGridBot {
     }
 
     console.log(renderShutdownSummary(this._state, currentPrice, remaining));
+
+    const s = this._state.stats;
+    this._notify(
+      `Grid Bot stopped: ${this._state.pair} | ` +
+        `${s.totalBuys} buys, ${s.totalSells} sells | ` +
+        `P&L: $${new Decimal(s.realizedPnl).toFixed(2)}`,
+    );
   }
 
   // --------------- helpers ---------------
@@ -242,6 +267,10 @@ export class ForegroundGridBot {
       );
       if (!this._boundaryAlerted) {
         this._boundaryAlerted = true;
+        this._notify(
+          `Grid Bot ${state.pair}: Price exited grid range (${direction} $${boundary.toFixed(2)}). ` +
+            `Current: $${currentPrice.toFixed(2)}. Bot may be accumulating inventory without recovery.`,
+        );
       }
     } else {
       this._boundaryAlerted = false;
@@ -869,6 +898,7 @@ export class ForegroundGridBot {
         parts.push(
           `${sellsFilled} sell${sellsFilled !== 1 ? "s" : ""} filled offline`,
         );
+      this._notify(parts.join(" | "));
     }
   }
 
@@ -953,6 +983,11 @@ export class ForegroundGridBot {
             state.stats.totalBuys++;
             this._logTrade("buy", level.price, filledQty.toString(), order.id);
 
+            const base = this._config.pair.split("-")[0] ?? "";
+            this._notify(
+              `Grid Bot ${this._config.pair}: BUY filled @ $${level.price} | ${filledQty} ${base}`,
+            );
+
             // Place sell on the level above
             const sellLevel = state.levels[level.index + 1];
             if (sellLevel) {
@@ -994,6 +1029,12 @@ export class ForegroundGridBot {
               filledQty.toString(),
               order.id,
               profit.toFixed(2),
+            );
+
+            const base = this._config.pair.split("-")[0] ?? "";
+            this._notify(
+              `Grid Bot ${this._config.pair}: SELL filled @ $${sellPrice} | ` +
+                `${filledQty} ${base} | profit $${profit.toFixed(2)}`,
             );
 
             // Clear position on buy level (one below) and place buy back
@@ -1211,6 +1252,13 @@ export class ForegroundGridBot {
 
   // --------------- notifications & logging ---------------
 
+  private _notify(message: string): void {
+    if (this._connections.length === 0) return;
+    for (const tc of this._connections) {
+      void sendWithRetries(tc.bot_token, tc.chat_id, message);
+    }
+  }
+
   private _logTrade(
     side: "buy" | "sell",
     price: string,
@@ -1248,6 +1296,7 @@ export class ForegroundGridBot {
       tickCount: this._tickCount,
       lastError: this._lastError,
       warnings: this._warnings,
+      telegramConnections: this._connections.length,
       intervalSec: this._config.intervalSec,
     };
 

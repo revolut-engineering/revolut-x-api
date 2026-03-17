@@ -8,6 +8,7 @@ import { registerTradeCommand } from "./commands/trade.js";
 import { registerMonitorCommand } from "./commands/monitor.js";
 import { registerEventsCommand } from "./commands/events.js";
 import { registerStrategyCommand } from "./commands/strategy.js";
+import { registerConnectorCommand } from "./commands/connector.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -80,6 +81,13 @@ Examples:
     $ revx strategy grid run BTC-USD --investment 500 --levels 10 --range 5
     $ revx strategy grid run BTC-USD --investment 500 --dry-run
 
+  Connector (Telegram notifications):
+    $ revx connector telegram add --token <token> --chat-id <id>
+    $ revx connector telegram add --token <token> --chat-id <id> --test
+    $ revx connector telegram list
+    $ revx connector telegram test <id>
+    $ revx connector telegram delete <id>
+
   Events:
     $ revx events                                         Show recent alert events
     $ revx events --limit 10                              Show last 10 events
@@ -94,6 +102,7 @@ Examples:
   registerMonitorCommand(program);
   registerEventsCommand(program);
   registerStrategyCommand(program);
+  registerConnectorCommand(program);
 
   return program;
 }
