@@ -86,12 +86,6 @@ export class ForegroundGridBot {
     } else {
       await this._initNewGrid();
     }
-
-    const activeConfig = this._state!.config;
-    const rangePctDisplay = new Decimal(activeConfig.rangePct)
-      .times(100)
-      .toFixed(1);
-    const modeLabel = activeConfig.dryRun ? " [DRY RUN]" : "";
     await this._loop();
   }
 
