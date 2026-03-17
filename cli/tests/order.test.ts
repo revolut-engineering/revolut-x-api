@@ -57,21 +57,39 @@ describe("order list", () => {
   });
 
   it("passes order-states array", async () => {
-    await runCommand(["order", "list", "--order-states", "pending_new,new", "--json"]);
+    await runCommand([
+      "order",
+      "list",
+      "--order-states",
+      "pending_new,new",
+      "--json",
+    ]);
     expect(mockGetActiveOrders).toHaveBeenCalledWith(
       expect.objectContaining({ orderStates: ["pending_new", "new"] }),
     );
   });
 
   it("passes order-types array", async () => {
-    await runCommand(["order", "list", "--order-types", "limit,conditional", "--json"]);
+    await runCommand([
+      "order",
+      "list",
+      "--order-types",
+      "limit,conditional",
+      "--json",
+    ]);
     expect(mockGetActiveOrders).toHaveBeenCalledWith(
       expect.objectContaining({ orderTypes: ["limit", "conditional"] }),
     );
   });
 
   it("passes symbols array when --symbols is given", async () => {
-    await runCommand(["order", "list", "--symbols", "BTC-USD,ETH-USD", "--json"]);
+    await runCommand([
+      "order",
+      "list",
+      "--symbols",
+      "BTC-USD,ETH-USD",
+      "--json",
+    ]);
     expect(mockGetActiveOrders).toHaveBeenCalledWith(
       expect.objectContaining({ symbols: ["BTC-USD", "ETH-USD"] }),
     );
@@ -84,21 +102,39 @@ describe("order history", () => {
   });
 
   it("passes order-states array", async () => {
-    await runCommand(["order", "history", "--order-states", "filled,cancelled", "--json"]);
+    await runCommand([
+      "order",
+      "history",
+      "--order-states",
+      "filled,cancelled",
+      "--json",
+    ]);
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({ orderStates: ["filled", "cancelled"] }),
     );
   });
 
   it("passes order-types array", async () => {
-    await runCommand(["order", "history", "--order-types", "market,limit", "--json"]);
+    await runCommand([
+      "order",
+      "history",
+      "--order-types",
+      "market,limit",
+      "--json",
+    ]);
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({ orderTypes: ["market", "limit"] }),
     );
   });
 
   it("passes symbols array when --symbols is given", async () => {
-    await runCommand(["order", "history", "--symbols", "BTC-USD,ETH-USD", "--json"]);
+    await runCommand([
+      "order",
+      "history",
+      "--symbols",
+      "BTC-USD,ETH-USD",
+      "--json",
+    ]);
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({ symbols: ["BTC-USD", "ETH-USD"] }),
     );

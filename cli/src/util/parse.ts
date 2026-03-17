@@ -14,7 +14,9 @@ export function parseTimestamp(value: string): number {
     return d.getTime();
   }
 
-  const relMatch = trimmed.match(/^(\d+)\s*(d|days?|w|weeks?|h|hours?|m|minutes?)$/);
+  const relMatch = trimmed.match(
+    /^(\d+)\s*(d|days?|w|weeks?|h|hours?|m|minutes?)$/,
+  );
   if (relMatch) {
     const n = parseInt(relMatch[1], 10);
     const unit = relMatch[2];

@@ -32,7 +32,13 @@ function runCommand(args: string[]): Promise<string> {
 
 const MOCK_PUBLIC_TRADES: { data: PublicTrade[] } = {
   data: [
-    { id: "t-1", symbol: "BTC-USD", price: "90000", quantity: "0.001", timestamp: 1700000000000 },
+    {
+      id: "t-1",
+      symbol: "BTC-USD",
+      price: "90000",
+      quantity: "0.001",
+      timestamp: 1700000000000,
+    },
   ],
 };
 
@@ -44,7 +50,10 @@ describe("trade all", () => {
 
   it("calls getAllTrades with symbol", async () => {
     await runCommand(["trade", "all", "BTC-USD", "--json"]);
-    expect(mockGetAllTrades).toHaveBeenCalledWith("BTC-USD", expect.any(Object));
+    expect(mockGetAllTrades).toHaveBeenCalledWith(
+      "BTC-USD",
+      expect.any(Object),
+    );
   });
 
   it("passes limit option", async () => {
@@ -57,9 +66,13 @@ describe("trade all", () => {
 
   it("passes startDate and endDate when provided", async () => {
     await runCommand([
-      "trade", "all", "BTC-USD",
-      "--start-date", "2025-01-01",
-      "--end-date", "2025-01-02",
+      "trade",
+      "all",
+      "BTC-USD",
+      "--start-date",
+      "2025-01-01",
+      "--end-date",
+      "2025-01-02",
       "--json",
     ]);
     const callArgs = mockGetAllTrades.mock.calls[0];

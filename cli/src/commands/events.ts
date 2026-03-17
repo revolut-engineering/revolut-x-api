@@ -17,10 +17,7 @@ Examples:
   $ revx events --json                             Output as JSON`,
     )
     .option("--limit <n>", "Number of events to show", "50")
-    .option(
-      "--category <type>",
-      "Filter by category (alert_triggered)",
-    )
+    .option("--category <type>", "Filter by category (alert_triggered)")
     .option("--json", "Output as JSON")
     .action((opts: { limit: string; category?: string; json?: boolean }) => {
       const limit = parseInt(opts.limit, 10) || 50;

@@ -2,8 +2,19 @@ import { Command } from "commander";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
 import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
-import { isJsonOutput, printJson, printTable, type ColumnDef } from "../output/formatter.js";
-type PublicTrade = { id: string; symbol: string; price: string; quantity: string; timestamp: number };
+import {
+  isJsonOutput,
+  printJson,
+  printTable,
+  type ColumnDef,
+} from "../output/formatter.js";
+type PublicTrade = {
+  id: string;
+  symbol: string;
+  price: string;
+  quantity: string;
+  timestamp: number;
+};
 
 export function registerTradeCommand(program: Command): void {
   const trade = program
@@ -23,8 +34,14 @@ Examples:
   trade
     .command("history <symbol>")
     .description("Get private trade history for a pair")
-    .option("--start-date <date>", "Start date (ISO, epoch ms, or relative: 7d, 1w, today)")
-    .option("--end-date <date>", "End date (ISO, epoch ms, or relative: today, yesterday)")
+    .option(
+      "--start-date <date>",
+      "Start date (ISO, epoch ms, or relative: 7d, 1w, today)",
+    )
+    .option(
+      "--end-date <date>",
+      "End date (ISO, epoch ms, or relative: today, yesterday)",
+    )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
@@ -79,8 +96,14 @@ Examples:
   trade
     .command("all <symbol>")
     .description("Get all public trades for a pair")
-    .option("--start-date <date>", "Start date (ISO, epoch ms, or relative: 7d, 1w, today)")
-    .option("--end-date <date>", "End date (ISO, epoch ms, or relative: today, yesterday)")
+    .option(
+      "--start-date <date>",
+      "Start date (ISO, epoch ms, or relative: 7d, 1w, today)",
+    )
+    .option(
+      "--end-date <date>",
+      "End date (ISO, epoch ms, or relative: today, yesterday)",
+    )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")

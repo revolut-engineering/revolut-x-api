@@ -20,7 +20,10 @@ function pushTriggerRows(
   if (!t) return;
   const dir = t.trigger_direction === "ge" ? ">=" : "<=";
   rows.push([`--- ${label} ---`, ""]);
-  rows.push(["  Trigger Price", `${t.trigger_price} (when price ${dir} ${t.trigger_price})`]);
+  rows.push([
+    "  Trigger Price",
+    `${t.trigger_price} (when price ${dir} ${t.trigger_price})`,
+  ]);
   rows.push(["  Order Type", t.type]);
   rows.push(["  Time in Force", t.time_in_force]);
   if (t.limit_price) rows.push(["  Limit Price", t.limit_price]);
@@ -138,9 +141,18 @@ Examples:
   order
     .command("list")
     .description("List active orders")
-    .option("--symbols <pairs>", "Filter by pairs (comma-separated, e.g. BTC-USD,ETH-USD)")
-    .option("--order-states <states>", "Filter by states (comma-separated: pending_new,new,partially_filled)")
-    .option("--order-types <types>", "Filter by types (comma-separated: limit,conditional,tpsl)")
+    .option(
+      "--symbols <pairs>",
+      "Filter by pairs (comma-separated, e.g. BTC-USD,ETH-USD)",
+    )
+    .option(
+      "--order-states <states>",
+      "Filter by states (comma-separated: pending_new,new,partially_filled)",
+    )
+    .option(
+      "--order-types <types>",
+      "Filter by types (comma-separated: limit,conditional,tpsl)",
+    )
     .option("--side <side>", "Filter by side (buy|sell)")
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
@@ -160,9 +172,13 @@ Examples:
           const queryOpts: Parameters<typeof client.getActiveOrders>[0] = {};
           if (opts.symbols) queryOpts.symbols = opts.symbols.split(",");
           if (opts.orderStates)
-            queryOpts.orderStates = opts.orderStates.split(",") as NonNullable<Parameters<typeof client.getActiveOrders>[0]>["orderStates"];
+            queryOpts.orderStates = opts.orderStates.split(",") as NonNullable<
+              Parameters<typeof client.getActiveOrders>[0]
+            >["orderStates"];
           if (opts.orderTypes)
-            queryOpts.orderTypes = opts.orderTypes.split(",") as NonNullable<Parameters<typeof client.getActiveOrders>[0]>["orderTypes"];
+            queryOpts.orderTypes = opts.orderTypes.split(",") as NonNullable<
+              Parameters<typeof client.getActiveOrders>[0]
+            >["orderTypes"];
           if (opts.side) queryOpts.side = opts.side as "buy" | "sell";
           if (opts.limit)
             queryOpts.limit = parsePositiveInt(opts.limit, "limit");
@@ -183,11 +199,26 @@ Examples:
   order
     .command("history")
     .description("List historical orders")
-    .option("--symbols <pairs>", "Filter by pairs (comma-separated, e.g. BTC-USD,ETH-USD)")
-    .option("--order-states <states>", "Filter by states (comma-separated: filled,cancelled,rejected,replaced)")
-    .option("--order-types <types>", "Filter by types (comma-separated: market,limit)")
-    .option("--start-date <date>", "Start date (ISO, epoch ms, or relative: 7d, 1w, today)")
-    .option("--end-date <date>", "End date (ISO, epoch ms, or relative: today, yesterday)")
+    .option(
+      "--symbols <pairs>",
+      "Filter by pairs (comma-separated, e.g. BTC-USD,ETH-USD)",
+    )
+    .option(
+      "--order-states <states>",
+      "Filter by states (comma-separated: filled,cancelled,rejected,replaced)",
+    )
+    .option(
+      "--order-types <types>",
+      "Filter by types (comma-separated: market,limit)",
+    )
+    .option(
+      "--start-date <date>",
+      "Start date (ISO, epoch ms, or relative: 7d, 1w, today)",
+    )
+    .option(
+      "--end-date <date>",
+      "End date (ISO, epoch ms, or relative: today, yesterday)",
+    )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
@@ -208,9 +239,13 @@ Examples:
             {};
           if (opts.symbols) queryOpts.symbols = opts.symbols.split(",");
           if (opts.orderStates)
-            queryOpts.orderStates = opts.orderStates.split(",") as NonNullable<Parameters<typeof client.getHistoricalOrders>[0]>["orderStates"];
+            queryOpts.orderStates = opts.orderStates.split(",") as NonNullable<
+              Parameters<typeof client.getHistoricalOrders>[0]
+            >["orderStates"];
           if (opts.orderTypes)
-            queryOpts.orderTypes = opts.orderTypes.split(",") as NonNullable<Parameters<typeof client.getHistoricalOrders>[0]>["orderTypes"];
+            queryOpts.orderTypes = opts.orderTypes.split(",") as NonNullable<
+              Parameters<typeof client.getHistoricalOrders>[0]
+            >["orderTypes"];
           if (opts.startDate)
             queryOpts.startDate = parseTimestamp(opts.startDate);
           if (opts.endDate) queryOpts.endDate = parseTimestamp(opts.endDate);
@@ -265,20 +300,20 @@ Examples:
               ["Time in Force", o.time_in_force],
               ...(o.execution_instructions.length
                 ? [
-                    [
-                      "Execution",
-                      o.execution_instructions.join(", "),
-                    ] as [string, string],
+                    ["Execution", o.execution_instructions.join(", ")] as [
+                      string,
+                      string,
+                    ],
                   ]
                 : []),
               ["Created", new Date(o.created_date).toISOString()],
               ["Updated", new Date(o.updated_date).toISOString()],
               ...(o.previous_order_id
                 ? [
-                    [
-                      "Previous Order ID",
-                      o.previous_order_id,
-                    ] as [string, string],
+                    ["Previous Order ID", o.previous_order_id] as [
+                      string,
+                      string,
+                    ],
                   ]
                 : []),
             ];

@@ -964,7 +964,6 @@ export class ForegroundGridBot {
             if (sellLevel) {
               await this._placeSellOnLevel(sellLevel, filledQty);
             }
-
           } else if (DEAD_STATUSES.has(order.status)) {
             level.buyOrderId = null;
             await this._replaceGridBuy(level);

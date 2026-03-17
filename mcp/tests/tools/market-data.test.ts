@@ -9,7 +9,7 @@ const mockClient = {
   getOrderBook: vi.fn(),
   getTickers: vi.fn(),
   getCandles: vi.fn(),
-  getAllTrades: vi.fn()
+  getAllTrades: vi.fn(),
 };
 
 vi.mock("../../src/server.js", () => ({
