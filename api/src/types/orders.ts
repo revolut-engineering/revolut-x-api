@@ -14,7 +14,7 @@ export type HistoricalOrderState =
   | "cancelled"
   | "rejected"
   | "replaced";
-export type ActiveOrderType = "market" | "limit" | "conditional" | "tpsl";
+export type ActiveOrderType = "limit" | "conditional" | "tpsl";
 export type HistoricalOrderType = "market" | "limit";
 export type TimeInForce = "gtc" | "ioc" | "fok";
 export type ExecutionInstruction = "allow_taker" | "post_only";

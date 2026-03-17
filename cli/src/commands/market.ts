@@ -89,12 +89,14 @@ Examples:
   market
     .command("tickers")
     .description("List all tickers")
+    .option("--symbols <pairs>", "Filter by pairs (comma-separated, e.g. BTC-USD,ETH-USD)")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
-    .action(async (opts: { json?: boolean; output?: string }) => {
+    .action(async (opts: { symbols?: string; json?: boolean; output?: string }) => {
       try {
         const client = getClient({ requireAuth: true });
-        const result = await client.getTickers();
+        const tickerOpts = opts.symbols ? { symbols: opts.symbols.split(",") } : undefined;
+        const result = await client.getTickers(tickerOpts);
 
         if (isJsonOutput(opts)) {
           printJson(result);
@@ -141,9 +143,13 @@ Examples:
   market
     .command("candles <symbol>")
     .description("Get OHLCV candles for a pair")
-    .option("--interval <minutes>", "Candle interval in minutes", "60")
-    .option("--since <timestamp>", "Start time (ISO date or epoch ms)")
-    .option("--until <timestamp>", "End time (ISO date or epoch ms)")
+    .option(
+      "--interval <value>",
+      "Candle interval: string alias (1m,5m,15m,30m,1h,4h,1d,2d,4d,1w,2w,4w) or minutes",
+      "1h",
+    )
+    .option("--since <date>", "Start time (ISO date, epoch ms, or relative: 7d, 1w, 4h, today)")
+    .option("--until <date>", "End time (ISO date, epoch ms, or relative: today, yesterday)")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -159,15 +165,24 @@ Examples:
       ) => {
         try {
           const client = getClient({ requireAuth: true });
+
+          const INTERVAL_ALIASES: Record<string, number> = {
+            "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+            "1h": 60, "4h": 240, "1d": 1440, "2d": 2880, "4d": 5760,
+            "1w": 10080, "2w": 20160, "4w": 40320,
+          };
+
+          const intervalMinutes = INTERVAL_ALIASES[opts.interval] ?? parsePositiveInt(opts.interval, "interval");
+
           const candleOpts: {
-            interval?: number;
-            since?: number;
-            until?: number;
+            interval?: number | string;
+            startDate?: number;
+            endDate?: number;
           } = {};
 
-          candleOpts.interval = parsePositiveInt(opts.interval, "interval");
-          if (opts.since) candleOpts.since = parseTimestamp(opts.since);
-          if (opts.until) candleOpts.until = parseTimestamp(opts.until);
+          candleOpts.interval = intervalMinutes;
+          if (opts.since) candleOpts.startDate = parseTimestamp(opts.since);
+          if (opts.until) candleOpts.endDate = parseTimestamp(opts.until);
 
           const result = await client.getCandles(symbol, candleOpts);
 

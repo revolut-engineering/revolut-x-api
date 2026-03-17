@@ -17,33 +17,11 @@ vi.mock("revolutx-api", () => ({
   ensureConfigDir: () => {},
 }));
 
-const mockSendWithRetries = vi.fn();
-vi.mock("../src/engine/notify.js", () => ({
-  sendWithRetries: (...args: unknown[]) => mockSendWithRetries(...args),
-  formatNotification: (
-    _type: string,
-    pair: string,
-    price: unknown,
-    result: unknown,
-  ) => `Alert: ${pair} at ${price} - ${(result as { detail: string }).detail}`,
-}));
-
 import {
   ForegroundMonitor,
   type MonitorSpec,
   type TickResult,
 } from "../src/engine/monitor.js";
-import type { TelegramConnection } from "../src/db/store.js";
-
-const CONN: TelegramConnection = {
-  id: "conn-1",
-  label: "test",
-  bot_token: "tok",
-  chat_id: "123",
-  enabled: true,
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
-};
 
 function makeSpec(overrides?: Partial<MonitorSpec>): MonitorSpec {
   return {
@@ -64,57 +42,44 @@ function tickerResponse(symbol: string, mid: string) {
 describe("ForegroundMonitor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSendWithRetries.mockResolvedValue({ success: true });
   });
 
   it("reports price and not-triggered when condition not met", async () => {
     mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "95000"));
-    const mon = new ForegroundMonitor(makeSpec(), [CONN]);
+    const mon = new ForegroundMonitor(makeSpec());
     const result = await runSingleTick(mon);
 
     expect(result.price?.toString()).toBe("95000");
     expect(result.evalResult?.conditionMet).toBe(false);
     expect(result.triggered).toBe(false);
-    expect(result.notified).toBe(false);
   });
 
-  it("triggers and notifies when condition met", async () => {
+  it("triggers when condition met", async () => {
     mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "105000"));
-    const mon = new ForegroundMonitor(makeSpec(), [CONN]);
+    const mon = new ForegroundMonitor(makeSpec());
     const result = await runSingleTick(mon);
 
     expect(result.evalResult?.conditionMet).toBe(true);
     expect(result.triggered).toBe(true);
-    expect(result.notified).toBe(true);
-    expect(mockSendWithRetries).toHaveBeenCalledOnce();
-    expect(mockSendWithRetries).toHaveBeenCalledWith(
-      "tok",
-      "123",
-      expect.any(String),
-    );
   });
 
-  it("does not re-notify on consecutive triggers", async () => {
+  it("does not re-trigger on consecutive conditions met", async () => {
     mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "105000"));
-    const mon = new ForegroundMonitor(makeSpec(), [CONN]);
+    const mon = new ForegroundMonitor(makeSpec());
 
     const r1 = await runSingleTick(mon);
     expect(r1.triggered).toBe(true);
-    expect(r1.notified).toBe(true);
 
     const r2 = await runSingleTick(mon);
     expect(r2.triggered).toBe(true);
-    expect(r2.notified).toBe(false);
-    expect(mockSendWithRetries).toHaveBeenCalledTimes(1);
   });
 
-  it("re-notifies after condition resets", async () => {
-    const mon = new ForegroundMonitor(makeSpec(), [CONN]);
+  it("re-triggers after condition resets", async () => {
+    const mon = new ForegroundMonitor(makeSpec());
 
     mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "105000"));
     const r1 = await runSingleTick(mon);
     expect(r1.triggered).toBe(true);
-    expect(r1.notified).toBe(true);
 
     mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "95000"));
     const r2 = await runSingleTick(mon);
@@ -124,23 +89,11 @@ describe("ForegroundMonitor", () => {
     mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "110000"));
     const r3 = await runSingleTick(mon);
     expect(r3.triggered).toBe(true);
-    expect(r3.notified).toBe(true);
-    expect(mockSendWithRetries).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not send notifications when no connections", async () => {
-    mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "105000"));
-    const mon = new ForegroundMonitor(makeSpec(), []);
-    const result = await runSingleTick(mon);
-
-    expect(result.triggered).toBe(true);
-    expect(result.notified).toBe(false);
-    expect(mockSendWithRetries).not.toHaveBeenCalled();
   });
 
   it("returns error when ticker fetch fails", async () => {
     mockGetTickers.mockRejectedValue(new Error("Network error"));
-    const mon = new ForegroundMonitor(makeSpec(), [CONN]);
+    const mon = new ForegroundMonitor(makeSpec());
     const result = await runSingleTick(mon);
 
     expect(result.error).toContain("Failed to fetch ticker");
@@ -149,35 +102,10 @@ describe("ForegroundMonitor", () => {
 
   it("returns error when no price data", async () => {
     mockGetTickers.mockResolvedValue({ data: [] });
-    const mon = new ForegroundMonitor(makeSpec(), [CONN]);
+    const mon = new ForegroundMonitor(makeSpec());
     const result = await runSingleTick(mon);
 
     expect(result.error).toBe("No price data for BTC-USD");
-  });
-
-  it("sends to multiple connections", async () => {
-    const conn2: TelegramConnection = {
-      ...CONN,
-      id: "conn-2",
-      bot_token: "tok2",
-      chat_id: "456",
-    };
-    mockGetTickers.mockResolvedValue(tickerResponse("BTC-USD", "105000"));
-    const mon = new ForegroundMonitor(makeSpec(), [CONN, conn2]);
-    const result = await runSingleTick(mon);
-
-    expect(result.notified).toBe(true);
-    expect(mockSendWithRetries).toHaveBeenCalledTimes(2);
-    expect(mockSendWithRetries).toHaveBeenCalledWith(
-      "tok",
-      "123",
-      expect.any(String),
-    );
-    expect(mockSendWithRetries).toHaveBeenCalledWith(
-      "tok2",
-      "456",
-      expect.any(String),
-    );
   });
 });
 

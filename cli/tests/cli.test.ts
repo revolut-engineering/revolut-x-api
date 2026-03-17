@@ -24,29 +24,8 @@ describe("CLI program", () => {
     expect(names).toContain("market");
     expect(names).toContain("order");
     expect(names).toContain("trade");
-    expect(names).toContain("connector");
     expect(names).toContain("monitor");
     expect(names).toContain("events");
-  });
-
-  it("connector has telegram subcommand", () => {
-    const program = createProgram();
-    const connector = program.commands.find((c) => c.name() === "connector");
-    const connectorSubs = connector.commands.map((c) => c.name());
-    expect(connectorSubs).toContain("telegram");
-  });
-
-  it("connector telegram has subcommands", () => {
-    const program = createProgram();
-    const connector = program.commands.find((c) => c.name() === "connector");
-    const telegram = connector.commands.find((c) => c.name() === "telegram");
-    const subNames = telegram.commands.map((c) => c.name());
-    expect(subNames).toContain("add");
-    expect(subNames).toContain("list");
-    expect(subNames).toContain("delete");
-    expect(subNames).toContain("enable");
-    expect(subNames).toContain("disable");
-    expect(subNames).toContain("test");
   });
 
   it("configure has subcommands", () => {
@@ -89,6 +68,7 @@ describe("CLI program", () => {
     const trade = program.commands.find((c) => c.name() === "trade");
     const subNames = trade.commands.map((c) => c.name());
     expect(subNames).toContain("history");
+    expect(subNames).toContain("all");
   });
 
   it("monitor has subcommands", () => {

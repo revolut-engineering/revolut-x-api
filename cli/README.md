@@ -18,7 +18,7 @@ Or from source:
 # Build the API dependency first
 cd api && npm install && npm run build && cd ..
 # Then build and link the CLI
-cd cli && npm install && npm run build && npm link
+cd cli && npm install && npm run build && npm link && cd ..
 ```
 
 > **Troubleshooting:** If `revx` is not found after `npm link`, your shell may not
@@ -78,11 +78,12 @@ revx account balance BTC           # Single currency balance
 revx market currencies             # List all currencies
 revx market pairs                  # List all trading pairs
 revx market tickers                # All tickers
+  --symbols BTC-USD,ETH-USD        # Filter by pairs (comma-separated)
 revx market ticker BTC-USD         # Single pair ticker
 revx market candles BTC-USD        # OHLCV candles (default 1h)
-  --interval 60                    # Minutes: 1,5,15,30,60,240,1440,...
-  --since 2025-01-01               # Start (ISO date or epoch ms)
-  --until 2025-01-02               # End
+  --interval 1h                    # Alias: 1m,5m,15m,30m,1h,4h,1d,2d,4d,1w,2w,4w or minutes
+  --since 7d                       # Start (relative: 7d,1w,4h,30m,today,yesterday; ISO; epoch ms)
+  --until today                    # End (same formats)
 revx market orderbook BTC-USD      # Order book snapshot
   --limit 10                       # Depth (1-20)
 ```
@@ -95,13 +96,17 @@ revx order place BTC-USD sell 0.001 --market         # Market sell
   --quote-size 100                                    # By quote amount
   --post-only                                         # Post-only
 revx order list                     # Active orders
-  --symbol BTC-USD                  # Filter by pair
+  --symbols BTC-USD,ETH-USD         # Filter by pairs (comma-separated)
+  --order-states pending_new,new    # Filter by states: pending_new,new,partially_filled
+  --order-types limit,conditional   # Filter by types: limit,conditional,tpsl
   --side buy                        # Filter by side
   --limit 50                        # Max results
 revx order history                  # Historical orders
-  --symbol BTC-USD
-  --start-date 2025-01-01
-  --end-date 2025-01-02
+  --symbols BTC-USD,ETH-USD         # Filter by pairs (comma-separated)
+  --order-states filled,cancelled   # Filter by states: filled,cancelled,rejected,replaced
+  --order-types market,limit        # Filter by types: market,limit
+  --start-date 7d                   # Start (relative: 7d,1w,today; ISO; epoch ms)
+  --end-date today                  # End
   --limit 50                        # Max results
 revx order get <order-id>           # Get specific order
 revx order cancel <order-id>        # Cancel order
@@ -111,15 +116,19 @@ revx order fills <order-id>         # Get fills for order
 ### Trades
 
 ```bash
-revx trade history BTC-USD          # My trade history
-  --start-date 2025-01-01
-  --end-date 2025-01-02
+revx trade history BTC-USD          # My private trade history
+  --start-date 7d                   # Start (relative: 7d,1w,today; ISO; epoch ms)
+  --end-date today                  # End
+  --limit 50
+revx trade all BTC-USD              # All public trades for a pair
+  --start-date 7d
+  --end-date today
   --limit 50
 ```
 
 ### Monitor
 
-Live monitoring for price thresholds and technical indicators. Each monitor type has its own subcommand with dedicated flags. Monitors run in the foreground, check on an interval, and send Telegram notifications when conditions trigger.
+Live monitoring for price thresholds and technical indicators. Each monitor type has its own subcommand with dedicated flags. Monitors run in the foreground and check on an interval.
 
 ```bash
 revx monitor types                  # List all supported monitor types
@@ -244,42 +253,6 @@ revx strategy grid run BTC-USD --investment 100 --dry-run
 
 **Reconciliation:** If a state file exists from a previous crash or partial cancellation, the bot automatically reconciles on startup. Orders that filled while offline are accounted for (P&L tracked). Leftover active orders matching the new grid's price levels are adopted; non-matching ones are cancelled. A completely new grid is then initialized.
 
-**Telegram notifications:** If Telegram connections are configured (via `revx connector telegram add`), the grid bot automatically sends notifications on order fills, startup, and shutdown.
-
-### Connector
-
-Manage notification connectors (e.g. Telegram) for alert notifications.
-
-#### Telegram
-
-```bash
-revx connector telegram list                  # List all connections
-revx connector telegram delete <conn-id>     # Delete a connection
-revx connector telegram enable <conn-id>    # Enable a connection
-revx connector telegram disable <conn-id>   # Disable a connection
-revx connector telegram test <conn-id>      # Send a test message
-  --message "Custom text"                    # Optional custom message
-```
-
-Add a connection:
-
-```bash
-# Add with default label
-revx connector telegram add --token "123456:ABC-DEF..." --chat-id "987654321"
-
-# Add with custom label
-revx connector telegram add --token "123456:ABC-DEF..." --chat-id "987654321" --label "main-alerts"
-
-# Add and send test message
-revx connector telegram add --token "123456:ABC-DEF..." --chat-id "987654321" --test
-```
-
-Options for `connector telegram add`:
-- `--token <token>` — Telegram Bot API token (required)
-- `--chat-id <id>` — Telegram chat ID (required)
-- `--label <label>` — Connection label (default: `default`)
-- `--test` — Send a test message after adding
-
 ### Events
 
 View alert trigger and notification events.
@@ -293,7 +266,7 @@ revx events --json                             # Output as JSON
 
 Options:
 - `--limit <n>` — Number of events to show (default: `50`)
-- `--category <type>` — Filter by category: `alert_triggered`, `telegram_send_ok`, `telegram_send_fail`
+- `--category <type>` — Filter by category: `alert_triggered`
 - `--json` — Output as JSON
 
 ## Output Formats

@@ -13,6 +13,7 @@ const BALANCE_COLUMNS: ColumnDef<AccountBalance>[] = [
   { header: "Currency", key: "currency" },
   { header: "Available", key: "available", align: "right" },
   { header: "Reserved", key: "reserved", align: "right" },
+  { header: "Staked", key: "staked", align: "right" },
   { header: "Total", key: "total", align: "right" },
 ];
 

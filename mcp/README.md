@@ -1,6 +1,6 @@
 # RevolutX MCP Server
 
-MCP (Model Context Protocol) server for the [Revolut X](https://exchange.revolut.com/) crypto exchange. Use natural language in Claude Desktop, Cursor, or any MCP-compatible client to query market data, check balances, place orders, and run grid backtests.
+MCP (Model Context Protocol) server for the [Revolut X](https://exchange.revolut.com/) crypto exchange. Use natural language in Claude Desktop, Cursor, or any MCP-compatible client to query market data, check balances, manage orders, monitor alerts, and run grid strategy backtests.
 
 ## How It Works
 
@@ -122,7 +122,6 @@ Edit `~/.config/Claude/claude_desktop_config.json` (or equivalent):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REVOLUTX_CONFIG_DIR` | `~/.config/revolut-x` | Config directory for API keys |
-| `REVOLUTX_WORKER_URL` | `http://localhost:8080` | Worker URL (alerts, Telegram) |
 
 ### First-time setup
 
@@ -134,13 +133,73 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 
 ---
 
+## Tools
+
+### Setup
+
+| Tool | Description |
+|------|-------------|
+| `generate_keypair` | Generate a new Ed25519 keypair. Returns the public key to register in your Revolut X account under Profile > API Keys. |
+| `configure_api_key` | Save your Revolut X API key after registering the public key. |
+| `check_auth_status` | Verify API credentials are configured and working. |
+
+### Account
+
+| Tool | Description |
+|------|-------------|
+| `get_balances` | Get all balances (available, reserved, total) for your Revolut X account. |
+
+### Market Data
+
+| Tool | Description |
+|------|-------------|
+| `get_currencies` | List all available currencies with name, asset type, precision, and status. |
+| `get_currency_pairs` | List all tradeable pairs with step sizes, min/max order sizes, and status. |
+| `get_tickers` | Get current bid/ask/mid/last prices. Optionally filter by symbols. |
+| `get_order_book` | Get the order book for a pair. `limit` controls depth (1–20, default 20). |
+| `get_candles` | Get OHLCV candles. Supports resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`, `"1d"`, `"2d"`, `"4d"`, `"1w"`, `"2w"`, `"4w"`. Auto-paginates when `start_date`/`end_date` are provided. |
+| `get_public_trades` | Get public trades for a pair. Auto-paginates in 7-day chunks when a date range is given. |
+
+### Orders
+
+| Tool | Description |
+|------|-------------|
+| `order_command` | Generate a `revx` CLI command for order operations: `place_market`, `place_limit`, `cancel`, `cancel_all`. |
+| `get_active_orders` | Fetch all open orders. Filter by `symbols`, `side`, `order_states` (`pending_new`, `new`, `partially_filled`), `order_types` (`limit`, `conditional`, `tpsl`). Auto-paginates. |
+| `get_historical_orders` | Fetch completed orders (`filled`, `cancelled`, `rejected`, `replaced`). Supports date ranges with automatic 7-day chunking. |
+| `get_order_by_id` | Get full details of a single order by venue order ID. Shows trigger details for `conditional` and `tpsl` orders. |
+| `get_order_fills` | Get all fills (executions) for a specific order. |
+
+### Trades
+
+| Tool | Description |
+|------|-------------|
+| `get_client_trades` | Get your personal trade history for a pair. Auto-paginates in 7-day chunks when a date range is given. |
+
+### Monitoring
+
+| Tool | Description |
+|------|-------------|
+| `monitor_command` | Generate a `revx monitor` CLI command for a live alert. Supports: `price`, `rsi`, `ema_cross`, `macd`, `bollinger`, `volume_spike`, `spread`, `obi`, `price_change_pct`, `atr_breakout`. |
+| `monitor_types` | List all supported monitor types with descriptions, flags, and usage examples. |
+
+### Strategy
+
+| Tool | Description |
+|------|-------------|
+| `strategy_command` | Generate a `revx strategy grid` CLI command. Actions: `backtest` (test on historical data), `optimize` (sweep parameters), `run` (live grid bot). |
+| `grid_status` | Read the saved state of a running/crashed grid bot: config, grid levels, positions, P&L, and recent trades. |
+| `grid_states_list` | List all pairs that have a saved grid bot state on disk. |
+
+---
+
 ## Development
 
 ```bash
 cd mcp
 npm install
 npm run build      # tsc
-npm run dev       # tsx src/index.ts (stdio)
+npm run dev        # tsx src/index.ts (stdio)
 npm test
 ```
 

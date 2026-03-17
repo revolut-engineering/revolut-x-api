@@ -1,6 +1,5 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConnections } from "../db/store.js";
 import {
   ForegroundMonitor,
   TYPE_LABELS,
@@ -120,25 +119,11 @@ async function startMonitor(
 
   const intervalSec = Math.max(5, parseInt(interval, 10) || 10);
 
-  const connections = loadConnections().filter((c) => c.enabled);
-  if (connections.length === 0) {
-    console.log(
-      chalk.yellow(
-        "Warning: No Telegram connections. Alerts will display but no notifications will be sent.",
-      ),
-    );
-    console.log(
-      chalk.yellow(
-        "Add one with: revx connector telegram add --token <token> --chat-id <id>\n",
-      ),
-    );
-  }
-
   const spec: MonitorSpec = { pair, alertType, config, intervalSec };
 
-  ForegroundMonitor.printBanner(spec, connections.length);
+  ForegroundMonitor.printBanner(spec);
 
-  const monitor = new ForegroundMonitor(spec, connections);
+  const monitor = new ForegroundMonitor(spec);
 
   const shutdown = () => {
     console.log(chalk.dim("\n  \u25CB Monitor stopped"));
