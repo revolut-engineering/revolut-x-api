@@ -15,7 +15,6 @@ import {
   createGrid,
 } from "../shared/backtest/index.js";
 import { ForegroundGridBot, type GridBotConfig } from "../engine/grid-bot.js";
-import { loadConnections } from "../db/store.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
@@ -484,21 +483,6 @@ async function handleRun(
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
   const intervalSec = Math.max(5, parseInt(opts.interval, 10) || 30);
-
-  const connections = loadConnections().filter((c) => c.enabled);
-  if (connections.length === 0) {
-    console.log(
-      chalk.yellow(
-        "  Telegram: None (add with: revx connector telegram add --token <token> --chat-id <id>)",
-      ),
-    );
-  } else {
-    console.log(
-      chalk.dim(
-        `  Telegram: ${connections.length} connection${connections.length !== 1 ? "s" : ""}`,
-      ),
-    );
-  }
 
   const config: GridBotConfig = {
     pair,

@@ -95,7 +95,7 @@ const btc = await client.getTickers({ symbols: ["BTC-USD"] });
 
 // OHLCV candles
 const candles = await client.getCandles("BTC-USD", {
-  interval: 60,        // minutes (or "1h", "4h", "1d", etc.)
+  interval: "1h",      // "1m","5m","15m","30m","1h","4h","1d","2d","4d","1w","2w","4w" or minutes as number
   startDate: 1700000000000,
   endDate: 1700086400000,
 });
@@ -112,7 +112,12 @@ const book = await client.getOrderBook("BTC-USD", { limit: 10 });
 const result = await client.placeOrder({
   symbol: "BTC-USD",
   side: "buy",
-  limit: { price: "95000", baseSize: "0.001" },
+  limit: {
+    price: "95000",
+    baseSize: "0.001",          // baseSize or quoteSize required
+    executionInstructions: ["post_only"],  // optional: "allow_taker" | "post_only"
+  },
+  clientOrderId: "my-order-1", // optional, auto-generated if omitted
 });
 // → { data: { venue_order_id, client_order_id, state } }
 
@@ -126,14 +131,22 @@ await client.placeOrder({
 // Active orders (with filters)
 const active = await client.getActiveOrders({
   symbols: ["BTC-USD"],
-  side: "buy",
+  side: "buy",                                          // "buy" | "sell"
+  orderStates: ["new", "partially_filled"],             // "pending_new" | "new" | "partially_filled"
+  orderTypes: ["limit", "conditional", "tpsl"],         // "limit" | "conditional" | "tpsl"
   limit: 50,
+  cursor: "...",                                        // pagination cursor
 });
 
 // Historical orders
 const history = await client.getHistoricalOrders({
+  symbols: ["BTC-USD"],
+  orderStates: ["filled", "cancelled"],                 // "filled" | "cancelled" | "rejected" | "replaced"
+  orderTypes: ["market", "limit"],                      // "market" | "limit"
   startDate: 1700000000000,
   endDate: 1700086400000,
+  limit: 100,
+  cursor: "...",                                        // pagination cursor
 });
 
 // Get specific order

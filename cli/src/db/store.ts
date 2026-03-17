@@ -3,16 +3,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getConfigDir, ensureConfigDir } from "revolutx-api";
 
-export interface TelegramConnection {
-  id: string;
-  label: string;
-  bot_token: string;
-  chat_id: string;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface Event {
   id: string;
   ts: string;
@@ -41,66 +31,6 @@ function saveArray<T>(filename: string, data: T[]): void {
   const tmp = path + ".tmp";
   writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
   renameSync(tmp, path);
-}
-
-const TELEGRAM_FILE = "telegram.json";
-
-export function loadConnections(): TelegramConnection[] {
-  return loadArray<TelegramConnection>(TELEGRAM_FILE);
-}
-
-export function saveConnections(connections: TelegramConnection[]): void {
-  saveArray(TELEGRAM_FILE, connections);
-}
-
-export function createConnection(
-  bot_token: string,
-  chat_id: string,
-  label: string,
-): TelegramConnection {
-  const connections = loadConnections();
-  const now = new Date().toISOString();
-  const conn: TelegramConnection = {
-    id: randomUUID(),
-    label,
-    bot_token,
-    chat_id,
-    enabled: true,
-    created_at: now,
-    updated_at: now,
-  };
-  connections.push(conn);
-  saveConnections(connections);
-  return conn;
-}
-
-export function getConnection(id: string): TelegramConnection | undefined {
-  return loadConnections().find((c) => c.id === id);
-}
-
-export function updateConnection(
-  id: string,
-  updates: Partial<Pick<TelegramConnection, "enabled" | "label">>,
-): TelegramConnection | undefined {
-  const connections = loadConnections();
-  const idx = connections.findIndex((c) => c.id === id);
-  if (idx === -1) return undefined;
-  connections[idx] = {
-    ...connections[idx],
-    ...updates,
-    updated_at: new Date().toISOString(),
-  };
-  saveConnections(connections);
-  return connections[idx];
-}
-
-export function deleteConnection(id: string): boolean {
-  const connections = loadConnections();
-  const idx = connections.findIndex((c) => c.id === id);
-  if (idx === -1) return false;
-  connections.splice(idx, 1);
-  saveConnections(connections);
-  return true;
 }
 
 const EVENTS_FILE = "events.json";

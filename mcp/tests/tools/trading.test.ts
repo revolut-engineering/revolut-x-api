@@ -8,6 +8,7 @@ const mockClient = {
   getHistoricalOrders: vi.fn(),
   getPrivateTrades: vi.fn(),
   getOrderFills: vi.fn(),
+  getOrder: vi.fn(),
 };
 
 vi.mock("../../src/server.js", () => ({
@@ -260,9 +261,10 @@ describe("trading read-only tools", () => {
           quantity: "0.1",
           filled_quantity: "0",
           leaves_quantity: "0.1",
-          status: "ACTIVE",
-          time_in_force: "GTC",
-          created_date: "2024-01-01",
+          status: "new",
+          time_in_force: "gtc",
+          execution_instructions: [],
+          created_date: 1700000000000,
         },
       ],
       metadata: { timestamp: 1700000000000 },
@@ -368,7 +370,7 @@ describe("trading read-only tools", () => {
     });
   });
 
-  it("get_historical_orders shows cursor when more results available", async () => {
+  it("get_historical_orders shows pagination hint when more results available", async () => {
     mockClient.getHistoricalOrders.mockResolvedValue({
       data: [
         {
@@ -381,7 +383,7 @@ describe("trading read-only tools", () => {
           filled_quantity: "1",
           leaves_quantity: "0",
           status: "filled",
-          time_in_force: "IOC",
+          time_in_force: "ioc",
           created_date: 1700000000000,
         },
       ],
@@ -393,7 +395,7 @@ describe("trading read-only tools", () => {
       arguments: {},
     });
     const text = getText(result);
-    expect(text).toContain("More orders available (cursor: abc123)");
+    expect(text).toContain("More orders are available");
   });
 });
 
@@ -452,7 +454,7 @@ describe("get_client_trades", () => {
       name: "get_client_trades",
       arguments: { symbol: "ETH-USD" },
     });
-    expect(getText(result)).toContain("More trades available (cursor: xyz789)");
+    expect(getText(result)).toContain("More trades are available");
   });
 
   it("returns empty message when no trades", async () => {
@@ -466,6 +468,133 @@ describe("get_client_trades", () => {
       arguments: { symbol: "BTC-USD" },
     });
     expect(getText(result)).toContain("No trade history found for BTC-USD");
+  });
+});
+
+describe("get_order_by_id", () => {
+  it("returns formatted limit order", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-abc",
+        client_order_id: "co-abc",
+        symbol: "BTC-USD",
+        side: "buy",
+        type: "limit",
+        price: "90000",
+        quantity: "0.1",
+        filled_quantity: "0",
+        leaves_quantity: "0.1",
+        status: "new",
+        time_in_force: "gtc",
+        execution_instructions: ["post_only"],
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-abc" },
+    });
+    const text = getText(result);
+    expect(text).toContain("order-abc");
+    expect(text).toContain("BTC-USD");
+    expect(text).toContain("Price: 90000");
+    expect(text).toContain("post_only");
+  });
+
+  it("returns trigger details for conditional order", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-cond",
+        client_order_id: "co-cond",
+        symbol: "ETH-USD",
+        side: "sell",
+        type: "conditional",
+        price: "0",
+        quantity: "1",
+        filled_quantity: "0",
+        leaves_quantity: "1",
+        status: "new",
+        time_in_force: "gtc",
+        execution_instructions: [],
+        conditional: {
+          trigger_price: "3000",
+          type: "market",
+          trigger_direction: "le",
+          time_in_force: "gtc",
+          execution_instructions: [],
+        },
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-cond" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Conditional trigger");
+    expect(text).toContain("3000");
+    expect(text).toContain("<=");
+  });
+
+  it("returns trigger details for tpsl order", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-tpsl",
+        client_order_id: "co-tpsl",
+        symbol: "BTC-USD",
+        side: "sell",
+        type: "tpsl",
+        price: "0",
+        quantity: "0.1",
+        filled_quantity: "0",
+        leaves_quantity: "0.1",
+        status: "new",
+        time_in_force: "gtc",
+        execution_instructions: [],
+        take_profit: {
+          trigger_price: "100000",
+          type: "market",
+          trigger_direction: "ge",
+          time_in_force: "gtc",
+          execution_instructions: [],
+        },
+        stop_loss: {
+          trigger_price: "80000",
+          type: "market",
+          trigger_direction: "le",
+          time_in_force: "gtc",
+          execution_instructions: [],
+        },
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-tpsl" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Take profit");
+    expect(text).toContain("100000");
+    expect(text).toContain(">=");
+    expect(text).toContain("Stop loss");
+    expect(text).toContain("80000");
+  });
+
+  it("returns auth error as setup guide", async () => {
+    const { AuthNotConfiguredError } = await import("revolutx-api");
+    mockClient.getOrder.mockRejectedValue(new AuthNotConfiguredError());
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-abc" },
+    });
+    expect(getText(result)).toContain("Setup guide text");
   });
 });
 

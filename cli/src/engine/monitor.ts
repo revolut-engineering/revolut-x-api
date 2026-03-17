@@ -9,8 +9,6 @@ import {
   type MarketSnapshot,
   type EvalResult,
 } from "../shared/indicators/evaluators.js";
-import type { TelegramConnection } from "../db/store.js";
-import { sendWithRetries, formatNotification } from "./notify.js";
 import { CandleCache } from "./candle-cache.js";
 
 export interface MonitorSpec {
@@ -25,7 +23,6 @@ export interface TickResult {
   price: Decimal | undefined;
   evalResult: EvalResult | null;
   triggered: boolean;
-  notified: boolean;
   error?: string;
 }
 
@@ -61,7 +58,6 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 
 export class ForegroundMonitor {
   private _spec: MonitorSpec;
-  private _connections: TelegramConnection[];
   private _running = false;
   private _timer: ReturnType<typeof setTimeout> | null = null;
   private _candleCache = new CandleCache();
@@ -71,9 +67,8 @@ export class ForegroundMonitor {
   private _tickCount = 0;
   private _currSymbol: string;
 
-  constructor(spec: MonitorSpec, connections: TelegramConnection[]) {
+  constructor(spec: MonitorSpec) {
     this._spec = spec;
-    this._connections = connections;
     const quote = spec.pair.split("-")[1] ?? "";
     this._currSymbol = CURRENCY_SYMBOLS[quote] ?? "";
   }
@@ -131,7 +126,6 @@ export class ForegroundMonitor {
       price: undefined,
       evalResult: null,
       triggered: false,
-      notified: false,
     };
 
     let tickerResponse;
@@ -207,14 +201,6 @@ export class ForegroundMonitor {
     this._triggered = true;
     result.triggered = true;
 
-    if (this._connections.length > 0) {
-      const msg = formatNotification(alertType, pair, result.price, evalResult);
-      for (const tc of this._connections) {
-        await sendWithRetries(tc.bot_token, tc.chat_id, msg);
-      }
-      result.notified = true;
-    }
-
     return result;
   }
 
@@ -244,22 +230,17 @@ export class ForegroundMonitor {
 
     const barStr = this._proximityBar(result.evalResult);
 
-    if (result.triggered && result.notified) {
-      const connLabel =
-        this._connections.length === 1
-          ? "1 connection"
-          : `${this._connections.length} connections`;
+    if (result.triggered) {
       const line1 = `  ${chalk.dim(time)}  ${chalk.bold.cyan(this._spec.pair)}  ${chalk.white.bold(priceStr)}  ${deltaStr}`;
       const line2 = "";
-      const line3Left = `  ${chalk.red.bold("\u25C6 TRIGGERED")}`;
-      const line3Right = `${chalk.green("\u2713 Notified")} ${chalk.dim(`(${connLabel})`)}`;
+      const line3 = `  ${chalk.red.bold("\u25C6 TRIGGERED")}`;
       const cleanDetail = result.evalResult?.detail
         ? result.evalResult.detail
             .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
             .replace(/[\u2B06\u2B07]\uFE0F?/g, "")
             .trim()
         : "";
-      const contentLines = [line1, line2, line3Left + "  " + line3Right];
+      const contentLines = [line1, line2, line3];
       if (cleanDetail) {
         for (const dl of cleanDetail.split("\n")) {
           const trimmed = dl.trim();
@@ -267,12 +248,6 @@ export class ForegroundMonitor {
         }
       }
       console.log(this._box(contentLines, "single"));
-    } else if (result.triggered) {
-      const parts = [`  ${chalk.dim(time)}  ${priceStr}  ${deltaStr}`];
-      if (indicatorStr) parts.push(`${chalk.dim("\u2502")}  ${indicatorStr}`);
-      if (barStr) parts.push(barStr);
-      parts.push(chalk.red("\u25C6"));
-      console.log(parts.join("  "));
     } else {
       const parts = [`  ${chalk.dim(time)}  ${priceStr}  ${deltaStr}`];
       if (indicatorStr) parts.push(`${chalk.dim("\u2502")}  ${indicatorStr}`);
@@ -431,7 +406,7 @@ export class ForegroundMonitor {
     }
   }
 
-  static printBanner(spec: MonitorSpec, connectionCount: number): void {
+  static printBanner(spec: MonitorSpec): void {
     const quote = spec.pair.split("-")[1] ?? "";
     const currSymbol = CURRENCY_SYMBOLS[quote] ?? "";
     const typeLabel = TYPE_LABELS[spec.alertType] ?? spec.alertType;
@@ -440,10 +415,6 @@ export class ForegroundMonitor {
       spec.config,
       currSymbol,
     );
-    const connStr =
-      connectionCount === 0
-        ? chalk.yellow("None")
-        : `${connectionCount} connection${connectionCount !== 1 ? "s" : ""}`;
 
     const w = 48;
     const h = "\u2550";
@@ -471,7 +442,6 @@ export class ForegroundMonitor {
       `\u2551${pad("Type", typeLabel)}\u2551`,
       `\u2551${pad("Condition", condition)}\u2551`,
       `\u2551${pad("Interval", `Every ${spec.intervalSec}s`)}\u2551`,
-      `\u2551${pad("Telegram", connStr)}\u2551`,
       `\u2551${emptyLine}\u2551`,
       `\u255A${h.repeat(w)}\u255D`,
     ];
