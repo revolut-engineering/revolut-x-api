@@ -7,7 +7,7 @@ Monorepo for open-source tooling around the [Revolut X](https://exchange.revolut
 | Package | Description |
 |---------|-------------|
 | [`api/`](api/) | Typed HTTP client for the Revolut X REST API. Zero runtime dependencies — Node.js built-ins only. |
-| [`mcp/`](mcp/) | MCP server exposing 21 tools for market data, account management, orders, monitoring, and grid strategy backtests. Use with Claude Desktop, Claude Code, or any MCP-compatible client. |
+| [`mcp/`](mcp/) | MCP server exposing 23 tools for market data, account management, orders, monitoring, and grid strategy backtests. Use with Claude Desktop, Claude Code, or any MCP-compatible client. |
 | [`cli/`](cli/) | `revx` command-line interface for trading, monitoring, and running grid bots from the terminal. |
 | [`skills/revolut-x-trading/`](skills/revolut-x-trading/) | Claude Code skill for Revolut X trading workflows. |
 

@@ -53,7 +53,7 @@ async function sendTelegramMessage(
 }
 
 const CONN_COLUMNS: ColumnDef<TelegramConnection>[] = [
-  { header: "ID", accessor: (c) => c.id.slice(0, 8) },
+  { header: "ID", key: "id" },
   { header: "Label", key: "label" },
   { header: "Chat ID", key: "chat_id" },
   { header: "Token", accessor: (c) => maskToken(c.bot_token) },

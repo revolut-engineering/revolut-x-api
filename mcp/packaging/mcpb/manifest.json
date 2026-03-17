@@ -126,8 +126,12 @@
       "description": "List all supported monitor types for the 'revx monitor' CLI command. Returns each type with description, config fields, and CLI usage example."
     },
     {
+      "name": "get_order_by_id",
+      "description": "Get the full details of a single order by its venue order ID. Supports market, limit, conditional, and tpsl orders."
+    },
+    {
       "name": "connector_command",
-      "description": "Generate a revx CLI command for notification connector operations. Supports connector types: telegram. Actions: add, list, delete, enable, disable, test. Returns the exact CLI command to run."
+      "description": "Generate a revx CLI command for notification connector operations. Supports connector types: telegram. Actions: add subscription, list, delete, enable, disable, test. Returns the exact CLI command to run."
     }
   ],
   "user_config": {
