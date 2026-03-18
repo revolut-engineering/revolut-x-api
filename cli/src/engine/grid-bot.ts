@@ -277,6 +277,36 @@ export class ForegroundGridBot {
     }
   }
 
+  private async _awaitOrderFill(
+    orderId: string,
+    timeoutMs = 30_000,
+  ): Promise<Decimal> {
+    const client = this._client!;
+    const start = Date.now();
+    const pollIntervalMs = 500;
+
+    while (Date.now() - start < timeoutMs) {
+      const resp = await client.getOrder(orderId);
+      const order = resp.data;
+
+      if (FILLED_STATUSES.has(order.status)) {
+        return new Decimal(order.filled_quantity);
+      }
+
+      if (DEAD_STATUSES.has(order.status)) {
+        throw new Error(
+          `Market buy order ${order.status}: ${orderId}`,
+        );
+      }
+
+      await sleep(pollIntervalMs);
+    }
+
+    throw new Error(
+      `Market buy order did not fill within ${timeoutMs / 1000}s: ${orderId}`,
+    );
+  }
+
   // --------------- initialization ---------------
 
   private async _initNewGrid(): Promise<void> {
@@ -304,17 +334,29 @@ export class ForegroundGridBot {
     const minBase = this._getMinOrderBase();
 
     let splitExecuted = false;
+    let splitBaseAcquired: Decimal | null = null;
     if (config.splitInvestment && !config.dryRun) {
       console.log(chalk.dim("  Placing market buy for 50% of investment..."));
       const halfInvestment = investment.div(2).toFixed(2);
-      await this._client!.placeOrder({
+      const orderResp = await this._client!.placeOrder({
         symbol: config.pair,
         side: "buy",
         market: { quoteSize: halfInvestment },
       });
-      splitExecuted = true;
       console.log(
-        chalk.dim(`  Market buy placed: ${halfInvestment} ${quoteCurrency}`),
+        chalk.dim(
+          `  Market buy placed: ${halfInvestment} ${quoteCurrency}. Waiting for fill...`,
+        ),
+      );
+      splitBaseAcquired = await this._awaitOrderFill(
+        orderResp.data.venue_order_id,
+      );
+      splitExecuted = true;
+      const baseCurrency = config.pair.split("-")[0] ?? "";
+      console.log(
+        chalk.dim(
+          `  Market buy filled: ${splitBaseAcquired} ${baseCurrency}`,
+        ),
       );
     }
 
@@ -456,10 +498,11 @@ export class ForegroundGridBot {
     // --- Place initial sell orders for split mode ---
     let sellsPlaced = 0;
     if (config.splitInvestment && sellLevelIndices.size > 0) {
-      const halfInvestment = investment.div(2);
-      const totalBase = halfInvestment
-        .div(currentPrice)
-        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+      const totalBase = splitBaseAcquired
+        ?? investment
+            .div(2)
+            .div(currentPrice)
+            .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
       const basePerLevel = totalBase
         .div(sellLevelIndices.size)
         .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
@@ -483,7 +526,6 @@ export class ForegroundGridBot {
           const sellLevel = levels[sellIdx];
           const buyLevel = levels[sellIdx - 1];
 
-          // Set position on the buy level (one below the sell)
           if (buyLevel) {
             buyLevel.hasPosition = true;
             buyLevel.baseHeld = basePerLevel.toString();
@@ -622,17 +664,29 @@ export class ForegroundGridBot {
     const minQuote = this._getMinOrderQuote();
 
     let splitExecuted = savedState.splitExecuted ?? false;
+    let splitBaseAcquired: Decimal | null = null;
     if (config.splitInvestment && !config.dryRun && !splitExecuted) {
       console.log(chalk.dim("  Placing market buy for 50% of investment..."));
       const halfInvestment = investment.div(2).toFixed(2);
-      await this._client!.placeOrder({
+      const orderResp = await this._client!.placeOrder({
         symbol: config.pair,
         side: "buy",
         market: { quoteSize: halfInvestment },
       });
-      splitExecuted = true;
       console.log(
-        chalk.dim(`  Market buy placed: ${halfInvestment} ${quoteCurrency}`),
+        chalk.dim(
+          `  Market buy placed: ${halfInvestment} ${quoteCurrency}. Waiting for fill...`,
+        ),
+      );
+      splitBaseAcquired = await this._awaitOrderFill(
+        orderResp.data.venue_order_id,
+      );
+      splitExecuted = true;
+      const baseCurrency = config.pair.split("-")[0] ?? "";
+      console.log(
+        chalk.dim(
+          `  Market buy filled: ${splitBaseAcquired} ${baseCurrency}`,
+        ),
       );
     } else if (config.splitInvestment && splitExecuted) {
       console.log(
@@ -791,10 +845,11 @@ export class ForegroundGridBot {
     // Phase 5: Place sell orders for split mode
     let sellsPlaced = 0;
     if (config.splitInvestment && sellLevelIndices.size > 0) {
-      const halfInvestment = investment.div(2);
-      const totalBase = halfInvestment
-        .div(currentPrice)
-        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+      const totalBase = splitBaseAcquired
+        ?? investment
+            .div(2)
+            .div(currentPrice)
+            .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
       const basePerLevel = totalBase
         .div(sellLevelIndices.size)
         .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
