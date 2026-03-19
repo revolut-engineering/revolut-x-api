@@ -6,8 +6,6 @@ import {
   validateSymbol,
   VALID_RESOLUTIONS,
   handleApiError,
-  candleChunkMs,
-  fetchAllCandlesChunked,
 } from "./_helpers.js";
 import { TRADES_API_LIMIT } from "../constants.js";
 
@@ -248,7 +246,7 @@ export function registerMarketDataTools(server: McpServer): void {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         resolution: z
           .string()
-          .default("1h")
+          .default("1m")
           .describe(
             'Candle interval — "1m", "5m", "15m", "30m", "1h", "4h", "1d", "2d", "4d", "1w", "2w", "4w" (default "1h")',
           ),
