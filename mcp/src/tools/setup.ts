@@ -40,7 +40,7 @@ export function registerSetupTools(server: McpServer): void {
               "A keypair already exists. Here is your existing public key:\n\n" +
               `${pubPem}\n` +
               "If you want to generate a new one, please delete the existing " +
-              `key file first at: ${privateKeyPath}\n\n` +
+              `key file.\n\n` +
               "Next steps:\n" +
               "1. Copy the public key above (including the BEGIN/END lines)\n" +
               "2. Go to Revolut X → Profile and add the public key\n" +

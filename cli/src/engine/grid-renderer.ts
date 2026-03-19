@@ -256,9 +256,9 @@ export function renderDashboard(data: DashboardData): string {
     const isHeld = hasPos && !sellAbove;
 
     if (hasSell) activeSells++;
+    else if (hasBuy) activeBuys++;
     else if (isHeld) heldLevels++;
     else if (hasPos && sellAbove) posLevels++;
-    else if (hasBuy) activeBuys++;
     else idleLevels++;
   }
 
@@ -331,15 +331,15 @@ export function renderDashboard(data: DashboardData): string {
       statusStr = baseAmt
         ? `${chalk.red("SELL")}  ${chalk.dim(baseAmt)}`
         : chalk.red("SELL");
+    } else if (hasBuy) {
+      barStr = chalk.green("\u2592\u2592\u2592\u2592\u2592");
+      statusStr = chalk.green("BUY");
     } else if (isHeld) {
       barStr = chalk.yellow("\u2588\u2588\u2588\u2588\u2588");
       statusStr = `${chalk.yellow("HELD")}  ${chalk.dim(level.baseHeld)}`;
     } else if (hasPos && sellAbove) {
       barStr = chalk.green("\u2588\u2588\u2588\u2588\u2588");
       statusStr = `${chalk.dim("POS")}   ${chalk.dim(level.baseHeld)}`;
-    } else if (hasBuy) {
-      barStr = chalk.green("\u2592\u2592\u2592\u2592\u2592");
-      statusStr = chalk.green("BUY");
     } else {
       barStr = chalk.dim("\u00B7\u00B7\u00B7\u00B7\u00B7");
       statusStr = chalk.dim("\u2014");
@@ -543,8 +543,8 @@ export function renderShutdownSummary(
 export function renderReconciliationSummary(
   buysFilled: number,
   sellsFilled: number,
-  ordersAdopted: number,
-  ordersCancelled: number,
+  ordersKept: number,
+  ordersDead: number,
 ): string {
   const lines: string[] = [];
   lines.push("");
@@ -558,15 +558,15 @@ export function renderReconciliationSummary(
     lines.push(
       `  ${chalk.green("\u2713")} ${sellsFilled} sell order${sellsFilled !== 1 ? "s" : ""} filled while offline`,
     );
-  if (ordersAdopted > 0)
+  if (ordersKept > 0)
     lines.push(
-      `  ${chalk.cyan("\u21BB")} ${ordersAdopted} order${ordersAdopted !== 1 ? "s" : ""} adopted from previous session`,
+      `  ${chalk.cyan("\u21BB")} ${ordersKept} order${ordersKept !== 1 ? "s" : ""} kept from previous session`,
     );
-  if (ordersCancelled > 0)
+  if (ordersDead > 0)
     lines.push(
-      `  ${chalk.yellow("\u2717")} ${ordersCancelled} order${ordersCancelled !== 1 ? "s" : ""} cancelled (didn't match new grid)`,
+      `  ${chalk.yellow("\u2717")} ${ordersDead} order${ordersDead !== 1 ? "s" : ""} expired/cancelled on exchange`,
     );
-  if (buysFilled + sellsFilled + ordersAdopted + ordersCancelled === 0)
+  if (buysFilled + sellsFilled + ordersKept + ordersDead === 0)
     lines.push(`  ${chalk.dim("No leftover orders from previous session")}`);
   lines.push(chalk.dim("  " + "\u2500".repeat(40)));
   lines.push("");

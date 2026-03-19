@@ -103,10 +103,9 @@ function runSellPass(
   quotePerLevel: Decimal,
   result: BacktestResult,
   quoteBalance: Decimal,
-  gridLevels: number,
 ): Decimal {
   for (const level of levels) {
-    if (level.hasPosition && level.index < gridLevels - 1) {
+    if (level.hasPosition && level.index + 1 < levels.length) {
       const sellLevel = levels[level.index + 1];
       if (high.gte(sellLevel.price)) {
         const baseToSell = level.baseHeld;
@@ -143,7 +142,6 @@ export function simulateCandle(
   quotePerLevel: Decimal,
   result: BacktestResult,
   quoteBalance: Decimal,
-  gridLevels: number,
 ): Decimal {
   const bearish = open.gt(close);
   if (bearish) {
@@ -153,7 +151,6 @@ export function simulateCandle(
       quotePerLevel,
       result,
       quoteBalance,
-      gridLevels,
     );
     quoteBalance = runBuyPass(levels, low, quotePerLevel, result, quoteBalance);
   } else {
@@ -164,7 +161,6 @@ export function simulateCandle(
       quotePerLevel,
       result,
       quoteBalance,
-      gridLevels,
     );
   }
 
@@ -206,7 +202,6 @@ export function runBacktest(
       quotePerLevel,
       result,
       quoteBalance,
-      gridLevels,
     );
 
     let totalBaseHeld = new Decimal(0);

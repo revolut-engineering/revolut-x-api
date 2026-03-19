@@ -470,6 +470,7 @@ async function handleRun(
     split?: boolean;
     interval: string;
     dryRun?: boolean;
+    reset?: boolean;
   },
 ): Promise<void> {
   pair = validatePair(pair);
@@ -492,6 +493,7 @@ async function handleRun(
     splitInvestment: opts.split === true,
     intervalSec,
     dryRun: opts.dryRun === true,
+    reset: opts.reset === true,
   };
 
   const bot = new ForegroundGridBot(config);
@@ -580,8 +582,9 @@ Examples:
     )
     .option("--levels <n>", "Number of grid levels", "10")
     .option("--range <pct>", "Grid range as percentage, e.g. 5 for ±5%", "5")
-    .option("--split", "Market-buy 50% of investment at start")
+    .option("--split", "Market-buy base for sell levels at start")
     .option("--interval <sec>", "Polling interval in seconds", "10")
     .option("--dry-run", "Simulate without placing real orders")
+    .option("--reset", "Discard saved state and start a fresh grid")
     .action(handleRun);
 }
