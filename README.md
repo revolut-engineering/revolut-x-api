@@ -53,7 +53,7 @@ Then ask Claude: **"Set up my Revolut X API keys"** to complete authentication.
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
 cd api && npm ci && npm run build && cd ..
-cd cli && npm ci && npm run build && npm link
+cd cli && npm ci && npm run build && npm link && cd ..
 ```
 
 ```bash

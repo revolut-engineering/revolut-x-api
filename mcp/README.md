@@ -158,7 +158,7 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 | `get_tickers` | Get current bid/ask/mid/last prices. Optionally filter by symbols. |
 | `get_order_book` | Get the order book for a pair. `limit` controls depth (1–20, default 20). |
 | `get_candles` | Get OHLCV candles. Supports resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`, `"1d"`, `"2d"`, `"4d"`, `"1w"`, `"2w"`, `"4w"`. Auto-paginates when `start_date`/`end_date` are provided. |
-| `get_public_trades` | Get public trades for a pair. Auto-paginates in 7-day chunks when a date range is given. |
+| `get_public_trades` | Get public trades for a pair. |
 
 ### Orders
 

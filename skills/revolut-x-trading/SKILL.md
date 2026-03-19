@@ -65,7 +65,6 @@ Specify: `symbol`, `side` (`buy`/`sell`), and either `base_size` (base currency)
 ### Limit order
 Executes at a specified price or better.
 Specify: `symbol`, `side`, `price`, and `base_size` or `quote_size`.
-- **`time_in_force`**: `gtc` (good till cancelled) or `ioc` (immediate or cancel) or `fok` (fill or kill)
 - **Execution instructions**: `post_only` (maker only) or `allow_taker` (default)
 - **Rate limit**: 1000 limit order placements per day
 
@@ -124,6 +123,7 @@ Returns bid, ask, mid, and last price. Optionally filter by `symbols` array.
 
 ### Get order book (authenticated)
 Up to 20 price levels for a given symbol. Optional `limit` parameter.
+Returns `data.asks[]` and `data.bids[]` where each level is `{ price, quantity, orderCount }`, plus `metadata.timestamp`.
 
 ### Get public order book (no auth required)
 `GET /public/order-book/{symbol}` — maximum 5 price levels. No API key needed.

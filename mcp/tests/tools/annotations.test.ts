@@ -54,6 +54,7 @@ const EXPECTED_TOOL_NAMES = [
   "get_order_book",
   "get_tickers",
   "get_candles",
+  "get_public_trades",
   "order_command",
   "get_active_orders",
   "get_historical_orders",
@@ -71,9 +72,9 @@ const EXPECTED_TOOL_NAMES = [
 ];
 
 describe("tool annotations", () => {
-  it("all 24 tools are registered", async () => {
+  it("all 25 tools are registered", async () => {
     const tools = await listTools();
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(25);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
