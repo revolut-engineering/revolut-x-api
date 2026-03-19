@@ -189,7 +189,7 @@ export function renderDashboard(data: DashboardData): string {
   );
   lines.push(
     padLine(
-      `  ${chalk.dim("Levels".padEnd(14))}${state.config.levels}`,
+      `  ${chalk.dim("Levels".padEnd(14))}${state.config.levels / 2} per side`,
       innerW,
     ),
   );
@@ -205,6 +205,19 @@ export function renderDashboard(data: DashboardData): string {
       innerW,
     ),
   );
+  if (state.levels.length >= 2) {
+    const p0 = new Decimal(state.levels[0].price);
+    const p1 = new Decimal(state.levels[1].price);
+    const ratio = p1.div(p0);
+    const profitPct = ratio.minus(1).times(100);
+    const profitDollar = new Decimal(state.quotePerLevel).times(ratio.minus(1));
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Profit/Grid".padEnd(14))}${fmtPrice(profitDollar, cs)} (${profitPct.toFixed(2)}%)`,
+        innerW,
+      ),
+    );
+  }
   lines.push(
     padLine(`  ${chalk.dim("Uptime".padEnd(14))}${fmtUptime(uptime)}`, innerW),
   );

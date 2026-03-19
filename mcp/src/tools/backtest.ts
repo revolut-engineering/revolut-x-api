@@ -112,7 +112,13 @@ function formatBacktestResult(
     `Price range: $${priceLow.toFixed(2)} - $${priceHigh.toFixed(2)}`,
     `Start price: $${startPrice.toFixed(2)}`,
     `Grid range: $${lower.toFixed(2)} - $${upper.toFixed(2)} (±${rangePct.times(100).toFixed(1)}%)`,
-    `Grid levels: ${gridLevels} | Buy levels: ${buyLevels} | ${quote}/level: $${quotePerLevel}`,
+    `Grid levels: ${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell) | ${quote}/level: $${quotePerLevel}`,
+    (() => {
+      const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
+      const profitPct = ratio.minus(1).times(100);
+      const profitDollar = quotePerLevel.times(ratio.minus(1));
+      return `Profit/grid: $${profitDollar.toFixed(2)} (${profitPct.toFixed(2)}%)`;
+    })(),
     "",
     "Performance",
     "-".repeat(50),
@@ -167,7 +173,7 @@ function formatOptimizationResults(
     const r = results[i];
     lines.push(
       `${String(i + 1).padEnd(5)} ` +
-        `${String(r.gridLevels).padEnd(8)} ` +
+        `${String(r.gridLevels / 2).padEnd(8)} ` +
         `${r.rangePct.times(100).toFixed(1)}%${"".padEnd(4)} ` +
         `$${r.totalReturn.toFixed(2).padStart(9)} ` +
         `${r.returnPct.toFixed(2).padStart(8)}% ` +
@@ -186,7 +192,7 @@ function formatOptimizationResults(
     r.totalReturn.gt(best.totalReturn) ? r : best,
   );
   lines.push(
-    `  Highest Return:  ${bestReturn.gridLevels} levels, ` +
+    `  Highest Return:  ${bestReturn.gridLevels / 2} levels/side, ` +
       `${bestReturn.rangePct.times(100).toFixed(1)}% range -> $${bestReturn.totalReturn.toFixed(2)}`,
   );
 
@@ -194,7 +200,7 @@ function formatOptimizationResults(
     r.calmarApprox.gt(best.calmarApprox) ? r : best,
   );
   lines.push(
-    `  Best Risk-Adj:   ${bestCalmar.gridLevels} levels, ` +
+    `  Best Risk-Adj:   ${bestCalmar.gridLevels / 2} levels/side, ` +
       `${bestCalmar.rangePct.times(100).toFixed(1)}% range -> Calmar ${bestCalmar.calmarApprox.toFixed(2)}`,
   );
 
@@ -202,7 +208,7 @@ function formatOptimizationResults(
     r.totalTrades > best.totalTrades ? r : best,
   );
   lines.push(
-    `  Most Trades:     ${mostTrades.gridLevels} levels, ` +
+    `  Most Trades:     ${mostTrades.gridLevels / 2} levels/side, ` +
       `${mostTrades.rangePct.times(100).toFixed(1)}% range -> ${mostTrades.totalTrades} trades`,
   );
 
@@ -210,7 +216,7 @@ function formatOptimizationResults(
     r.maxDrawdown.lt(best.maxDrawdown) ? r : best,
   );
   lines.push(
-    `  Lowest Drawdown: ${lowestDd.gridLevels} levels, ` +
+    `  Lowest Drawdown: ${lowestDd.gridLevels / 2} levels/side, ` +
       `${lowestDd.rangePct.times(100).toFixed(1)}% range -> ${lowestDd.maxDrawdown.times(100).toFixed(2)}%`,
   );
 
@@ -231,8 +237,10 @@ export function registerBacktestTools(server: McpServer): void {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD".'),
         grid_levels: z
           .number()
-          .default(10)
-          .describe("Number of grid levels (default 10, range 3-50)."),
+          .default(5)
+          .describe(
+            "Grid levels per side (default 5, range 2-25). Total orders = 2 × levels.",
+          ),
         range_pct: z
           .string()
           .default("10")
@@ -275,11 +283,12 @@ export function registerBacktestTools(server: McpServer): void {
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      if (grid_levels < 3 || grid_levels > 50) {
+      if (grid_levels < 2 || grid_levels > 25) {
         return textResult(
-          `grid_levels must be between 3 and 50, got ${grid_levels}.`,
+          `grid_levels must be between 2 and 25 (per side), got ${grid_levels}.`,
         );
       }
+      const totalLevels = grid_levels * 2;
 
       if (!VALID_RESOLUTIONS.has(resolution)) {
         return textResult(
@@ -321,7 +330,7 @@ export function registerBacktestTools(server: McpServer): void {
         );
       }
 
-      const result = runBacktest(candles, grid_levels, rangeDec, investDec!);
+      const result = runBacktest(candles, totalLevels, rangeDec, investDec!);
 
       return textResult(
         formatBacktestResult(
@@ -329,7 +338,7 @@ export function registerBacktestTools(server: McpServer): void {
           symbol,
           candles,
           resolution,
-          grid_levels,
+          totalLevels,
           rangeDec,
           investDec!,
           days,
@@ -362,8 +371,10 @@ export function registerBacktestTools(server: McpServer): void {
           .describe("Days of historical data to fetch (default 30)."),
         grid_levels_options: z
           .string()
-          .default("5,8,10,12,15,20,25,30")
-          .describe("Comma-separated grid level counts to test (each 3-50)."),
+          .default("3,5,8,10,15")
+          .describe(
+            "Comma-separated grid levels per side to test (each 2-25).",
+          ),
         range_pct_options: z
           .string()
           .default("3,5,7,10,12,15,20")
@@ -417,20 +428,13 @@ export function registerBacktestTools(server: McpServer): void {
           .filter((x) => x)
           .map((x) => {
             const n = parseInt(x, 10);
-            if (isNaN(n)) throw new Error();
-            return n;
+            if (isNaN(n) || n < 2 || n > 25) throw new Error();
+            return n * 2;
           });
       } catch {
         return textResult(
-          "grid_levels_options must be comma-separated integers, e.g. '5,10,15'.",
+          "grid_levels_options must be comma-separated integers between 2 and 25 (per side).",
         );
-      }
-      for (const lv of levelsList) {
-        if (lv < 3 || lv > 50) {
-          return textResult(
-            `Each grid level must be between 3 and 50, got ${lv}.`,
-          );
-        }
       }
 
       let rangesList: Decimal[];

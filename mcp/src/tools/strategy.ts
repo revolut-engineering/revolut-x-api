@@ -109,9 +109,22 @@ function formatGridState(state: GridState): string {
   const rangePct = (parseFloat(state.config.rangePct) * 100).toFixed(1);
   lines.push(`Grid Price: $${state.gridPrice}`);
   lines.push(`Range: ±${rangePct}%`);
-  lines.push(`Levels: ${state.config.levels}`);
+  lines.push(
+    `Levels: ${state.config.levels / 2} per side (${state.config.levels} total)`,
+  );
   lines.push(`Investment: $${state.config.investment}`);
   lines.push(`Per Level: $${state.quotePerLevel}`);
+  if (state.levels.length >= 2) {
+    const p0 = parseFloat(state.levels[0].price);
+    const p1 = parseFloat(state.levels[1].price);
+    const ratio = p1 / p0;
+    const profitPct = ((ratio - 1) * 100).toFixed(2);
+    const profitDollar = (
+      parseFloat(state.quotePerLevel) *
+      (ratio - 1)
+    ).toFixed(2);
+    lines.push(`Profit/Grid: $${profitDollar} (${profitPct}%)`);
+  }
   lines.push(`Interval: ${state.config.intervalSec}s`);
   lines.push("");
 
@@ -157,12 +170,12 @@ function formatGridState(state: GridState): string {
       const buyBelow = state.levels[lv.index - 1];
       const baseAmt = buyBelow?.hasPosition ? buyBelow.baseHeld : "";
       status = baseAmt ? `SELL ${baseAmt}` : "SELL";
+    } else if (lv.buyOrderId) {
+      status = "BUY  pending";
     } else if (isHeld) {
       status = `HELD ${lv.baseHeld}`;
     } else if (hasPos && sellAbove) {
       status = `POS  ${lv.baseHeld}`;
-    } else if (lv.buyOrderId) {
-      status = "BUY  pending";
     } else {
       status = "\u2014";
     }
@@ -215,9 +228,9 @@ export function registerStrategyTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Grid level count(s). " +
-              'For backtest/run: a single integer between 3 and 50 (default "10"). ' +
-              'For optimize: comma-separated integers each between 3 and 50 (default "5,8,10,12,15,20,25,30").',
+            "Grid levels per side (total orders = 2×levels). " +
+              'For backtest/run: a single integer between 2 and 25 (default "5"). ' +
+              'For optimize: comma-separated integers each between 2 and 25 (default "3,5,8,10,15").',
           ),
         range: z
           .string()
@@ -259,7 +272,7 @@ export function registerStrategyTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe(
-            "Run only. When true, places a market buy for 50% of the investment at startup " +
+            "Run only. When true, market-buys base for sell levels at startup " +
               "so the bot immediately holds base currency to place sell orders from.",
           ),
         dry_run: z

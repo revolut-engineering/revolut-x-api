@@ -118,11 +118,12 @@ async function handleBacktest(
 ): Promise<void> {
   pair = validatePair(pair);
 
-  const gridLevels = parseInt(opts.levels, 10);
-  if (isNaN(gridLevels) || gridLevels < 3 || gridLevels > 50) {
-    console.error("--levels must be between 3 and 50.");
+  const levelsPerSide = parseInt(opts.levels, 10);
+  if (isNaN(levelsPerSide) || levelsPerSide < 2 || levelsPerSide > 25) {
+    console.error("--levels must be between 2 and 25 (per side).");
     process.exit(1);
   }
+  const gridLevels = levelsPerSide * 2;
 
   if (!VALID_RESOLUTIONS.has(opts.interval)) {
     console.error(
@@ -163,7 +164,7 @@ async function handleBacktest(
     const annualized = (Math.pow(1 + retPct / 100, 365 / days) - 1) * 100;
     printJson({
       pair,
-      gridLevels,
+      gridLevels: gridLevels / 2,
       rangePct: rangePct.times(100).toNumber(),
       investment: investment.toNumber(),
       candles: candles.length,
@@ -224,8 +225,22 @@ async function handleBacktest(
       `$${lower.toFixed(2)} \u2014 $${upper.toFixed(2)} (\u00B1${rangePct.times(100).toFixed(1)}%)`,
     ),
   );
-  console.log(pad("Levels", `${gridLevels} (${buyLevels} buy)`));
+  console.log(
+    pad(
+      "Levels",
+      `${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell)`,
+    ),
+  );
   console.log(pad(`${quote} / Level`, `$${quotePerLevel}`));
+  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
+  const profitPct = ratio.minus(1).times(100);
+  const profitDollar = quotePerLevel.times(ratio.minus(1));
+  console.log(
+    pad(
+      "Profit/Grid",
+      `$${profitDollar.toFixed(2)} (${profitPct.toFixed(2)}%)`,
+    ),
+  );
   console.log(`\u2551${" ".repeat(w)}\u2551`);
   console.log(`\u2560${h.repeat(w)}\u2563`);
   console.log(
@@ -325,12 +340,12 @@ async function handleOptimize(
       .filter((x) => x)
       .map((x) => {
         const n = parseInt(x, 10);
-        if (isNaN(n) || n < 3 || n > 50) throw new Error();
-        return n;
+        if (isNaN(n) || n < 2 || n > 25) throw new Error();
+        return n * 2;
       });
   } catch {
     console.error(
-      "--levels must be comma-separated integers between 3 and 50.",
+      "--levels must be comma-separated integers between 2 and 25 (per side).",
     );
     process.exit(1);
   }
@@ -387,7 +402,7 @@ async function handleOptimize(
           (Math.pow(1 + r.returnPct.toNumber() / 100, 365 / days) - 1) * 100;
         return {
           rank: results.indexOf(r) + 1,
-          gridLevels: r.gridLevels,
+          gridLevels: r.gridLevels / 2,
           rangePct: r.rangePct.times(100).toNumber(),
           totalReturn: r.totalReturn.toNumber(),
           returnPct: r.returnPct.toNumber(),
@@ -414,7 +429,7 @@ async function handleOptimize(
   printTable(
     show.map((r, i) => ({
       rank: i + 1,
-      levels: r.gridLevels,
+      levels: r.gridLevels / 2,
       range: `${r.rangePct.times(100).toFixed(1)}%`,
       return_: `$${r.totalReturn.toFixed(2)}`,
       returnPct: `${r.returnPct.toFixed(2)}%`,
@@ -447,15 +462,15 @@ async function handleOptimize(
     printKeyValue([
       [
         "Best Return",
-        `${bestReturn.gridLevels} levels, ${bestReturn.rangePct.times(100).toFixed(1)}% range -> $${bestReturn.totalReturn.toFixed(2)}`,
+        `${bestReturn.gridLevels / 2} levels/side, ${bestReturn.rangePct.times(100).toFixed(1)}% range -> $${bestReturn.totalReturn.toFixed(2)}`,
       ],
       [
         "Best Risk-Adj",
-        `${bestCalmar.gridLevels} levels, ${bestCalmar.rangePct.times(100).toFixed(1)}% range -> Calmar ${bestCalmar.calmarApprox.toFixed(2)}`,
+        `${bestCalmar.gridLevels / 2} levels/side, ${bestCalmar.rangePct.times(100).toFixed(1)}% range -> Calmar ${bestCalmar.calmarApprox.toFixed(2)}`,
       ],
       [
         "Lowest Drawdown",
-        `${lowestDd.gridLevels} levels, ${lowestDd.rangePct.times(100).toFixed(1)}% range -> ${lowestDd.maxDrawdown.times(100).toFixed(2)}%`,
+        `${lowestDd.gridLevels / 2} levels/side, ${lowestDd.rangePct.times(100).toFixed(1)}% range -> ${lowestDd.maxDrawdown.times(100).toFixed(2)}%`,
       ],
     ]);
   }
@@ -475,11 +490,12 @@ async function handleRun(
 ): Promise<void> {
   pair = validatePair(pair);
 
-  const gridLevels = parseInt(opts.levels, 10);
-  if (isNaN(gridLevels) || gridLevels < 3 || gridLevels > 50) {
-    console.error("--levels must be between 3 and 50.");
+  const levelsPerSide = parseInt(opts.levels, 10);
+  if (isNaN(levelsPerSide) || levelsPerSide < 2 || levelsPerSide > 25) {
+    console.error("--levels must be between 2 and 25 (per side).");
     process.exit(1);
   }
+  const gridLevels = levelsPerSide * 2;
 
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
@@ -524,10 +540,10 @@ export function registerStrategyCommand(program: Command): void {
       "after",
       `
 Examples:
-  $ revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000 --days 30
+  $ revx strategy grid backtest BTC-USD --levels 5 --range 10 --investment 1000 --days 30
   $ revx strategy grid optimize BTC-USD --investment 1000 --days 30 --interval 1h
-  $ revx strategy grid run BTC-USD --levels 10 --range 5 --investment 500 --interval 30
-  $ revx strategy grid run BTC-USD --levels 5 --range 2 --investment 100 --dry-run`,
+  $ revx strategy grid run BTC-USD --levels 5 --range 5 --investment 500 --interval 30
+  $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run`,
     );
 
   const grid = strategy
@@ -539,7 +555,11 @@ Examples:
   grid
     .command("backtest <pair>")
     .description("Run a grid backtest on historical candle data")
-    .option("--levels <n>", "Number of grid levels", "10")
+    .option(
+      "--levels <n>",
+      "Grid levels per side (total orders = 2×levels)",
+      "5",
+    )
     .option("--range <pct>", "Grid range as percentage, e.g. 10 for ±10%", "10")
     .option("--investment <amount>", "Capital in quote currency", "1000")
     .option("--days <n>", "Days of historical data", "30")
@@ -560,8 +580,8 @@ Examples:
     .option("--interval <res>", "Candle resolution", "1h")
     .option(
       "--levels <csv>",
-      "Comma-separated grid level counts to test",
-      "5,8,10,12,15,20,25,30",
+      "Comma-separated grid levels per side to test",
+      "3,5,8,10,15",
     )
     .option(
       "--ranges <csv>",
@@ -580,7 +600,11 @@ Examples:
       "--investment <amount>",
       "Capital in quote currency to deploy",
     )
-    .option("--levels <n>", "Number of grid levels", "10")
+    .option(
+      "--levels <n>",
+      "Grid levels per side (total orders = 2×levels)",
+      "5",
+    )
     .option("--range <pct>", "Grid range as percentage, e.g. 5 for ±5%", "5")
     .option("--split", "Market-buy base for sell levels at start")
     .option("--interval <sec>", "Polling interval in seconds", "10")
