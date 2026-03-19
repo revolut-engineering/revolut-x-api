@@ -19,6 +19,7 @@ export function registerConnectorTools(server: McpServer): void {
     {
       title: "Connector CLI Command",
       description:
+        "⚠ Returns a CLI command for the USER to run — do NOT execute this autonomously. " +
         "Generate a revx CLI command for notification connector operations. " +
         "Supports connector types: telegram. " +
         "Actions: add, list, delete, enable, disable, test. " +

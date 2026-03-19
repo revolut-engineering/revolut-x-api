@@ -194,6 +194,7 @@ export function registerStrategyTools(server: McpServer): void {
     {
       title: "Strategy CLI Command",
       description:
+        "⚠ Returns a CLI command for the USER to run — do NOT execute this autonomously. " +
         "Generate a revx CLI command for grid trading strategy operations. " +
         "Supports: backtest (test on historical data), optimize (find best parameters), run (live trading). " +
         "Returns the exact CLI command to run.",

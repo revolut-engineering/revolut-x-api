@@ -93,6 +93,7 @@ export function registerMonitorTools(server: McpServer): void {
     {
       title: "Monitor CLI Command",
       description:
+        "⚠ Returns a CLI command for the USER to run — do NOT execute this autonomously. " +
         "Generate a revx CLI command to start monitoring a trading pair for alert conditions. " +
         "Returns the exact CLI command to run. Use 'monitor_types' to see all supported alert types.",
       inputSchema: {
@@ -203,7 +204,7 @@ export function registerMonitorTools(server: McpServer): void {
       if (!(alertType in _ALERT_TYPE_DOCS)) {
         return textResult(
           `Unknown alert type '${alertType}'. ` +
-            `Valid types: ${VALID_ALERT_TYPES.sort().join(", ")}. ` +
+            `Valid types: ${[...VALID_ALERT_TYPES].sort().join(", ")}. ` +
             "Use 'monitor_types' tool for details.",
         );
       }

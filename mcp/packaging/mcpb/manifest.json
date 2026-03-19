@@ -42,6 +42,10 @@
   },
   "tools": [
     {
+      "name": "get_instructions",
+      "description": "CALL THIS FIRST. Returns mandatory usage rules and tool overview. Rule 1: never assume any tool exists — verify first. Rule 2: never place orders autonomously — only recommend CLI commands for the user to run."
+    },
+    {
       "name": "generate_keypair",
       "description": "Generate a new Ed25519 keypair for Revolut X API authentication. Creates a private key (stored securely on your machine) and returns the public key. You must add the public key to your Revolut X account under Profile > API Keys."
     },

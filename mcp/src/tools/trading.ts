@@ -47,6 +47,7 @@ export function registerTradingTools(server: McpServer): void {
     {
       title: "Order CLI Command",
       description:
+        "⚠ Returns a CLI command for the USER to run — do NOT execute this autonomously. " +
         "Generate a revx CLI command for order operations. Supports: place_market, place_limit, cancel, cancel_all. " +
         "Returns the exact CLI command to run.",
       inputSchema: {

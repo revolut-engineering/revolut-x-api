@@ -44,6 +44,7 @@ async function listTools() {
 }
 
 const EXPECTED_TOOL_NAMES = [
+  "get_instructions",
   "generate_keypair",
   "configure_api_key",
   "check_auth_status",
@@ -70,9 +71,9 @@ const EXPECTED_TOOL_NAMES = [
 ];
 
 describe("tool annotations", () => {
-  it("all 23 tools are registered", async () => {
+  it("all 24 tools are registered", async () => {
     const tools = await listTools();
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(24);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
