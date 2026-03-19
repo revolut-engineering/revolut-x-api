@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerMarketDataTools } from "../../src/tools/market-data.js";
+import { vi, describe, beforeEach, it, expect } from "vitest";
 
 const mockClient = {
   getCurrencies: vi.fn(),
@@ -44,7 +45,7 @@ async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerMarketDataTools(server);
   const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+      InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -87,7 +88,7 @@ describe("market data tools", () => {
   it("get_currencies returns setup guide on auth error", async () => {
     const { AuthNotConfiguredError } = await import("revolutx-api");
     mockClient.getCurrencies.mockRejectedValue(
-      new AuthNotConfiguredError("no auth"),
+        new AuthNotConfiguredError("no auth"),
     );
     const client = await createClient();
     const result = await client.callTool({
@@ -220,7 +221,7 @@ describe("market data tools", () => {
     expect(getText(result)).toContain("Invalid resolution");
   });
 
-  it("get_candles returns formatted data", async () => {
+  it("get_candles returns formatted data and note to LLM", async () => {
     mockClient.getCandles.mockResolvedValue({
       data: [
         {
@@ -242,41 +243,26 @@ describe("market data tools", () => {
     expect(text).toContain("BTC-USD");
     expect(text).toContain("90000");
     expect(text).toContain("1 total");
+    expect(text).toContain("NOTE TO LLM: The API only returns a single batch");
   });
 
-  it("get_candles fetches multiple chunks for date range", async () => {
-    mockClient.getCandles
-      .mockResolvedValueOnce({
-        data: [
-          {
-            start: "2024-01-01T00:00",
-            open: "90000",
-            high: "91000",
-            low: "89000",
-            close: "90500",
-            volume: "100",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            start: "2024-02-10T00:00",
-            open: "95000",
-            high: "96000",
-            low: "94000",
-            close: "95500",
-            volume: "200",
-          },
-        ],
-      });
+  it("get_candles passes date ranges to API instead of chunking", async () => {
+    mockClient.getCandles.mockResolvedValue({
+      data: [
+        {
+          start: "2024-01-01T00:00",
+          open: "90000",
+          high: "91000",
+          low: "89000",
+          close: "90500",
+          volume: "100",
+        },
+      ],
+    });
     const client = await createClient();
-    // 1h resolution: chunk = 1000 * 60min * 60s * 1000ms = 3_600_000_000ms (~41.6 days)
-    // Two chunks: start to start+chunk, start+chunk to end
     const start = 1700000000000;
-    // 1h chunk = 1000 candles * 3600s * 1000ms = 3_600_000_000ms; two chunks exactly
-    const end = start + 2 * 1000 * 3600 * 1000;
-    const result = await client.callTool({
+    const end = start + 3600000;
+    await client.callTool({
       name: "get_candles",
       arguments: {
         symbol: "BTC-USD",
@@ -285,10 +271,77 @@ describe("market data tools", () => {
         end_date: end,
       },
     });
+
+    // It should just call the client once with the exact dates instead of chunking
+    expect(mockClient.getCandles).toHaveBeenCalledTimes(1);
+    expect(mockClient.getCandles).toHaveBeenCalledWith("BTC-USD", {
+      interval: "1h",
+      startDate: start,
+      endDate: end,
+    });
+  });
+
+  it("get_public_trades validates symbol format", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_public_trades",
+      arguments: { symbol: "invalid" },
+    });
+    expect(getText(result)).toContain("Invalid symbol format");
+  });
+
+  it("get_public_trades returns formatted data", async () => {
+    mockClient.getAllTrades.mockResolvedValue({
+      data: [
+        {
+          id: "trade-123",
+          symbol: "BTC-USD",
+          price: "95000",
+          quantity: "0.5",
+          timestamp: 1700000000000,
+        },
+      ],
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_public_trades",
+      arguments: { symbol: "BTC-USD" },
+    });
     const text = getText(result);
-    expect(mockClient.getCandles).toHaveBeenCalledTimes(2);
-    expect(text).toContain("2 total");
-    expect(text).toContain("90000");
+    expect(text).toContain("trade-123");
+    expect(text).toContain("BTC-USD");
     expect(text).toContain("95000");
+    expect(text).toContain("0.5");
+  });
+
+  it("get_public_trades returns cursor note if more trades available", async () => {
+    mockClient.getAllTrades.mockResolvedValue({
+      data: [
+        {
+          id: "trade-123",
+          symbol: "BTC-USD",
+          price: "95000",
+          quantity: "0.5",
+          timestamp: 1700000000000,
+        },
+      ],
+      metadata: {
+        next_cursor: "xyz-cursor-789",
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_public_trades",
+      arguments: { symbol: "BTC-USD", limit: 1 },
+    });
+    const text = getText(result);
+
+    expect(mockClient.getAllTrades).toHaveBeenCalledWith("BTC-USD", {
+      startDate: undefined,
+      endDate: undefined,
+      cursor: undefined,
+      limit: 1,
+    });
+    expect(text).toContain("More trades available. To fetch the next page, use cursor: xyz-cursor-789");
   });
 });

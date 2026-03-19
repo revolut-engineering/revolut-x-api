@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ORDERS_MAX_API_LIMIT, TRADES_MAX_API_LIMIT } from "../constants.js";
+import {ACTIVE_ORDERS_API_LIMIT, HISTORICAL_ORDERS_API_LIMIT, TRADES_API_LIMIT} from "../constants.js";
 import {
   textResult,
   validateSymbol,
@@ -262,10 +262,10 @@ export function registerTradingTools(server: McpServer): void {
         limit: z
           .number()
           .min(1)
-          .max(ORDERS_MAX_API_LIMIT)
-          .default(100)
+          .max(ACTIVE_ORDERS_API_LIMIT)
+          .default(ACTIVE_ORDERS_API_LIMIT)
           .describe(
-            `Maximum total number of orders to return. Default is 100. Max is ${ORDERS_MAX_API_LIMIT}.`,
+            `Maximum total number of orders to return. Default is 100. Max is ${HISTORICAL_ORDERS_API_LIMIT}.`,
           ),
       },
       annotations: {
@@ -386,10 +386,10 @@ export function registerTradingTools(server: McpServer): void {
         limit: z
           .number()
           .min(1)
-          .max(ORDERS_MAX_API_LIMIT)
-          .default(100)
+          .max(HISTORICAL_ORDERS_API_LIMIT)
+          .default(HISTORICAL_ORDERS_API_LIMIT)
           .describe(
-            `Maximum number of orders to return. Default is 100. Max is ${ORDERS_MAX_API_LIMIT}.`,
+            `Maximum number of orders to return. Default is 100. Max is ${HISTORICAL_ORDERS_API_LIMIT}.`,
           ),
       },
       annotations: {
@@ -507,10 +507,10 @@ export function registerTradingTools(server: McpServer): void {
         limit: z
           .number()
           .min(1)
-          .max(TRADES_MAX_API_LIMIT)
-          .default(100)
+          .max(TRADES_API_LIMIT)
+          .default(TRADES_API_LIMIT)
           .describe(
-            `Maximum number of trades to return. Default is 100. Max is ${TRADES_MAX_API_LIMIT}.`,
+            `Maximum number of trades to return. Default is 100. Max is ${TRADES_API_LIMIT}.`,
           ),
       },
       annotations: {

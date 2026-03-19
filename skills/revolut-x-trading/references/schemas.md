@@ -32,11 +32,11 @@
 ### Order Placement Response
 ```json
 {
-  "data": [{
+  "data": {
     "venue_order_id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b",  // system-assigned UUID
     "client_order_id": "984a4d8a-2a9b-4950-822f-2a40037f02bd",
     "state": "new"   // pending_new | new | partially_filled | filled | cancelled | rejected | replaced
-  }]
+  }
 }
 ```
 
@@ -183,19 +183,35 @@ If no trades in a period, candle is based on mid price (bid/ask average).
 `GET /api/1.0/order-book/{symbol}` (auth) — up to 20 levels
 `GET /api/1.0/public/order-book/{symbol}` (no auth) — max 5 levels
 
-Response structure: `data.asks[]` and `data.bids[]` — both sorted by price descending.
+Response structure: `data.asks[]` and `data.bids[]` — both sorted by price descending, plus `metadata.timestamp`.
 
-Each price level:
+### Client-normalized format (authenticated `getOrderBook`)
+
+Each price level returned by the client:
+
+| Field | Type | Description |
+|---|---|---|
+| `price` | decimal string | Price at this level |
+| `quantity` | decimal string | Aggregated quantity at this level |
+| `orderCount` | number | Number of orders at this level |
+
+### Raw wire format (public endpoint / direct API access)
+
+Each price level in the raw API response:
 
 | Field | Description |
 |---|---|
 | `aid` | Asset ID (e.g. `ETH`) |
+| `anm` | Asset full name |
 | `p` | Price |
 | `pc` | Price currency |
+| `pn` | Price name |
 | `q` | Aggregated quantity at this level |
 | `qc` | Quantity currency |
+| `qn` | Quantity name |
 | `no` | Number of orders at this level |
 | `s` | Side: `SELL` \| `BUYI` |
+| `ve` | Venue — always `REVX` |
 | `ts` | Trading system — always `CLOB` |
 | `pdt` | Publication timestamp |
 
@@ -203,26 +219,57 @@ Each price level:
 
 ## Trade Fields
 
-Both public and private trades share abbreviated field names:
+### Client-normalized format
+
+`getAllTrades` returns `PublicTrade[]`, `getPrivateTrades` and `getOrderFills` return `Trade[]`.
+
+**`PublicTrade`** (returned by `getAllTrades`):
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string (UUID) | Trade ID (converted from hex `tid`) |
+| `symbol` | string | Trading pair in `BASE/QUOTE` format (e.g. `BTC/USD`) |
+| `price` | decimal string | Execution price |
+| `quantity` | decimal string | Execution quantity |
+| `timestamp` | int64 | Trade timestamp in Unix epoch milliseconds |
+
+**`Trade`** (returned by `getPrivateTrades` and `getOrderFills`):
+
+All `PublicTrade` fields plus:
+
+| Field | Type | Description |
+|---|---|---|
+| `side` | string | `buy` \| `sell` |
+| `orderId` | string (UUID) | Associated order ID (converted from hex `oid`) |
+| `maker` | boolean | `true` = maker, `false` = taker |
+
+> **Note:** The `symbol` field in trade objects uses `BASE/QUOTE` format with a slash (e.g. `BTC/USD`), not the `BASE-QUOTE` dash format used for order placement parameters.
+
+### Raw wire format (direct API access)
+
+Both public and private trades use abbreviated field names in the raw response:
 
 | Field | Description |
 |---|---|
-| `tdt` | Trade timestamp (ms for private, ISO-8601 for public) |
+| `tdt` | Trade timestamp (Unix epoch milliseconds) |
 | `aid` | Asset ID (e.g. `BTC`) |
 | `anm` | Asset full name |
 | `p` | Price |
 | `pc` | Price currency |
+| `pn` | Price name |
 | `q` | Quantity |
 | `qc` | Quantity currency |
-| `tid` | Transaction ID |
+| `qn` | Quantity name |
+| `tid` | Transaction ID (hex) |
 | `ve` | Venue — always `REVX` |
 | `vp` | Venue of publication — always `REVX` |
+| `pdt` | Publication timestamp |
 
-Private trades (`/trades/private/{symbol}`) additionally include:
+Private trades additionally include:
 
 | Field | Description |
 |---|---|
-| `oid` | Order ID (UUID) |
+| `oid` | Order ID (hex, maps to UUID `orderId`) |
 | `s` | Trade direction: `buy` \| `sell` |
 | `im` | `true` = maker, `false` = taker |
 
