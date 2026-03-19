@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {ACTIVE_ORDERS_API_LIMIT, HISTORICAL_ORDERS_API_LIMIT, TRADES_API_LIMIT} from "../constants.js";
+import {
+  ACTIVE_ORDERS_API_LIMIT,
+  HISTORICAL_ORDERS_API_LIMIT,
+  TRADES_API_LIMIT,
+} from "../constants.js";
 import {
   textResult,
   validateSymbol,

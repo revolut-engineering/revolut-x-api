@@ -9,7 +9,7 @@ import {
   candleChunkMs,
   fetchAllCandlesChunked,
 } from "./_helpers.js";
-import {TRADES_API_LIMIT} from "../constants.js";
+import { TRADES_API_LIMIT } from "../constants.js";
 
 export function registerMarketDataTools(server: McpServer): void {
   server.registerTool(
@@ -237,104 +237,104 @@ export function registerMarketDataTools(server: McpServer): void {
   );
 
   server.registerTool(
-      "get_candles",
-      {
+    "get_candles",
+    {
+      title: "Get Candlestick Data",
+      description:
+        "Get OHLCV candlestick data for a trading pair. " +
+        "Returns a single batch of candles. If your requested date range is large, " +
+        "you may hit an API limit and need to make follow-up requests.",
+      inputSchema: {
+        symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
+        resolution: z
+          .string()
+          .default("1h")
+          .describe(
+            'Candle interval — "1m", "5m", "15m", "30m", "1h", "4h", "1d", "2d", "4d", "1w", "2w", "4w" (default "1h")',
+          ),
+        start_date: z
+          .number()
+          .optional()
+          .describe("Start of time range as epoch milliseconds."),
+        end_date: z
+          .number()
+          .optional()
+          .describe("End of time range as epoch milliseconds."),
+      },
+      annotations: {
         title: "Get Candlestick Data",
-        description:
-            "Get OHLCV candlestick data for a trading pair. " +
-            "Returns a single batch of candles. If your requested date range is large, " +
-            "you may hit an API limit and need to make follow-up requests.",
-        inputSchema: {
-          symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
-          resolution: z
-              .string()
-              .default("1h")
-              .describe(
-                  'Candle interval — "1m", "5m", "15m", "30m", "1h", "4h", "1d", "2d", "4d", "1w", "2w", "4w" (default "1h")',
-              ),
-          start_date: z
-              .number()
-              .optional()
-              .describe("Start of time range as epoch milliseconds."),
-          end_date: z
-              .number()
-              .optional()
-              .describe("End of time range as epoch milliseconds."),
-        },
-        annotations: {
-          title: "Get Candlestick Data",
-          readOnlyHint: true,
-          destructiveHint: false,
-          openWorldHint: true,
-        },
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
       },
-      async ({ symbol, resolution, start_date, end_date }) => {
-        const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
+    },
+    async ({ symbol, resolution, start_date, end_date }) => {
+      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
-        symbol = symbol.trim().toUpperCase();
-        const error = validateSymbol(symbol);
-        if (error) return textResult(error);
+      symbol = symbol.trim().toUpperCase();
+      const error = validateSymbol(symbol);
+      if (error) return textResult(error);
 
-        if (!VALID_RESOLUTIONS.has(resolution)) {
-          return textResult(
-              `Invalid resolution '${resolution}'. ` +
-              `Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
-          );
-        }
-
-        type Candle = Awaited<
-            ReturnType<ReturnType<typeof getRevolutXClient>["getCandles"]>
-        >["data"][number];
-        let candles: Candle[];
-
-        try {
-          const result = await getRevolutXClient().getCandles(symbol, {
-            interval: resolution,
-            startDate: start_date,
-            endDate: end_date,
-          });
-          candles = result.data;
-        } catch (err) {
-          const handled = await handleApiError(err, SETUP_GUIDE);
-          if (handled) return handled;
-          throw err;
-        }
-
-        if (!candles || !candles.length) {
-          return textResult(
-              `No candle data found for ${symbol} (${resolution}).`,
-          );
-        }
-
-        const lines = [
-          `Candles for ${symbol} (${resolution}, ${candles.length} total):\n`,
-        ];
-        lines.push(
-            `${"Start".padEnd(20)} | ${"Open".padStart(12)} | ${"High".padStart(12)} | ${"Low".padStart(12)} | ${"Close".padStart(12)} | ${"Volume".padStart(14)}`,
+      if (!VALID_RESOLUTIONS.has(resolution)) {
+        return textResult(
+          `Invalid resolution '${resolution}'. ` +
+            `Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
         );
-        lines.push("-".repeat(95));
+      }
 
-        for (const c of candles) {
-          lines.push(
-              `${String(c.start).padEnd(20)} | ` +
-              `${c.open.padStart(12)} | ` +
-              `${c.high.padStart(12)} | ` +
-              `${c.low.padStart(12)} | ` +
-              `${c.close.padStart(12)} | ` +
-              `${c.volume.padStart(14)}`,
-          );
-        }
+      type Candle = Awaited<
+        ReturnType<ReturnType<typeof getRevolutXClient>["getCandles"]>
+      >["data"][number];
+      let candles: Candle[];
 
-        lines.push("");
-        lines.push(
-            "*** NOTE TO LLM: The API only returns a single batch of candles per request. " +
-            "If you did not receive enough candles to cover your target date range, " +
-            "please make another tool call using the timestamp of the earliest or latest candle " +
-            "in this batch as your new `end_date` or `start_date` to fetch the next batch. ***"
+      try {
+        const result = await getRevolutXClient().getCandles(symbol, {
+          interval: resolution,
+          startDate: start_date,
+          endDate: end_date,
+        });
+        candles = result.data;
+      } catch (err) {
+        const handled = await handleApiError(err, SETUP_GUIDE);
+        if (handled) return handled;
+        throw err;
+      }
+
+      if (!candles || !candles.length) {
+        return textResult(
+          `No candle data found for ${symbol} (${resolution}).`,
         );
+      }
 
-        return textResult(lines.join("\n"));
-      },
+      const lines = [
+        `Candles for ${symbol} (${resolution}, ${candles.length} total):\n`,
+      ];
+      lines.push(
+        `${"Start".padEnd(20)} | ${"Open".padStart(12)} | ${"High".padStart(12)} | ${"Low".padStart(12)} | ${"Close".padStart(12)} | ${"Volume".padStart(14)}`,
+      );
+      lines.push("-".repeat(95));
+
+      for (const c of candles) {
+        lines.push(
+          `${String(c.start).padEnd(20)} | ` +
+            `${c.open.padStart(12)} | ` +
+            `${c.high.padStart(12)} | ` +
+            `${c.low.padStart(12)} | ` +
+            `${c.close.padStart(12)} | ` +
+            `${c.volume.padStart(14)}`,
+        );
+      }
+
+      lines.push("");
+      lines.push(
+        "*** NOTE TO LLM: The API only returns a single batch of candles per request. " +
+          "If you did not receive enough candles to cover your target date range, " +
+          "please make another tool call using the timestamp of the earliest or latest candle " +
+          "in this batch as your new `end_date` or `start_date` to fetch the next batch. ***",
+      );
+
+      return textResult(lines.join("\n"));
+    },
   );
 
   server.registerTool(
@@ -432,5 +432,4 @@ export function registerMarketDataTools(server: McpServer): void {
       return textResult(lines.join("\n"));
     },
   );
-
 }

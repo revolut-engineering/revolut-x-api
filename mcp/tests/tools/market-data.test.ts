@@ -45,7 +45,7 @@ async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerMarketDataTools(server);
   const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -88,7 +88,7 @@ describe("market data tools", () => {
   it("get_currencies returns setup guide on auth error", async () => {
     const { AuthNotConfiguredError } = await import("revolutx-api");
     mockClient.getCurrencies.mockRejectedValue(
-        new AuthNotConfiguredError("no auth"),
+      new AuthNotConfiguredError("no auth"),
     );
     const client = await createClient();
     const result = await client.callTool({
@@ -342,6 +342,8 @@ describe("market data tools", () => {
       cursor: undefined,
       limit: 1,
     });
-    expect(text).toContain("More trades available. To fetch the next page, use cursor: xyz-cursor-789");
+    expect(text).toContain(
+      "More trades available. To fetch the next page, use cursor: xyz-cursor-789",
+    );
   });
 });
