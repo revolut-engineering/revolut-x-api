@@ -354,15 +354,17 @@ export class ForegroundGridBot {
 
     const quoteCurrency = config.pair.split("-")[1] ?? "";
     const investment = new Decimal(config.investment);
+    let insufficientBalance = false;
     if (!config.dryRun) {
       const available = await this._checkBalance(quoteCurrency);
       if (available !== null && available.lt(investment)) {
         console.log(
           chalk.yellow(
             `  Warning: Available ${quoteCurrency} balance (${available.toFixed(2)}) ` +
-              `is less than investment (${investment.toFixed(2)}).`,
+              `is less than investment (${investment.toFixed(2)}). Skipping order placement.`,
           ),
         );
+        insufficientBalance = true;
       }
     }
 
@@ -426,7 +428,7 @@ export class ForegroundGridBot {
 
     let splitExecuted = false;
     let splitBaseAcquired: Decimal | null = null;
-    if (config.splitInvestment && !config.dryRun) {
+    if (config.splitInvestment && !config.dryRun && !insufficientBalance) {
       const marketBuyQuote = quotePerLevel
         .times(sellLevelIndices.size)
         .toFixed(2);
@@ -498,40 +500,48 @@ export class ForegroundGridBot {
         ? new Decimal(l.price).lte(currentPrice)
         : new Decimal(l.price).lt(currentPrice),
     );
-    console.log(
-      chalk.dim(`  Placing ${buyLevels.length} initial buy orders...`),
-    );
     let buysPlaced = 0;
     const errors: string[] = [];
-    for (const level of buyLevels) {
-      try {
-        const orderId = await this._placeBuyOrder(level, quotePerLevel);
-        level.buyOrderId = orderId;
-        buysPlaced++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`buy @${level.price}: ${msg}`);
+    if (!insufficientBalance) {
+      console.log(
+        chalk.dim(`  Placing ${buyLevels.length} initial buy orders...`),
+      );
+      for (const level of buyLevels) {
+        try {
+          const orderId = await this._placeBuyOrder(level, quotePerLevel);
+          level.buyOrderId = orderId;
+          buysPlaced++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`buy @${level.price}: ${msg}`);
+        }
+        await sleep(ORDER_DELAY_MS);
       }
-      await sleep(ORDER_DELAY_MS);
-    }
 
-    if (buysPlaced === 0 && buyLevels.length > 0) {
-      const detail = errors.length > 0 ? `\n  First error: ${errors[0]}` : "";
-      throw new Error(
-        `Failed to place any initial buy orders (0/${buyLevels.length}).${detail}`,
+      if (buysPlaced === 0 && buyLevels.length > 0) {
+        const detail = errors.length > 0 ? `\n  First error: ${errors[0]}` : "";
+        throw new Error(
+          `Failed to place any initial buy orders (0/${buyLevels.length}).${detail}`,
+        );
+      }
+
+      console.log(
+        chalk.dim(
+          `  Buy orders placed: ${buysPlaced}/${buyLevels.length}` +
+            (errors.length > 0
+              ? chalk.yellow(` (${errors.length} failed)`)
+              : ""),
+        ),
       );
     }
 
-    console.log(
-      chalk.dim(
-        `  Buy orders placed: ${buysPlaced}/${buyLevels.length}` +
-          (errors.length > 0 ? chalk.yellow(` (${errors.length} failed)`) : ""),
-      ),
-    );
-
     // --- Place initial sell orders for split mode ---
     let sellsPlaced = 0;
-    if (config.splitInvestment && sellLevelIndices.size > 0) {
+    if (
+      config.splitInvestment &&
+      sellLevelIndices.size > 0 &&
+      !insufficientBalance
+    ) {
       const totalBase =
         splitBaseAcquired ??
         quotePerLevel
@@ -748,66 +758,80 @@ export class ForegroundGridBot {
       ).length;
       const perLevel = new Decimal(this._state.quotePerLevel);
       const marketBuyQuote = perLevel.times(Math.max(sellCount, 1)).toFixed(2);
-      console.log(
-        chalk.dim(
-          `  Placing market buy for ${marketBuyQuote} ${quoteCurrency}...`,
-        ),
-      );
-      const orderResp = await this._client!.placeOrder({
-        symbol: config.pair,
-        side: "buy",
-        market: { quoteSize: marketBuyQuote },
-      });
-      console.log(
-        chalk.dim(
-          `  Market buy placed: ${marketBuyQuote} ${quoteCurrency}. Waiting for fill...`,
-        ),
-      );
-      const splitBaseAcquired = await this._awaitOrderFill(
-        orderResp.data.venue_order_id,
-      );
-      this._state.splitExecuted = true;
-      console.log(
-        chalk.dim(`  Market buy filled: ${splitBaseAcquired} ${baseCurrency}`),
-      );
 
-      // Distribute acquired base across sell levels above current price
-      const baseStep = this._getBaseStep();
-      const sellLevels = this._state.levels.filter(
-        (l) => new Decimal(l.price).gt(currentPrice) && !l.sellOrderId,
-      );
+      const available = await this._checkBalance(quoteCurrency);
+      if (available !== null && available.lt(new Decimal(marketBuyQuote))) {
+        console.log(
+          chalk.yellow(
+            `  Insufficient ${quoteCurrency} balance (${available.toFixed(2)}) for split buy (${marketBuyQuote}). Skipping.`,
+          ),
+        );
+      } else {
+        console.log(
+          chalk.dim(
+            `  Placing market buy for ${marketBuyQuote} ${quoteCurrency}...`,
+          ),
+        );
+        const orderResp = await this._client!.placeOrder({
+          symbol: config.pair,
+          side: "buy",
+          market: { quoteSize: marketBuyQuote },
+        });
+        console.log(
+          chalk.dim(
+            `  Market buy placed: ${marketBuyQuote} ${quoteCurrency}. Waiting for fill...`,
+          ),
+        );
+        const splitBaseAcquired = await this._awaitOrderFill(
+          orderResp.data.venue_order_id,
+        );
+        this._state.splitExecuted = true;
+        console.log(
+          chalk.dim(
+            `  Market buy filled: ${splitBaseAcquired} ${baseCurrency}`,
+          ),
+        );
 
-      if (sellLevels.length > 0) {
-        const basePerLevel = splitBaseAcquired
-          .div(sellLevels.length)
-          .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+        // Distribute acquired base across sell levels above current price
+        const baseStep = this._getBaseStep();
+        const sellLevels = this._state.levels.filter(
+          (l) => new Decimal(l.price).gt(currentPrice) && !l.sellOrderId,
+        );
 
-        if (basePerLevel.gt(0)) {
-          console.log(
-            chalk.dim(`  Placing ${sellLevels.length} initial sell orders...`),
-          );
-          let sellsPlaced = 0;
-          for (const sellLevel of sellLevels) {
-            const buyLevel = this._state.levels[sellLevel.index - 1];
-            if (buyLevel) {
-              buyLevel.hasPosition = true;
-              buyLevel.baseHeld = basePerLevel.toString();
+        if (sellLevels.length > 0) {
+          const basePerLevel = splitBaseAcquired
+            .div(sellLevels.length)
+            .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+
+          if (basePerLevel.gt(0)) {
+            console.log(
+              chalk.dim(
+                `  Placing ${sellLevels.length} initial sell orders...`,
+              ),
+            );
+            let sellsPlaced = 0;
+            for (const sellLevel of sellLevels) {
+              const buyLevel = this._state.levels[sellLevel.index - 1];
+              if (buyLevel) {
+                buyLevel.hasPosition = true;
+                buyLevel.baseHeld = basePerLevel.toString();
+              }
+
+              await this._placeSellOnLevel(sellLevel, basePerLevel);
+              if (sellLevel.sellOrderId) {
+                sellsPlaced++;
+              } else if (buyLevel) {
+                buyLevel.hasPosition = false;
+                buyLevel.baseHeld = "0";
+              }
+              await sleep(ORDER_DELAY_MS);
             }
-
-            await this._placeSellOnLevel(sellLevel, basePerLevel);
-            if (sellLevel.sellOrderId) {
-              sellsPlaced++;
-            } else if (buyLevel) {
-              buyLevel.hasPosition = false;
-              buyLevel.baseHeld = "0";
-            }
-            await sleep(ORDER_DELAY_MS);
+            console.log(
+              chalk.dim(
+                `  Sell orders placed: ${sellsPlaced}/${sellLevels.length}`,
+              ),
+            );
           }
-          console.log(
-            chalk.dim(
-              `  Sell orders placed: ${sellsPlaced}/${sellLevels.length}`,
-            ),
-          );
         }
       }
     } else if (config.splitInvestment && this._state.splitExecuted) {
@@ -1023,14 +1047,23 @@ export class ForegroundGridBot {
     }
 
     // Orphan recovery: empty levels below price get buy orders
-    for (const level of state.levels) {
-      if (
-        !level.buyOrderId &&
-        !level.sellOrderId &&
-        !level.hasPosition &&
-        new Decimal(level.price).lt(currentPrice)
-      ) {
-        await this._replaceGridBuy(level);
+    const quoteCurrency = this._config.pair.split("-")[1] ?? "";
+    const recoveryBalance = this._config.dryRun
+      ? null
+      : await this._checkBalance(quoteCurrency);
+    const canPlaceBuys =
+      recoveryBalance === null ||
+      recoveryBalance.gte(new Decimal(state.quotePerLevel));
+    if (canPlaceBuys) {
+      for (const level of state.levels) {
+        if (
+          !level.buyOrderId &&
+          !level.sellOrderId &&
+          !level.hasPosition &&
+          new Decimal(level.price).lt(currentPrice)
+        ) {
+          await this._replaceGridBuy(level);
+        }
       }
     }
 
