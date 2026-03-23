@@ -30,14 +30,14 @@ export {
   AuthenticationError,
   ForbiddenError,
   RateLimitError,
+  ValidationError,
   OrderError,
   NotFoundError,
   ConflictError,
   ServerError,
   NetworkError,
   AuthNotConfiguredError,
-  ValidationError,
-} from "./http/errors.js";
+} from "./http/index.js";
 
 export {
   Logger,

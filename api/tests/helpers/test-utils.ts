@@ -1,9 +1,9 @@
-import { generateKeyPairSync, createPrivateKey } from "node:crypto";
+import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { RevolutXClient } from "../../src/client.js";
 
 export const BASE_URL = "https://revx.revolut.com";
 
-export interface TestClientOptions {
+interface TestClientOptions {
   maxRetries?: number;
   timeout?: number;
   authenticated?: boolean;
@@ -132,11 +132,3 @@ export const mockTrade = {
   s: "buy" as const,
   im: false,
 };
-
-export function createTimestamp(): number {
-  return Date.now();
-}
-
-export function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
