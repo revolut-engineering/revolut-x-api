@@ -1,21 +1,24 @@
-import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Currency, CurrencyPair } from "revolutx-api";
+import {z} from "zod";
+import type {McpServer} from "@modelcontextprotocol/sdk/server/mcp.js";
+import type {Currency, CurrencyPair} from "revolutx-api";
 import {
-  textResult,
-  validateSymbol,
-  VALID_RESOLUTIONS,
+  formatDescription,
   handleApiError,
+  LARGE_DATASET_HINT,
+  REQUIRE_COMPLETE_DATA_HINT,
+  textResult,
+  VALID_RESOLUTIONS,
+  validateSymbol
 } from "./_helpers.js";
-import { TRADES_API_LIMIT } from "../constants.js";
+import {TRADES_API_LIMIT} from "../constants.js";
 
 export function registerMarketDataTools(server: McpServer): void {
   server.registerTool(
     "get_currencies",
     {
       title: "List Currencies",
-      description:
-        "Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status.",
+      description: formatDescription("Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status.",
+          [REQUIRE_COMPLETE_DATA_HINT,LARGE_DATASET_HINT]),
       annotations: {
         title: "List Currencies",
         readOnlyHint: true,
