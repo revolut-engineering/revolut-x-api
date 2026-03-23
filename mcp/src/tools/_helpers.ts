@@ -62,71 +62,6 @@ export const VALID_RESOLUTIONS = new Set([
   "4w",
 ]);
 
-export const CHUNK_MS = 7 * 24 * 60 * 60 * 1000;
-
-const RESOLUTION_MINUTES: Record<string, number> = {
-  "1m": 1,
-  "5m": 5,
-  "15m": 15,
-  "30m": 30,
-  "1h": 60,
-  "4h": 240,
-  "1d": 1440,
-  "2d": 2880,
-  "4d": 5760,
-  "1w": 10080,
-  "2w": 20160,
-  "4w": 40320,
-};
-
-const CANDLES_PER_CHUNK = 1000;
-
-export function candleChunkMs(resolution: string): number {
-  const minutes = RESOLUTION_MINUTES[resolution] ?? 60;
-  return CANDLES_PER_CHUNK * minutes * 60 * 1000;
-}
-
-export async function fetchAllCandlesChunked<T>(
-  fetchPage: (startDate: number, endDate: number) => Promise<{ data: T[] }>,
-  startDate: number,
-  endDate: number,
-  chunkMs: number,
-): Promise<T[]> {
-  const all: T[] = [];
-  let chunkStart = startDate;
-  while (chunkStart < endDate) {
-    const chunkEnd = Math.min(chunkStart + chunkMs, endDate);
-    const result = await fetchPage(chunkStart, chunkEnd);
-    all.push(...result.data);
-    chunkStart = chunkEnd;
-  }
-  return all;
-}
-
-export async function fetchAllChunked<T>(
-  fetchPage: (
-    startDate: number,
-    endDate: number,
-    cursor?: string,
-  ) => Promise<{ data: T[]; metadata: { next_cursor?: string } }>,
-  startDate: number,
-  endDate: number,
-): Promise<T[]> {
-  const all: T[] = [];
-  let chunkStart = startDate;
-  while (chunkStart < endDate) {
-    const chunkEnd = Math.min(chunkStart + CHUNK_MS, endDate);
-    let cursor: string | undefined;
-    do {
-      const result = await fetchPage(chunkStart, chunkEnd, cursor);
-      all.push(...result.data);
-      cursor = result.metadata.next_cursor;
-    } while (cursor);
-    chunkStart = chunkEnd;
-  }
-  return all;
-}
-
 export async function handleApiError(
   error: unknown,
   setupGuide: string,
@@ -156,3 +91,13 @@ export const CLI_INSTALL_HINT =
   "cd revolut-x-api/api && npm install && npm run build\n" +
   "cd ../cli && npm install && npm run build && npm link\n" +
   "```";
+
+export const REQUIRE_COMPLETE_DATA_HINT = "Always return complete objects with all available fields. Never truncate, summarize, or omit data.";
+export const LARGE_DATASET_HINT = "If the dataset exceeds 100 items, display only the first 100. Clearly state the total item count (e.g., 'Showing 100 of X items') and ask the user if they would like to view the next batch, see all results, or refine their query.";
+
+export function formatDescription(baseDescription: string, instructions: string[] = []) {
+  if (!instructions || instructions.length === 0) return baseDescription;
+
+  const instructionsFormatted = instructions.map(instruction => `- ${instruction}`).join('\n');
+  return `${baseDescription}\n\nIMPORTANT INSTRUCTIONS:\n${instructionsFormatted}`;
+}
