@@ -92,12 +92,19 @@ export const CLI_INSTALL_HINT =
   "cd ../cli && npm install && npm run build && npm link\n" +
   "```";
 
-export const REQUIRE_COMPLETE_DATA_HINT = "Always return complete objects with all available fields. Never truncate, summarize, or omit data.";
-export const LARGE_DATASET_HINT = "If the dataset exceeds 100 items, display only the first 100. Clearly state the total item count (e.g., 'Showing 100 of X items') and ask the user if they would like to view the next batch, see all results, or refine their query.";
+export const REQUIRE_COMPLETE_DATA_HINT =
+  "Always return complete objects with all available fields. Never truncate, summarize, or omit data.";
+export const LARGE_DATASET_HINT =
+  "If the dataset exceeds 100 items, display only the first 100. Clearly state the total item count (e.g., 'Showing 100 of X items') and ask the user if they would like to view the next batch, see all results, or refine their query.";
 
-export function formatDescription(baseDescription: string, instructions: string[] = []) {
+export function formatDescription(
+  baseDescription: string,
+  instructions: string[] = [],
+) {
   if (!instructions || instructions.length === 0) return baseDescription;
 
-  const instructionsFormatted = instructions.map(instruction => `- ${instruction}`).join('\n');
+  const instructionsFormatted = instructions
+    .map((instruction) => `- ${instruction}`)
+    .join("\n");
   return `${baseDescription}\n\nIMPORTANT INSTRUCTIONS:\n${instructionsFormatted}`;
 }
