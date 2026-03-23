@@ -46,6 +46,7 @@ console.log(balances);
 | `timeout` | `number` | `30000` | Request timeout in milliseconds |
 | `maxRetries` | `number` | `3` | Max retry attempts for failed requests |
 | `autoLoadCredentials` | `boolean` | `true` | Auto-load credentials from config directory |
+| `logger` | `LogCallback` | — | Custom log handler — receives structured log entries |
 
 ### Credential Auto-loading
 
@@ -64,6 +65,13 @@ Expected files: `config.json` (contains `apiKey`) and `private.pem` (Ed25519 key
 Set `autoLoadCredentials: false` to disable.
 
 ## API Reference
+
+### Client State
+
+```typescript
+// Check if the client has credentials configured
+client.isAuthenticated; // → boolean
+```
 
 ### Account
 
@@ -196,11 +204,47 @@ console.log(publicKeyPem);
 ### Auth Utilities
 
 ```typescript
-import { signRequest, buildAuthHeaders, loadPrivateKey } from "revolutx-api";
+import {
+  signRequest,
+  buildAuthHeaders,
+  loadPrivateKey,
+  getPublicKeyPem,
+  createTimestamp,
+} from "revolutx-api";
 
 const key = loadPrivateKey("/path/to/private.pem");
 const headers = buildAuthHeaders("api-key", key, "GET", "/api/1.0/balances");
+
+// Derive public key PEM from an existing private key object
+const publicKeyPem = getPublicKeyPem(key);
+
+// Get a current epoch-milliseconds timestamp string
+const ts = createTimestamp();
 ```
+
+## Logging
+
+Pass a `logger` callback to receive structured log entries from the client (requests, retries, errors, etc.):
+
+```typescript
+import { LogCallback, LogLevel } from "revolutx-api";
+
+const client = new RevolutXClient({
+  apiKey: "your-api-key",
+  privateKeyPath: "~/.config/revolut-x/private.pem",
+  logger: (entry) => {
+    console.log(`[${entry.level}] ${entry.message}`, entry.data ?? "");
+  },
+});
+```
+
+Each `LogEntry` has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `level` | `LogLevel` | `"debug"` \| `"info"` \| `"warn"` \| `"error"` |
+| `message` | `string` | Human-readable description |
+| `data` | `unknown` | Optional structured payload |
 
 ## Error Handling
 
