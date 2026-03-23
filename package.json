@@ -1,11 +1,6 @@
 {
   "private": true,
   "type": "module",
-  "workspaces": [
-    "api",
-    "cli",
-    "mcp"
-  ],
   "scripts": {
     "lint": "eslint api/src api/tests cli/src cli/tests mcp/src mcp/tests",
     "lint:fix": "eslint api/src api/tests cli/src cli/tests mcp/src mcp/tests --fix",

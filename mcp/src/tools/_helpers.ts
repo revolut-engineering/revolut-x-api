@@ -106,5 +106,5 @@ export function formatDescription(
   const instructionsFormatted = instructions
     .map((instruction) => `- ${instruction}`)
     .join("\n");
-  return `${baseDescription}\n\nMUST FOLLOW":\n${instructionsFormatted}`;
+  return `${baseDescription}\n\nIMPORTANT INSTRUCTIONS:\n${instructionsFormatted}`;
 }

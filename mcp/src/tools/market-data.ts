@@ -19,7 +19,7 @@ export function registerMarketDataTools(server: McpServer): void {
       title: "List Currencies",
       description: formatDescription(
         "Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status.",
-        [REQUIRE_COMPLETE_DATA_HINT],
+        [REQUIRE_COMPLETE_DATA_HINT, LARGE_DATASET_HINT],
       ),
       annotations: {
         title: "List Currencies",
