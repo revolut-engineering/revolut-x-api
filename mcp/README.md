@@ -22,10 +22,22 @@ Configure your MCP client to run:
 
 **Option A: From source**
 
+**Production** (default, targets `https://revx.revolut.com`):
+
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
 cd api && npm ci && npm run build && cd ..
+cd mcp && npm ci && npm run build
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```bash
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
+# Build the API in dev mode first — MCP inherits the target URL from it
+cd api && npm ci && npm run build:dev && cd ..
 cd mcp && npm ci && npm run build
 ```
 
@@ -67,10 +79,22 @@ Add to Cursor MCP settings or `.cursor/mcp.json`:
 
 **Option A: From source**
 
+**Production** (default, targets `https://revx.revolut.com`):
+
 ```powershell
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
 cd api; npm ci; npm run build; cd ..
+cd mcp; npm ci; npm run build
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```powershell
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
+# Build the API in dev mode first — MCP inherits the target URL from it
+cd api; npm ci; npm run build:dev; cd ..
 cd mcp; npm ci; npm run build
 ```
 
@@ -93,10 +117,22 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 
 **Option A: From source**
 
+**Production** (default, targets `https://revx.revolut.com`):
+
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
 (cd api && npm ci && npm run build)
+(cd mcp && npm ci && npm run build)
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```bash
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
+# Build the API in dev mode first — MCP inherits the target URL from it
+(cd api && npm ci && npm run build:dev)
 (cd mcp && npm ci && npm run build)
 ```
 

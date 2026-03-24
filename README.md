@@ -19,10 +19,22 @@ Monorepo for open-source tooling around the [Revolut X](https://exchange.revolut
 
 Build both the API and MCP packages:
 
+**Production** (default, targets `https://revx.revolut.com`):
+
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
 cd api && npm ci && npm run build && cd ..
+cd mcp && npm ci && npm run build && cd ..
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```bash
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
+# Build the API in dev mode first — MCP inherits the target URL from it
+cd api && npm ci && npm run build:dev && cd ..
 cd mcp && npm ci && npm run build && cd ..
 ```
 
@@ -49,10 +61,22 @@ Then ask Claude: **"Set up my Revolut X API keys"** to complete authentication.
 
 ### CLI
 
+**Production** (default, targets `https://revx.revolut.com`):
+
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
 cd api && npm ci && npm run build && cd ..
+cd cli && npm ci && npm run build && npm link && cd ..
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```bash
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api
+# Build the API in dev mode first — CLI inherits the target URL from it
+cd api && npm ci && npm run build:dev && cd ..
 cd cli && npm ci && npm run build && npm link && cd ..
 ```
 

@@ -13,8 +13,20 @@ npm install ./revolutx-api-*.tgz
 Or from source:
 
 ```bash
-git clone https://github.com/revolut-engineering/revolut-x-api.git && cd revolut-x-api/api
-npm install && npm run build
+git clone https://github.com/revolut-engineering/revolut-x-api.git
+cd revolut-x-api/api && npm install
+```
+
+**Production** (default, targets `https://revx.revolut.com`):
+
+```bash
+npm run build
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```bash
+npm run build:dev
 ```
 
 Requires Node.js 20+.

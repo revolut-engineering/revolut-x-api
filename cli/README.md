@@ -14,10 +14,18 @@ The CLI tarball includes the API client bundled inside — no extra dependencies
 
 Or from source:
 
+**Production** (default, targets `https://revx.revolut.com`):
+
 ```bash
-# Build the API dependency first
 cd api && npm install && npm run build && cd ..
-# Then build and link the CLI
+cd cli && npm install && npm run build && npm link && cd ..
+```
+
+**Development** (targets `https://revx.revolut.codes`):
+
+```bash
+# Build the API in dev mode first — CLI inherits the target URL from it
+cd api && npm install && npm run build:dev && cd ..
 cd cli && npm install && npm run build && npm link && cd ..
 ```
 

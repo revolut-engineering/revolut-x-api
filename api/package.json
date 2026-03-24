@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:dev": "tsc && node scripts/patch-dev-url.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
