@@ -44,7 +44,7 @@
     "cli-table3": "^0.6.5",
     "commander": "^13.0.0",
     "decimal.js": "^10.6.0",
-    "revolutx-api": "file:../api"
+    "revolutx-api": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
