@@ -94,7 +94,7 @@ export class RevolutXClient {
       baseUrl:
         options.baseUrl ??
         process.env.REVOLUTX_API_URL ??
-        "https://revx.revolut.codes",
+        "https://revx.revolut.com",
       apiKey,
       privateKey,
       timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,

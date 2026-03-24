@@ -67,6 +67,50 @@ revx strategy grid backtest BTC-USD
 
 ---
 
+## Usage Example
+
+```typescript
+import { RevolutXClient, RateLimitError, OrderError } from "revolutx-api";
+
+// Credentials auto-loaded from ~/.config/revolut-x/
+const client = new RevolutXClient();
+
+// Check balances
+const balances = await client.getBalances();
+const usd = balances.find((b) => b.currency === "USD");
+console.log(`USD available: ${usd?.available}`);
+
+// Get current BTC price
+const { data: tickers } = await client.getTickers({ symbols: ["BTC-USD"] });
+const price = tickers[0].ask;
+console.log(`BTC ask: ${price}`);
+
+// Place a limit buy order
+try {
+  const order = await client.placeOrder({
+    symbol: "BTC-USD",
+    side: "buy",
+    limit: {
+      price: price,
+      baseSize: "0.001",
+    },
+  });
+  console.log(`Order placed: ${order.data.venue_order_id}`);
+} catch (err) {
+  if (err instanceof RateLimitError) {
+    console.error(`Rate limited — retry after ${err.retryAfter}ms`);
+  } else if (err instanceof OrderError) {
+    console.error(`Order rejected: ${err.message}`);
+  } else {
+    throw err;
+  }
+}
+```
+
+See [`api/README.md`](api/README.md) for the full API reference.
+
+---
+
 ## Configuration
 
 Credentials are stored locally on your machine — the private key never leaves your filesystem.
