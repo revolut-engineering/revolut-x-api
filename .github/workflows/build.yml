@@ -19,30 +19,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            api/package-lock.json
-            cli/package-lock.json
-            mcp/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - uses: actions/cache@v5
         id: modules-cache
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - name: Install all dependencies
         if: steps.modules-cache.outputs.cache-hit != 'true'
-        run: |
-          npm ci &
-          cd api && npm ci &
-          cd cli && npm ci &
-          cd mcp && npm ci &
-          wait
+        run: npm ci
 
   build-api:
     name: Build API
@@ -61,18 +48,14 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache@v5
         id: api-dist-cache
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
 
       - run: npm run build
         if: steps.api-dist-cache.outputs.cache-hit != 'true'
@@ -91,17 +74,13 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@v5
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
           restore-keys: api-dist-${{ runner.os }}-
 
       - run: npm run format:check
@@ -125,12 +104,8 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - run: npm run typecheck
 
@@ -153,17 +128,13 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@v5
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
           restore-keys: api-dist-${{ runner.os }}-
 
       - run: npm run typecheck
@@ -187,17 +158,13 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@v5
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
           restore-keys: api-dist-${{ runner.os }}-
 
       - run: npm run typecheck
@@ -221,17 +188,13 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@v5
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
           restore-keys: api-dist-${{ runner.os }}-
 
       - run: npm pack
@@ -255,17 +218,13 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@v5
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
           restore-keys: api-dist-${{ runner.os }}-
 
       - name: Build CLI
@@ -274,11 +233,8 @@ jobs:
       - name: Pack tarball (with bundled API)
         run: |
           cd cli
-          if [ -L node_modules/revolutx-api ]; then
-            TARGET=$(readlink -f node_modules/revolutx-api)
-            rm node_modules/revolutx-api
-            cp -r "$TARGET" node_modules/revolutx-api
-          fi
+          mkdir -p node_modules
+          cp -r "$(readlink -f ../node_modules/revolutx-api)" node_modules/revolutx-api
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -309,17 +265,13 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@v5
         with:
           path: api/dist
-          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/package-lock.json', 'api/tsconfig.json', 'api/src/**') }}
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
           restore-keys: api-dist-${{ runner.os }}-
 
       - name: Build MCPB archive
@@ -360,12 +312,8 @@ jobs:
 
       - uses: actions/cache/restore@v5
         with:
-          path: |
-            node_modules
-            api/node_modules
-            cli/node_modules
-            mcp/node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('**/package-lock.json') }}
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
       - name: Generate SBOMs
         run: |

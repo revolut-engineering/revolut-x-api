@@ -22,11 +22,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            api/package-lock.json
-            cli/package-lock.json
-            mcp/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Set version from release tag
         run: |
@@ -47,12 +43,7 @@ jobs:
           "
 
       - name: Install all dependencies
-        run: |
-          npm ci &
-          cd api && npm ci &
-          cd cli && npm ci &
-          cd mcp && npm ci &
-          wait
+        run: npm ci
 
       - name: Build & test API
         run: cd api && npm run typecheck && npm test && npm run build
@@ -72,11 +63,8 @@ jobs:
       - name: Pack CLI tarball (with bundled API)
         run: |
           cd cli
-          if [ -L node_modules/revolutx-api ]; then
-            TARGET=$(readlink -f node_modules/revolutx-api)
-            rm node_modules/revolutx-api
-            cp -r "$TARGET" node_modules/revolutx-api
-          fi
+          mkdir -p node_modules
+          cp -r "$(readlink -f ../node_modules/revolutx-api)" node_modules/revolutx-api
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
