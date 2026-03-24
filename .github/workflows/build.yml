@@ -317,9 +317,9 @@ jobs:
 
       - name: Generate SBOMs
         run: |
-          npx @cyclonedx/cyclonedx-npm --workspace revolutx-api --output-file sbom-api.json
-          npx @cyclonedx/cyclonedx-npm --workspace revolutx-cli --output-file sbom-cli.json
-          npx @cyclonedx/cyclonedx-npm --workspace revolutx-mcp --output-file sbom-mcp.json
+          npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --workspace revolutx-api --output-file sbom-api.json
+          npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --workspace revolutx-cli --output-file sbom-cli.json
+          npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --workspace revolutx-mcp --output-file sbom-mcp.json
 
       - uses: actions/upload-artifact@v6
         with:
