@@ -91,47 +91,111 @@ revx strategy grid backtest BTC-USD
 
 ---
 
-## Usage Example
+## MCP Usage Examples
 
-```typescript
-import { RevolutXClient, RateLimitError, OrderError } from "revolutx-api";
+### 1. Set up API authentication
 
-// Credentials auto-loaded from ~/.config/revolut-x/
-const client = new RevolutXClient();
+> "Set up my Revolut X API keys"
 
-// Check balances
-const balances = await client.getBalances();
-const usd = balances.find((b) => b.currency === "USD");
-console.log(`USD available: ${usd?.available}`);
+**Tools called:** `generate_keypair` > `configure_api_key` > `check_auth_status`
 
-// Get current BTC price
-const { data: tickers } = await client.getTickers({ symbols: ["BTC-USD"] });
-const price = tickers[0].ask;
-console.log(`BTC ask: ${price}`);
+```
+Ed25519 keypair generated successfully!
 
-// Place a limit buy order
-try {
-  const order = await client.placeOrder({
-    symbol: "BTC-USD",
-    side: "buy",
-    limit: {
-      price: price,
-      baseSize: "0.001",
-    },
-  });
-  console.log(`Order placed: ${order.data.venue_order_id}`);
-} catch (err) {
-  if (err instanceof RateLimitError) {
-    console.error(`Rate limited — retry after ${err.retryAfter}ms`);
-  } else if (err instanceof OrderError) {
-    console.error(`Order rejected: ${err.message}`);
-  } else {
-    throw err;
-  }
-}
+Here is your PUBLIC key (copy this):
+
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA...
+-----END PUBLIC KEY-----
+
+Next steps:
+1. Copy the public key above
+2. Go to your Revolut X account > Profile > API Keys
+3. Add this public key and create a new API key
+4. Copy the API key that Revolut X gives you
+5. Run 'configure_api_key' with that API key
 ```
 
-See [`api/README.md`](api/README.md) for the full API reference.
+After providing the API key:
+
+```
+API key saved successfully!
+Authentication is configured and working!
+Successfully connected to Revolut X API.
+Available currencies: 48
+```
+
+### 2. Check portfolio balances
+
+> "What are my Revolut X balances?"
+
+**Tool called:** `get_balances`
+
+```
+  Currency |        Available |       Reserved |            Total
+-----------------------------------------------------------------
+       BTC |       0.12345678 |     0.00000000 |       0.12345678
+       ETH |       2.50000000 |     0.50000000 |       3.00000000
+       USD |        5432.10   |        0.00    |        5432.10
+      USDT |       1000.00    |        0.00    |        1000.00
+```
+
+### 3. Get live market prices
+
+> "Show me current prices for BTC and ETH"
+
+**Tool called:** `get_tickers`
+
+```
+Pair         |            Bid |            Ask |            Mid |           Last
+------------------------------------------------------------------------------
+BTC-USD      |   97234.50     |   97238.20     |   97236.35     |   97235.00
+ETH-USD      |    3412.80     |    3413.50     |    3413.15     |    3413.00
+SOL-USD      |     178.42     |     178.58     |     178.50     |     178.45
+```
+
+### 4. View order book depth
+
+> "Show me the order book for BTC-USD"
+
+**Tool called:** `get_order_book` with `symbol: "BTC-USD"`, `limit: 20`
+
+```
+Order Book: BTC-USD
+
+                       ASKS (Sell)
+         Price Currency |       Quantity   Unit | Orders
+----------------------------------------------------------
+      97250.00      USD |       0.15000    BTC |      3
+      97245.00      USD |       0.08500    BTC |      2
+      97240.00      USD |       0.22000    BTC |      5
+      97238.20      USD |       0.05000    BTC |      1
+
+                       BIDS (Buy)
+         Price Currency |       Quantity   Unit | Orders
+----------------------------------------------------------
+      97234.50      USD |       0.10000    BTC |      2
+      97230.00      USD |       0.18000    BTC |      4
+      97225.00      USD |       0.25000    BTC |      3
+      97220.00      USD |       0.12000    BTC |      2
+```
+
+### 5. Analyze candlestick data
+
+> "Get the last 24 hours of 1-hour candles for ETH-USD"
+
+**Tool called:** `get_candles` with `symbol: "ETH-USD"`, `resolution: "1h"`, `limit: 24`
+
+```
+Candles for ETH-USD (1h):
+
+Start                |         Open |         High |          Low |        Close |         Volume
+-----------------------------------------------------------------------------------------------
+2026-02-28T00:00:00  |      3380.50 |      3395.20 |      3378.00 |      3392.40 |        1245.80
+2026-02-28T01:00:00  |      3392.40 |      3410.00 |      3388.50 |      3408.75 |         987.30
+2026-02-28T02:00:00  |      3408.75 |      3415.60 |      3400.10 |      3413.00 |         856.20
+...
+```
 
 ---
 
