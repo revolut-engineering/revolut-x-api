@@ -25,8 +25,9 @@ Build both the API and MCP packages:
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
-cd api && npm ci && npm run build && cd ..
-cd mcp && npm ci && npm run build && cd ..
+npm ci
+npm run build -w api
+npm run build -w mcp
 ```
 
 **Development** (targets `https://revx.revolut.codes`):
@@ -34,9 +35,9 @@ cd mcp && npm ci && npm run build && cd ..
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
-# Build the API in dev mode first — MCP inherits the target URL from it
-cd api && npm ci && npm run build:dev && cd ..
-cd mcp && npm ci && npm run build && cd ..
+npm ci
+cd api && npm run build:dev && cd ..
+npm run build -w mcp
 ```
 
 **Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
@@ -67,8 +68,10 @@ Then ask Claude: **"Set up my Revolut X API keys"** to complete authentication.
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
-cd api && npm ci && npm run build && cd ..
-cd cli && npm ci && npm run build && npm link && cd ..
+npm ci
+npm run build -w api
+npm run build -w cli
+npm link -w cli
 ```
 
 **Development** (targets `https://revx.revolut.codes`):
@@ -76,16 +79,17 @@ cd cli && npm ci && npm run build && npm link && cd ..
 ```bash
 git clone https://github.com/revolut-engineering/revolut-x-api.git
 cd revolut-x-api
-# Build the API in dev mode first — CLI inherits the target URL from it
-cd api && npm ci && npm run build:dev && cd ..
-cd cli && npm ci && npm run build && npm link && cd ..
+npm ci
+cd api && npm run build:dev && cd ..
+npm run build -w cli
+npm link -w cli
 ```
 
 ```bash
 revx configure                              # Set up API keys
 revx account balances                       # Check balances
 revx market ticker BTC-USD                  # Get price
-revx order place BTC-USD buy 0.001 --limit 95000
+revx order place BTC-USD buy --qty 0.001 --limit 95000
 revx monitor price BTC-USD --threshold 100000
 revx strategy grid backtest BTC-USD
 ```

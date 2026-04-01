@@ -15,10 +15,10 @@ Monorepo for Revolut X crypto exchange tooling. Three npm workspace packages:
 
 ```bash
 npm ci                        # install all workspaces
-npm run build                 # build all (api must build first — it's a dependency)
+npm run build                 # build all workspaces (handles build order automatically)
 ```
 
-Build order matters: **api -> cli, mcp**. For individual packages:
+For individual packages:
 
 ```bash
 npm run build -w api          # or: cd api && npm run build
