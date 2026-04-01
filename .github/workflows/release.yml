@@ -96,11 +96,6 @@ jobs:
       - name: Build MCPB archive
         run: cd mcp && bash scripts/build-mcpb.sh
 
-      - name: Pack skill archive
-        run: |
-          cd skills
-          zip -r "revx-cli-${VERSION}.skill" revx-cli/
-
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -109,7 +104,6 @@ jobs:
             "api/api-k9x2a-${VERSION}.tgz" \
             "cli/cli-k9x2a-${VERSION}.tgz" \
             "mcp/dist/mcp-k9x2a.mcpb" \
-            "skills/revx-cli-${VERSION}.skill" \
             --clobber
 
       - name: Commit version bump back to repo
