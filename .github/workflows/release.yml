@@ -99,7 +99,7 @@ jobs:
       - name: Pack skill archive
         run: |
           cd skills
-          zip -r "revolut-x-trading-${VERSION}.skill" revolut-x-trading/
+          zip -r "revx-cli-${VERSION}.skill" revx-cli/
 
       - name: Upload release assets
         env:
@@ -109,7 +109,7 @@ jobs:
             "api/api-k9x2a-${VERSION}.tgz" \
             "cli/cli-k9x2a-${VERSION}.tgz" \
             "mcp/dist/mcp-k9x2a.mcpb" \
-            "skills/revolut-x-trading-${VERSION}.skill" \
+            "skills/revx-cli-${VERSION}.skill" \
             --clobber
 
       - name: Commit version bump back to repo

@@ -13,9 +13,9 @@ jobs:
     name: Install Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -39,9 +39,9 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -65,9 +65,9 @@ jobs:
     needs: [install, build-api]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -95,9 +95,9 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -119,9 +119,9 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -149,9 +149,9 @@ jobs:
       run:
         working-directory: cli
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -179,9 +179,9 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -209,9 +209,9 @@ jobs:
     needs: test-cli
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -246,9 +246,9 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
@@ -271,31 +271,31 @@ jobs:
         with:
           name: mcp-k9x2a-mcpb
           path: mcp/dist/mcp-k9x2a.mcpb
-  
+
   pack-skill:
     name: Pack Skill
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Build skill archive
         run: |
           cd skills
-          zip -r revolut-x-trading.skill revolut-x-trading/
+          zip -r revx-cli.skill revx-cli/
 
       - uses: actions/upload-artifact@v6
         with:
-          name: revolutx-trading-skill
-          path: skills/revolut-x-trading.skill
+          name: revx-cli-skill
+          path: skills/revx-cli.skill
 
   sbom:
     name: Generate SBOM
     needs: [pack-api, pack-cli, pack-mcp]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
