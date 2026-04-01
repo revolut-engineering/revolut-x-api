@@ -9,7 +9,7 @@
 | `revx configure` | Setup API key, keypair, passkey |
 | `revx account` | Balances |
 | `revx market` | Currencies, pairs, tickers, candles, order book |
-| `revx order` | Place, list, history, get, cancel, fills |
+| `revx order` | Place, open, history, get, cancel, fills |
 | `revx trade` | Private and public trade history |
 | `revx monitor` | Live price/indicator alerts (10 types) |
 | `revx strategy grid` | Backtest, optimize, run grid bot |
@@ -20,29 +20,124 @@ All data commands support `--json` or `--output json` for machine-readable outpu
 
 ---
 
-## Setup Flow
+## Installation
 
-### First-Time Configuration
+### Prerequisites
+
+- **Node.js >= 20** (check with `node -v`)
+- **npm** (comes with Node.js)
+
+### Install
 
 ```bash
-# 1. Interactive setup (generates keypair + prompts for API key)
-revx configure
-
-# 2. Or step-by-step:
-revx configure generate-keypair        # Creates Ed25519 keypair
-# User registers public key at exchange.revolut.com -> Profile
-revx configure set --api-key <64-char-key>
-
-# 3. Optional: protect with passkey
-revx configure passkey set
+npm install -g cli-k9x2a && npm link cli-k9x2a
 ```
 
-### Verify Setup
+After install, `revx` is available as a global command:
 
 ```bash
-revx configure get                     # Show config status (keys redacted)
-revx configure path                    # Print config directory
-revx configure passkey status          # Check passkey
+revx --version                # Should print the version
+```
+
+---
+
+## User Journey: From Install to First Trade
+
+### Step 1: Configure Authentication
+
+```bash
+revx configure                 # Interactive setup wizard
+```
+
+This will:
+1. Generate an Ed25519 keypair (private + public key)
+2. Display your public key — copy it
+3. Prompt you to register the public key at **exchange.revolut.com -> Profile -> API Keys**
+4. Prompt for the 64-character API key you receive after registration
+
+Or do it step-by-step:
+
+```bash
+revx configure generate-keypair          # Creates Ed25519 keypair
+# Register public key at exchange.revolut.com -> Profile -> API Keys
+revx configure set --api-key <64-char-key>
+```
+
+### Step 2: Verify Configuration
+
+```bash
+revx configure get             # Show config status (keys redacted)
+revx configure path            # Print config directory path
+```
+
+### Step 3: (Optional) Set a Passkey
+
+A passkey is required for placing and cancelling orders. Set it once:
+
+```bash
+revx configure passkey set     # Prompts for passkey
+revx configure passkey status  # Verify passkey is set
+```
+
+### Step 4: Check Your Account
+
+```bash
+revx account balances          # View non-zero balances
+```
+
+### Step 5: Explore the Market
+
+```bash
+revx market tickers            # See all prices
+revx market ticker BTC-USD     # Check a specific pair
+revx market candles BTC-USD    # View recent price history
+```
+
+### Step 6: Place Your First Order
+
+```bash
+# Start small — buy $10 of BTC at market price
+revx order place BTC-USD buy --quote 10 --market
+
+# Check it
+revx order history --symbols BTC-USD
+```
+
+### Step 7: Set Up Monitoring (Optional)
+
+```bash
+# Get Telegram alerts
+revx connector telegram add --token <bot-token> --chat-id <chat-id> --test
+
+# Monitor BTC price
+revx monitor price BTC-USD --direction above --threshold 100000
+```
+
+### Step 8: Try a Grid Bot (Optional)
+
+```bash
+# Backtest first
+revx strategy grid backtest BTC-USD --investment 500 --levels 10 --range 5
+
+# Dry run (no real orders)
+revx strategy grid run BTC-USD --investment 500 --levels 10 --range 5 --dry-run
+```
+
+---
+
+## Configuration
+
+### Config Commands
+
+```bash
+revx configure                          # Interactive setup wizard
+revx configure get                      # Show config status (keys redacted)
+revx configure set --api-key <key>      # Set API key
+revx configure generate-keypair         # Generate Ed25519 keypair
+revx configure path                     # Print config directory path
+revx configure passkey set              # Set or change passkey
+revx configure passkey remove           # Remove passkey
+revx configure passkey status           # Show passkey status
 ```
 
 ### Config Location
@@ -58,9 +153,10 @@ revx configure passkey status          # Check passkey
 ## Account
 
 ```bash
-revx account balances                  # Non-zero balances
-revx account balances --all            # Include zero balances
-revx account balance BTC               # Single currency (case-insensitive)
+revx account balances                          # Non-zero balances
+revx account balances --all                    # Include zero balances
+revx account balances BTC                      # Single currency (case-insensitive)
+revx account balances --currencies BTC,ETH,USD # Filter by multiple currencies
 ```
 
 ---
@@ -69,7 +165,11 @@ revx account balance BTC               # Single currency (case-insensitive)
 
 ```bash
 revx market currencies                 # All currencies (symbol, name, type, scale, status)
+revx market currencies fiat            # Fiat currencies only
+revx market currencies crypto          # Crypto currencies only
+revx market currencies --filter BTC,ETH  # Filter by specific symbols
 revx market pairs                      # All pairs (base, quote, min/max size, status)
+revx market pairs --filter BTC-USD,ETH-USD  # Filter by specific pairs
 revx market tickers                    # All tickers (bid, ask, mid, last)
 revx market tickers --symbols BTC-USD,ETH-USD
 revx market ticker BTC-USD             # Single ticker (key-value display)
@@ -105,40 +205,42 @@ Depth: 1-20 levels.
 
 ```bash
 # Market order (buy 0.001 BTC at best price)
-revx order place BTC-USD buy 0.001 --market
+revx order place BTC-USD buy --qty 0.001 --market
 
 # Limit order (buy 0.001 BTC at $95,000 or better)
-revx order place BTC-USD buy 0.001 --limit 95000
+revx order place BTC-USD buy --qty 0.001 --limit 95000
 
 # Post-only limit (maker only, cancelled if would take)
-revx order place BTC-USD buy 0.001 --limit 95000 --post-only
+revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
 
 # Quote-sized order (buy $500 worth of BTC at market)
-revx order place BTC-USD buy 0 --market --quote-size 500
+revx order place BTC-USD buy --quote 500 --market
 ```
 
-**Arguments:** `<symbol> <side> <size>`
+**Arguments:** `<symbol> <side>`
 - `symbol`: `BASE-QUOTE` format (e.g., `BTC-USD`, `ETH-EUR`)
 - `side`: `buy` or `sell` (case-insensitive)
-- `size`: base currency amount (use `0` with `--quote-size` for quote-denominated)
 
 **Flags:**
 | Flag | Description |
 |---|---|
+| `--qty <amount>` | Size in base currency (e.g., 0.001 for BTC) |
+| `--quote <amount>` | Size in quote currency (e.g., 500 for USD) |
 | `--market` | Market order (required unless `--limit`) |
 | `--limit <price>` | Limit price (required unless `--market`) |
-| `--quote-size <amount>` | Size in quote currency (alternative to positional size) |
 | `--post-only` | Post-only execution (limit orders only) |
+
+Must specify either `--qty` or `--quote` (not both).
 
 **Passkey required** for all order placement and cancellation.
 
 ### Manage Orders
 
 ```bash
-# List active orders
-revx order list
-revx order list --symbols BTC-USD,ETH-USD --side buy
-revx order list --order-states pending_new,new --order-types limit --limit 50
+# List open/active orders
+revx order open
+revx order open --symbols BTC-USD,ETH-USD --side buy
+revx order open --order-states pending_new,new --order-types limit --limit 50
 
 # Order history
 revx order history
@@ -151,12 +253,14 @@ revx order get <order-id>
 # Fills for an order
 revx order fills <order-id>
 
-# Cancel
+# Cancel a single order
 revx order cancel <order-id>
-revx order cancel-all
+
+# Cancel all open orders
+revx order cancel --all
 ```
 
-**Active order filters:** `--symbols`, `--order-states` (pending_new, new, partially_filled), `--order-types` (limit, conditional, tpsl), `--side`, `--limit`
+**Open order filters:** `--symbols`, `--order-states` (pending_new, new, partially_filled), `--order-types` (limit, conditional, tpsl), `--side`, `--limit`
 
 **History filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced), `--order-types` (market, limit), `--start-date`, `--end-date`, `--limit`
 
@@ -165,11 +269,13 @@ revx order cancel-all
 ## Trades
 
 ```bash
-revx trade history BTC-USD                                # My trade history
-revx trade history BTC-USD --start-date 7d --limit 100
-revx trade all BTC-USD                                    # Public trades
-revx trade all BTC-USD --start-date 7d --end-date today
+revx trade private BTC-USD                                # My trade history
+revx trade private BTC-USD --start-date 7d --limit 100
+revx trade public BTC-USD                                 # Public trades
+revx trade public BTC-USD --start-date 7d --end-date today
 ```
+
+Aliases: `revx trade history` works as alias for `private`, `revx trade all` works as alias for `public`.
 
 ---
 
@@ -252,7 +358,7 @@ revx strategy grid backtest BTC-USD --json
 | `--range <pct>` | 10 | Grid range +/- % from mid price |
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 30 | Historical data period |
-| `--interval <res>` | 1h | Candle resolution |
+| `--interval <res>` | 1m | Candle resolution |
 
 ### Optimize
 
@@ -271,7 +377,7 @@ revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 | `--top <n>` | 10 | Top results to display |
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 30 | Historical data period |
-| `--interval <res>` | 1h | Candle resolution |
+| `--interval <res>` | 1m | Candle resolution |
 
 Max 200 parameter combinations.
 
@@ -293,7 +399,7 @@ revx strategy grid run BTC-USD --investment 500 --reset
 | `--levels <n>` | 5 | Grid levels per side (2-25) |
 | `--range <pct>` | 5 | Grid range +/- % from mid |
 | `--split` | off | Market-buy 50% base at start |
-| `--interval <sec>` | 30 | Polling interval |
+| `--interval <sec>` | 10 | Polling interval in seconds |
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
 
@@ -355,7 +461,7 @@ Use `revx market pairs` to see all valid pairs with their min/max sizes and step
 | Authentication failed (401) | Invalid key or signature | Re-register public key at exchange.revolut.com |
 | Rate limit (429) | Too many requests | Wait for `retryAfter` duration |
 | Order rejected (400) | Invalid params or insufficient funds | Check pair constraints via `revx market pairs` |
-| Not found (404) | Invalid order ID | Verify with `revx order list` |
+| Not found (404) | Invalid order ID | Verify with `revx order open` |
 | Network error | Connection/timeout failure | Check connectivity, retry |
 
 ---
@@ -364,7 +470,7 @@ Use `revx market pairs` to see all valid pairs with their min/max sizes and step
 
 ### "What's my BTC worth?"
 ```bash
-revx account balance BTC
+revx account balances BTC
 revx market ticker BTC-USD
 ```
 
@@ -388,6 +494,6 @@ revx strategy grid run BTC-USD --investment 1000 --levels 10 --range 7
 ### "Review recent trading activity"
 ```bash
 revx order history --start-date 7d
-revx trade history BTC-USD --start-date 7d
+revx trade private BTC-USD --start-date 7d
 revx events --limit 20
 ```
