@@ -1,0 +1,53 @@
+# Node.js (api/, cli/, mcp/)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+
+# SQLite databases (runtime)
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Environment / secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# MCP packaging build output
+mcp/packaging/mcpb/stage/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Git
+*.orig
+*.BACKUP.*
+*.LOCAL.*
+*.REMOTE.*
+
+# Docker volumes (local dev)
+volumes/
+
+# pnpm (web/)
+pnpm-debug.log*
+
+# Vite cache (web/)
+.vite/
+
+# Gemini CLI
+.gemini/

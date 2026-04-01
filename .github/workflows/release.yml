@@ -1,0 +1,91 @@
+name: Release Packages
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Upload Tarballs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set version from release tag
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#release-}"
+          VERSION="${VERSION#v}"
+          echo "Resolved version: $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          for dir in api cli mcp; do
+            (cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+          done
+          VERSION="$VERSION" node -e "
+            const fs = require('fs');
+            const f = 'mcp/packaging/mcpb/manifest.json';
+            const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+            m.version = process.env.VERSION;
+            fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
+          "
+
+      - name: Install all dependencies
+        run: npm ci
+
+      - name: Build & test API
+        run: cd api && npm run typecheck && npm test && npm run build
+
+      - name: Test CLI & MCP
+        run: |
+          (cd cli && npm run typecheck && npm test && npm run build) &
+          (cd mcp && npm run typecheck && npm test) &
+          wait
+
+      - name: Lint & format check
+        run: npm run format:check && npm run lint
+
+      - name: Pack API tarball
+        run: cd api && npm pack
+
+      - name: Pack CLI tarball
+        run: cd cli && npm pack
+
+      - name: Build MCPB archive
+        run: cd mcp && bash scripts/build-mcpb.sh
+        
+      - name: Pack skill archive
+        run: |
+          cd skills
+          zip -r "revolut-x-trading-${VERSION}.skill" revolut-x-trading/
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "api/api-k9x2a-${VERSION}.tgz" \
+            "cli/cli-k9x2a-${VERSION}.tgz" \
+            "mcp/dist/mcp-k9x2a.mcpb" \
+            "skills/revolut-x-trading-${VERSION}.skill" \
+            --clobber
+
+      - name: Commit version bump back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add api/package.json cli/package.json mcp/package.json mcp/packaging/mcpb/manifest.json
+          git commit -m "chore: bump version to ${VERSION} [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:master

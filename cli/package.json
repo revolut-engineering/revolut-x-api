@@ -1,0 +1,59 @@
+{
+  "name": "cli-k9x2a",
+  "version": "1.0.3",
+  "description": "Command-line interface for crypto exchange trading",
+  "keywords": [
+    "cli",
+    "trading",
+    "crypto",
+    "exchange"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/private-repo-k9x2a",
+    "directory": "cli"
+  },
+  "license": "MIT",
+  "author": "author",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "revx": "dist/bin/revx.js"
+  },
+  "directories": {
+    "test": "tests"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/bin/revx.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\""
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "cli-table3": "^0.6.5",
+    "commander": "^13.0.0",
+    "decimal.js": "^10.6.0",
+    "api-k9x2a": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

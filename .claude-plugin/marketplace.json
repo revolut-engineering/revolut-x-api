@@ -1,0 +1,16 @@
+{
+  "name": "revolut-x-plugins",
+  "description": "Revolut X crypto exchange CLI skill for AI assistants",
+  "owner": {
+    "name": "Revolut X"
+  },
+  "plugins": [
+    {
+      "name": "revolut-x",
+      "source": "./",
+      "description": "Explains AI assistants how to use the revx CLI for crypto trading, market data, monitoring, and grid bots",
+      "category": "trading",
+      "version": "0.0.9"
+    }
+  ]
+}
