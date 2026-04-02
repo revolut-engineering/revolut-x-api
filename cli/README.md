@@ -96,9 +96,6 @@ revx configure get                      # Show current config (redacted)
 revx configure set --api-key <key>      # Update API key
 revx configure generate-keypair         # Generate Ed25519 keypair
 revx configure path                     # Print config directory path
-revx configure passkey set              # Set or change passkey
-revx configure passkey remove           # Remove passkey
-revx configure passkey status           # Show passkey status
 ```
 
 ---
