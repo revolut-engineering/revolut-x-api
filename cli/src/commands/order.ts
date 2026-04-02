@@ -14,8 +14,26 @@ import {
   type ColumnDef,
 } from "../output/formatter.js";
 
-function printSectionHeader(title: string): void {
+// --- NEW/MODIFIED: Helper to format the period string ---
+function formatPeriod(start?: number, end?: number): string {
+  if (start && end) {
+    return `Period: ${new Date(start).toISOString()} to ${new Date(end).toISOString()}`;
+  }
+  if (start) {
+    return `Period: Since ${new Date(start).toISOString()}`;
+  }
+  if (end) {
+    return `Period: Up to ${new Date(end).toISOString()}`;
+  }
+  return "Period: Default / Recent";
+}
+
+// --- MODIFIED: Added subtitle parameter to display the period ---
+function printSectionHeader(title: string, subtitle?: string): void {
   console.log(chalk.cyan.bold(`\n❖ ${title}`));
+  if (subtitle) {
+    console.log(chalk.gray(`  ${subtitle}`));
+  }
   console.log(chalk.dim("─".repeat(50)));
 }
 
@@ -31,10 +49,7 @@ function pushTriggerRows(
     chalk.gray("  ↳ Trigger Price"),
     `${t.trigger_price} (when price ${dir} ${t.trigger_price})`,
   ]);
-  rows.push([
-    chalk.gray("  ↳ Order Tnpm install && npm run build && npm linkype"),
-    t.type,
-  ]);
+  rows.push([chalk.gray("  ↳ Order Type"), t.type]);
   rows.push([chalk.gray("  ↳ Time in Force"), t.time_in_force]);
   if (t.limit_price) rows.push([chalk.gray("  ↳ Limit Price"), t.limit_price]);
   if (t.execution_instructions.length)
@@ -284,14 +299,12 @@ Examples:
               console.log(chalk.gray("No open orders found.\n"));
             } else {
               printTable(result.data, OPEN_ORDER_COLUMNS);
-              if (
-                "cursor" in result &&
-                (result as { cursor?: string }).cursor
-              ) {
+              const nextCursor = (
+                result as { metadata?: { next_cursor?: string } }
+              ).metadata?.next_cursor;
+              if (nextCursor) {
                 console.log(
-                  chalk.gray(
-                    `\n  Cursor: ${(result as { cursor?: string }).cursor}`,
-                  ),
+                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
                 );
               }
             }
@@ -369,19 +382,23 @@ Examples:
           if (isJsonOutput(opts)) {
             printJson(result);
           } else {
-            printSectionHeader("Order History");
+            // --- MODIFIED: Pass the formatted period to the header ---
+            const periodText = formatPeriod(
+              queryOpts.startDate,
+              queryOpts.endDate,
+            );
+            printSectionHeader("Order History", periodText);
+
             if (result.data.length === 0) {
               console.log(chalk.gray("No order history found.\n"));
             } else {
               printTable(result.data, HISTORY_ORDER_COLUMNS);
-              if (
-                "cursor" in result &&
-                (result as { cursor?: string }).cursor
-              ) {
+              const nextCursor = (
+                result as { metadata?: { next_cursor?: string } }
+              ).metadata?.next_cursor;
+              if (nextCursor) {
                 console.log(
-                  chalk.gray(
-                    `\n  Cursor: ${(result as { cursor?: string }).cursor}`,
-                  ),
+                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
                 );
               }
             }

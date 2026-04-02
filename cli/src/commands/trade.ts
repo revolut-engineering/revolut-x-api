@@ -19,8 +19,24 @@ type PublicTrade = {
   timestamp: number;
 };
 
-function printSectionHeader(title: string): void {
+function formatPeriod(start?: number, end?: number): string {
+  if (start && end) {
+    return `Period: ${new Date(start).toISOString()} to ${new Date(end).toISOString()}`;
+  }
+  if (start) {
+    return `Period: Since ${new Date(start).toISOString()}`;
+  }
+  if (end) {
+    return `Period: Up to ${new Date(end).toISOString()}`;
+  }
+  return "Period: Default / Recent";
+}
+
+function printSectionHeader(title: string, subtitle?: string): void {
   console.log(chalk.cyan.bold(`\n❖ ${title}`));
+  if (subtitle) {
+    console.log(chalk.gray(`  ${subtitle}`));
+  }
   console.log(chalk.dim("─".repeat(50)));
 }
 
@@ -95,7 +111,12 @@ Examples:
           if (isJsonOutput(opts)) {
             printJson(result);
           } else {
-            printSectionHeader(`Private Trades: ${cleanSymbol}`);
+            const periodText = formatPeriod(
+              queryOpts.startDate,
+              queryOpts.endDate,
+            );
+            printSectionHeader(`Private Trades: ${cleanSymbol}`, periodText);
+
             if (result.data.length === 0) {
               console.log(chalk.gray("No private trades found.\n"));
             } else {
@@ -117,14 +138,13 @@ Examples:
                   accessor: (t) => new Date(t.timestamp).toISOString(),
                 },
               ]);
-              if (
-                "cursor" in result &&
-                (result as { cursor?: string }).cursor
-              ) {
+
+              const nextCursor = (
+                result as { metadata?: { next_cursor?: string } }
+              ).metadata?.next_cursor;
+              if (nextCursor) {
                 console.log(
-                  chalk.gray(
-                    `\n  Cursor: ${(result as { cursor?: string }).cursor}`,
-                  ),
+                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
                 );
               }
             }
@@ -185,7 +205,12 @@ Examples:
           if (isJsonOutput(opts)) {
             printJson(result);
           } else {
-            printSectionHeader(`Public Trades: ${cleanSymbol}`);
+            const periodText = formatPeriod(
+              queryOpts.startDate,
+              queryOpts.endDate,
+            );
+            printSectionHeader(`Public Trades: ${cleanSymbol}`, periodText);
+
             if (result.data.length === 0) {
               console.log(chalk.gray("No public trades found.\n"));
             } else {
@@ -200,14 +225,13 @@ Examples:
                 },
               ];
               printTable(result.data, columns);
-              if (
-                "cursor" in result &&
-                (result as { cursor?: string }).cursor
-              ) {
+
+              const nextCursor = (
+                result as { metadata?: { next_cursor?: string } }
+              ).metadata?.next_cursor;
+              if (nextCursor) {
                 console.log(
-                  chalk.gray(
-                    `\n  Cursor: ${(result as { cursor?: string }).cursor}`,
-                  ),
+                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
                 );
               }
             }
