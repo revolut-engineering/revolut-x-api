@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerTradingTools } from "../../src/tools/trading.js";
+import { vi, describe, beforeEach, it, expect } from "vitest";
 
 const mockClient = {
   getActiveOrders: vi.fn(),
@@ -160,59 +161,89 @@ describe("trading read-only tools", () => {
     expect(getText(result)).toContain("Invalid symbol format");
   });
 
+  it("get_historical_orders validates date formats", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: { start_date: "invalid-date" },
+    });
+    expect(getText(result)).toContain(
+      "Error: Invalid start_date format provided.",
+    );
+  });
+
   it("get_historical_orders passes symbol and date filters", async () => {
     mockClient.getHistoricalOrders.mockResolvedValue({
       data: [],
       metadata: { timestamp: 1700000000000 },
     });
     const client = await createClient();
+
+    const start = 1700000000000;
+    const end = 1700086400000;
+
     await client.callTool({
       name: "get_historical_orders",
       arguments: {
         symbol: "ETH-EUR",
-        start_date: 1700000000000,
-        end_date: 1700086400000,
-        limit: 10,
+        start_date: new Date(start).toISOString(),
+        end_date: new Date(end).toISOString(),
       },
     });
-    expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith({
-      symbols: ["ETH-EUR"],
-      startDate: 1700000000000,
-      endDate: 1700086400000,
-      limit: 10,
-    });
+
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbols: ["ETH-EUR"],
+        startDate: start,
+        endDate: end,
+      }),
+    );
   });
 
-  it("get_historical_orders shows pagination hint when more results available", async () => {
-    mockClient.getHistoricalOrders.mockResolvedValue({
-      data: [
-        {
-          id: "hist-2",
-          client_order_id: "co-hist-2",
-          symbol: "ETH-USD",
-          side: "sell",
-          type: "market",
-          quantity: "1",
-          filled_quantity: "1",
-          leaves_quantity: "0",
-          status: "filled",
-          time_in_force: "ioc",
-          created_date: 1700000000000,
-        },
-      ],
-      metadata: { timestamp: 1700000000000, next_cursor: "abc123" },
-    });
+  it("get_historical_orders fetches all pages automatically", async () => {
+    const orderA = {
+      id: "hist-page1",
+      client_order_id: "co-p1",
+      symbol: "ETH-USD",
+      side: "sell",
+      type: "market",
+      quantity: "1",
+      filled_quantity: "1",
+      leaves_quantity: "0",
+      status: "filled",
+      time_in_force: "ioc",
+      created_date: 1700000000000,
+    };
+    const orderB = { ...orderA, id: "hist-page2", client_order_id: "co-p2" };
+    mockClient.getHistoricalOrders
+      .mockResolvedValueOnce({
+        data: [orderA],
+        metadata: { timestamp: 1700000000000, next_cursor: "abc123" },
+      })
+      .mockResolvedValueOnce({
+        data: [orderB],
+        metadata: { timestamp: 1700000000000 },
+      });
     const client = await createClient();
     const result = await client.callTool({
       name: "get_historical_orders",
-      arguments: {},
+      arguments: {
+        start_date: "2023-11-14",
+        end_date: "2023-11-15",
+      },
     });
     const text = getText(result);
-    expect(text).toContain("More orders are available");
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalledTimes(2);
+    expect(text).toContain("hist-page1");
+    expect(text).toContain("hist-page2");
   });
 });
 
 describe("get_client_trades", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("returns all trade fields", async () => {
     mockClient.getPrivateTrades.mockResolvedValue({
       data: [
@@ -246,28 +277,51 @@ describe("get_client_trades", () => {
     expect(text).toContain("2023-11-14T");
   });
 
-  it("shows cursor when more trades available", async () => {
-    mockClient.getPrivateTrades.mockResolvedValue({
-      data: [
-        {
-          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          orderId: "d0184248-2de5-4b5a-9a1c-123456789abc",
-          symbol: "ETH/USD",
-          side: "sell",
-          price: "3000",
-          quantity: "1",
-          maker: true,
-          timestamp: 1700000000000,
-        },
-      ],
-      metadata: { timestamp: 1700000000000, next_cursor: "xyz789" },
-    });
+  it("validates date formats", async () => {
     const client = await createClient();
     const result = await client.callTool({
       name: "get_client_trades",
-      arguments: { symbol: "ETH-USD" },
+      arguments: { symbol: "BTC-USD", start_date: "not-a-date" },
     });
-    expect(getText(result)).toContain("More trades are available");
+    expect(getText(result)).toContain(
+      "Error: Invalid start_date format provided.",
+    );
+  });
+
+  it("fetches all pages automatically", async () => {
+    const tradeA = {
+      id: "trade-page1",
+      orderId: "order-page1",
+      symbol: "ETH/USD",
+      side: "sell",
+      price: "3000",
+      quantity: "1",
+      maker: true,
+      timestamp: 1700000000000,
+    };
+    const tradeB = { ...tradeA, id: "trade-page2", orderId: "order-page2" };
+    mockClient.getPrivateTrades
+      .mockResolvedValueOnce({
+        data: [tradeA],
+        metadata: { timestamp: 1700000000000, next_cursor: "xyz789" },
+      })
+      .mockResolvedValueOnce({
+        data: [tradeB],
+        metadata: { timestamp: 1700000000000 },
+      });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_client_trades",
+      arguments: {
+        symbol: "ETH-USD",
+        start_date: "2023-11-14",
+        end_date: "2023-11-15",
+      },
+    });
+    const text = getText(result);
+    expect(mockClient.getPrivateTrades).toHaveBeenCalledTimes(2);
+    expect(text).toContain("trade-page1");
+    expect(text).toContain("trade-page2");
   });
 
   it("returns empty message when no trades", async () => {

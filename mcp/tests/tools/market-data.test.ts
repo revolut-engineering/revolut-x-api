@@ -221,11 +221,22 @@ describe("market data tools", () => {
     expect(getText(result)).toContain("Invalid resolution");
   });
 
+  it("get_candles validates date formats", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_candles",
+      arguments: { symbol: "BTC-USD", start_date: "invalid-date" },
+    });
+    expect(getText(result)).toContain(
+      "Error: Invalid start_date format provided.",
+    );
+  });
+
   it("get_candles returns formatted data and note to LLM", async () => {
     mockClient.getCandles.mockResolvedValue({
       data: [
         {
-          start: "2024-01-01T00:00",
+          start: 1700000000000,
           open: "90000",
           high: "91000",
           low: "89000",
@@ -243,14 +254,16 @@ describe("market data tools", () => {
     expect(text).toContain("BTC-USD");
     expect(text).toContain("90000");
     expect(text).toContain("1 total");
-    expect(text).toContain("NOTE TO LLM: The API only returns a single batch");
+    expect(text).toContain(
+      "NOTE TO LLM: This is the complete batch for your request.",
+    );
   });
 
   it("get_candles passes date ranges to API instead of chunking", async () => {
     mockClient.getCandles.mockResolvedValue({
       data: [
         {
-          start: "2024-01-01T00:00",
+          start: 1700000000000,
           open: "90000",
           high: "91000",
           low: "89000",
@@ -262,17 +275,22 @@ describe("market data tools", () => {
     const client = await createClient();
     const start = 1700000000000;
     const end = start + 3600000;
+
+    // Convert to ISO string as the updated schema requires
+    const startIso = new Date(start).toISOString();
+    const endIso = new Date(end).toISOString();
+
     await client.callTool({
       name: "get_candles",
       arguments: {
         symbol: "BTC-USD",
         resolution: "1h",
-        start_date: start,
-        end_date: end,
+        start_date: startIso,
+        end_date: endIso,
       },
     });
 
-    // It should just call the client once with the exact dates instead of chunking
+    // It should just call the client once with the exact parsed epoch dates instead of chunking
     expect(mockClient.getCandles).toHaveBeenCalledTimes(1);
     expect(mockClient.getCandles).toHaveBeenCalledWith("BTC-USD", {
       interval: "1h",
@@ -288,6 +306,17 @@ describe("market data tools", () => {
       arguments: { symbol: "invalid" },
     });
     expect(getText(result)).toContain("Invalid symbol format");
+  });
+
+  it("get_public_trades validates date formats", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_public_trades",
+      arguments: { symbol: "BTC-USD", start_date: "not-a-date" },
+    });
+    expect(getText(result)).toContain(
+      "Error: Invalid start_date format provided.",
+    );
   });
 
   it("get_public_trades returns formatted data", async () => {
@@ -314,36 +343,44 @@ describe("market data tools", () => {
     expect(text).toContain("0.5");
   });
 
-  it("get_public_trades returns cursor note if more trades available", async () => {
-    mockClient.getAllTrades.mockResolvedValue({
-      data: [
-        {
-          id: "trade-123",
-          symbol: "BTC-USD",
-          price: "95000",
-          quantity: "0.5",
-          timestamp: 1700000000000,
-        },
-      ],
-      metadata: {
-        next_cursor: "xyz-cursor-789",
-      },
-    });
+  it("get_public_trades fetches all pages automatically", async () => {
+    mockClient.getAllTrades
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: "trade-123",
+            symbol: "BTC-USD",
+            price: "95000",
+            quantity: "0.5",
+            timestamp: 1700000000000,
+          },
+        ],
+        metadata: { next_cursor: "xyz-cursor-789" },
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: "trade-456",
+            symbol: "BTC-USD",
+            price: "96000",
+            quantity: "1.0",
+            timestamp: 1700000001000,
+          },
+        ],
+      });
     const client = await createClient();
     const result = await client.callTool({
       name: "get_public_trades",
-      arguments: { symbol: "BTC-USD", limit: 1 },
+      arguments: {
+        symbol: "BTC-USD",
+        start_date: "2023-11-14",
+        end_date: "2023-11-15",
+      },
     });
     const text = getText(result);
 
-    expect(mockClient.getAllTrades).toHaveBeenCalledWith("BTC-USD", {
-      startDate: undefined,
-      endDate: undefined,
-      cursor: undefined,
-      limit: 1,
-    });
-    expect(text).toContain(
-      "More trades available. To fetch the next page, use cursor: xyz-cursor-789",
-    );
+    expect(mockClient.getAllTrades).toHaveBeenCalledTimes(2);
+    expect(text).toContain("trade-123");
+    expect(text).toContain("trade-456");
   });
 });

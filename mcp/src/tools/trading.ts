@@ -148,7 +148,7 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Historical Orders",
       description:
         "Get your historical (filled, cancelled, rejected) orders on Revolut X. " +
-        "Makes a single query up to the requested limit. Pass the returned cursor to fetch the next page.",
+        "Always returns 1 complete batch for the given time range. Do not attempt to paginate.",
       inputSchema: {
         symbol: z
           .string()
@@ -167,26 +167,24 @@ export function registerTradingTools(server: McpServer): void {
           .optional()
           .describe('Filter by order type: "market", "limit".'),
         start_date: z
-          .number()
-          .optional()
-          .describe("Start of date range as epoch milliseconds."),
-        end_date: z
-          .number()
-          .optional()
-          .describe("End of date range as epoch milliseconds."),
-        cursor: z
           .string()
           .optional()
           .describe(
-            "Pagination cursor from a previous response. Used to resume fetching.",
+            "Start of date range in standard ISO format (e.g., '2023-01-01' or '2023-01-01T12:00:00Z').",
+          ),
+        end_date: z
+          .string()
+          .optional()
+          .describe(
+            "End of date range in standard ISO format (e.g., '2023-12-31' or '2023-12-31T23:59:59Z').",
           ),
         limit: z
           .number()
-          .min(1)
-          .max(HISTORICAL_ORDERS_API_LIMIT)
-          .default(HISTORICAL_ORDERS_API_LIMIT)
+          .int()
+          .positive()
+          .optional()
           .describe(
-            `Maximum number of orders to return. Default is 100. Max is ${HISTORICAL_ORDERS_API_LIMIT}.`,
+            "Maximum total number of orders to return across all pages. Omit to fetch all orders in the date range.",
           ),
       },
       annotations: {
@@ -202,7 +200,6 @@ export function registerTradingTools(server: McpServer): void {
       order_types,
       start_date,
       end_date,
-      cursor,
       limit,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
@@ -213,40 +210,91 @@ export function registerTradingTools(server: McpServer): void {
         if (error) return textResult(error);
       }
 
-      const baseOpts = {
-        symbols: symbol ? [symbol] : undefined,
-        orderStates: order_states,
-        orderTypes: order_types,
-        limit: limit,
-        startDate: start_date,
-        endDate: end_date,
-        cursor: cursor,
-      };
+      let parsedStartDate = undefined;
+      if (start_date) {
+        const d = new Date(start_date);
+        if (isNaN(d.getTime())) {
+          return textResult(
+            "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
+          );
+        }
+        parsedStartDate = d.getTime();
+      }
+
+      let parsedEndDate = undefined;
+      if (end_date) {
+        const d = new Date(end_date);
+        if (isNaN(d.getTime())) {
+          return textResult(
+            "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
+          );
+        }
+        parsedEndDate = d.getTime();
+      }
 
       type Order = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getHistoricalOrders"]>
       >["data"][number];
 
-      let allOrders: Order[] = [];
-      let nextCursor: string | undefined = undefined;
+      const allOrders: Order[] = [];
 
       try {
-        const result = await getRevolutXClient().getHistoricalOrders(baseOpts);
+        const endTimeMs = parsedEndDate || Date.now();
+        let currentStart =
+          parsedStartDate || endTimeMs - 30 * 24 * 60 * 60 * 1000;
+        while (currentStart < endTimeMs) {
+          const currentEndObj = new Date(currentStart);
+          currentEndObj.setMonth(currentEndObj.getMonth() + 1);
+          let currentEndMs = currentEndObj.getTime();
+          if (currentEndMs > endTimeMs) currentEndMs = endTimeMs;
 
-        allOrders = result.data;
-        nextCursor = result.metadata?.next_cursor;
+          let currentCursor: string | undefined = undefined;
+          let hasMoreInMonth = true;
+
+          while (hasMoreInMonth) {
+            const result = await getRevolutXClient().getHistoricalOrders({
+              symbols: symbol ? [symbol] : undefined,
+              orderStates: order_states,
+              orderTypes: order_types,
+              startDate: currentStart,
+              endDate: currentEndMs,
+              cursor: currentCursor,
+              limit: HISTORICAL_ORDERS_API_LIMIT,
+            });
+
+            if (result.data && result.data.length > 0) {
+              if (limit !== undefined) {
+                const remaining = limit - allOrders.length;
+                allOrders.push(...result.data.slice(0, remaining));
+              } else {
+                allOrders.push(...result.data);
+              }
+            }
+
+            if (limit !== undefined && allOrders.length >= limit) break;
+
+            currentCursor = result.metadata?.next_cursor;
+            if (!currentCursor) hasMoreInMonth = false;
+          }
+
+          if (limit !== undefined && allOrders.length >= limit) break;
+          currentStart = currentEndMs;
+        }
       } catch (error) {
         const handled = await handleApiError(error, SETUP_GUIDE);
         if (handled) return handled;
         throw error;
       }
 
-      if (!allOrders || !allOrders.length) {
+      const displayOrders =
+        limit !== undefined ? allOrders.slice(0, limit) : allOrders;
+
+      if (!displayOrders.length) {
         return textResult("No historical orders found.");
       }
 
-      const lines = [`Historical orders (${allOrders.length} returned):\n`];
-      for (const o of allOrders) {
+      const lines = [`Historical orders (${displayOrders.length} returned):\n`];
+      for (const o of displayOrders) {
         const priceLine = o.price ? `  Price: ${o.price}\n` : "";
         const avgFillLine = o.average_fill_price
           ? `  Avg Fill Price: ${o.average_fill_price}\n`
@@ -268,12 +316,6 @@ export function registerTradingTools(server: McpServer): void {
         );
       }
 
-      if (nextCursor) {
-        lines.push(
-          `\nMore orders are available. To fetch the next page, use cursor: ${nextCursor}`,
-        );
-      }
-
       return textResult(lines.join("\n"));
     },
   );
@@ -284,30 +326,28 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Trade History",
       description:
         "Get your personal trade history (fills) for a specific trading pair. " +
-        "Makes a single query up to the requested limit. Pass the returned cursor to fetch the next page.",
+        "Always returns 1 complete batch for the given time range. Do not attempt to paginate.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         start_date: z
-          .number()
-          .optional()
-          .describe("Start of date range as epoch milliseconds."),
-        end_date: z
-          .number()
-          .optional()
-          .describe("End of date range as epoch milliseconds."),
-        cursor: z
           .string()
           .optional()
           .describe(
-            "Pagination cursor from a previous response. Used to resume fetching.",
+            "Start of date range in standard ISO format (e.g., '2023-01-01' or '2023-01-01T12:00:00Z').",
+          ),
+        end_date: z
+          .string()
+          .optional()
+          .describe(
+            "End of date range in standard ISO format (e.g., '2023-12-31' or '2023-12-31T23:59:59Z').",
           ),
         limit: z
           .number()
-          .min(1)
-          .max(TRADES_API_LIMIT)
-          .default(TRADES_API_LIMIT)
+          .int()
+          .positive()
+          .optional()
           .describe(
-            `Maximum number of trades to return. Default is 100. Max is ${TRADES_API_LIMIT}.`,
+            "Maximum total number of trades to return across all pages. Omit to fetch all trades in the date range.",
           ),
       },
       annotations: {
@@ -317,47 +357,100 @@ export function registerTradingTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ symbol, start_date, end_date, cursor, limit }) => {
+    async ({ symbol, start_date, end_date, limit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
+      let parsedStartDate = undefined;
+      if (start_date) {
+        const d = new Date(start_date);
+        if (isNaN(d.getTime())) {
+          return textResult(
+            "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
+          );
+        }
+        parsedStartDate = d.getTime();
+      }
+
+      let parsedEndDate = undefined;
+      if (end_date) {
+        const d = new Date(end_date);
+        if (isNaN(d.getTime())) {
+          return textResult(
+            "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
+          );
+        }
+        parsedEndDate = d.getTime();
+      }
+
       type Trade = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getPrivateTrades"]>
       >["data"][number];
 
-      let allTrades: Trade[] = [];
-      let nextCursor: string | undefined = undefined;
+      const allTrades: Trade[] = [];
 
       try {
-        const result = await getRevolutXClient().getPrivateTrades(symbol, {
-          startDate: start_date,
-          endDate: end_date,
-          cursor: cursor,
-          limit: limit,
-        });
+        const endTimeMs = parsedEndDate || Date.now();
+        let currentStart =
+          parsedStartDate || endTimeMs - 30 * 24 * 60 * 60 * 1000;
+        while (currentStart < endTimeMs) {
+          const currentEndObj = new Date(currentStart);
+          currentEndObj.setMonth(currentEndObj.getMonth() + 1);
+          let currentEndMs = currentEndObj.getTime();
+          if (currentEndMs > endTimeMs) currentEndMs = endTimeMs;
 
-        allTrades = result.data;
-        nextCursor = result.metadata?.next_cursor;
+          let currentCursor: string | undefined = undefined;
+          let hasMoreInMonth = true;
+
+          while (hasMoreInMonth) {
+            const result = await getRevolutXClient().getPrivateTrades(symbol, {
+              startDate: currentStart,
+              endDate: currentEndMs,
+              cursor: currentCursor,
+              limit: TRADES_API_LIMIT,
+            });
+
+            if (result.data && result.data.length > 0) {
+              if (limit !== undefined) {
+                const remaining = limit - allTrades.length;
+                allTrades.push(...result.data.slice(0, remaining));
+              } else {
+                allTrades.push(...result.data);
+              }
+            }
+
+            if (limit !== undefined && allTrades.length >= limit) break;
+
+            currentCursor = result.metadata?.next_cursor;
+            if (!currentCursor) hasMoreInMonth = false;
+          }
+
+          if (limit !== undefined && allTrades.length >= limit) break;
+          currentStart = currentEndMs;
+        }
       } catch (err) {
         const handled = await handleApiError(err, SETUP_GUIDE);
         if (handled) return handled;
         throw err;
       }
 
-      if (!allTrades || !allTrades.length)
+      const displayTrades =
+        limit !== undefined ? allTrades.slice(0, limit) : allTrades;
+
+      if (!displayTrades.length)
         return textResult(`No trade history found for ${symbol}.`);
 
       const lines = [
-        `Your trades for ${symbol} (${allTrades.length} returned):\n`,
+        `Your trades for ${symbol} (${displayTrades.length} returned):\n`,
       ];
       lines.push(
         `${"ID".padEnd(36)} | ${"Order ID".padEnd(36)} | ${"Symbol".padStart(10)} | ${"Side".padStart(4)} | ${"Price".padStart(14)} | ${"Quantity".padStart(14)} | ${"Maker".padStart(5)} | Time`,
       );
       lines.push("-".repeat(145));
-      for (const t of allTrades) {
+      for (const t of displayTrades) {
         lines.push(
           `${t.id.padEnd(36)} | ` +
             `${t.orderId.padEnd(36)} | ` +
@@ -367,12 +460,6 @@ export function registerTradingTools(server: McpServer): void {
             `${t.quantity.padStart(14)} | ` +
             `${String(t.maker).padStart(5)} | ` +
             `${new Date(t.timestamp).toISOString()}`,
-        );
-      }
-
-      if (nextCursor) {
-        lines.push(
-          `\nMore trades are available. To fetch the next page, use cursor: ${nextCursor}`,
         );
       }
 
