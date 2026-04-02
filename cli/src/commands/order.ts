@@ -4,7 +4,6 @@ import type { Order } from "api-k9x2a";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
 import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
-import { requireSessionAuth } from "../util/session.js";
 import {
   isJsonOutput,
   printJson,
@@ -217,7 +216,6 @@ Examples:
             process.exit(1);
           }
 
-          await requireSessionAuth();
           const result = await client.placeOrder(params);
 
           if (isJsonOutput(opts)) {
@@ -504,7 +502,6 @@ Examples:
           );
           process.exit(1);
         }
-        await requireSessionAuth();
         const client = getClient({ requireAuth: true });
 
         if (opts.all) {

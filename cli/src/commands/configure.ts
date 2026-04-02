@@ -1,6 +1,5 @@
 import { Command } from "commander";
 import { existsSync } from "node:fs";
-import { timingSafeEqual } from "node:crypto";
 import chalk from "chalk";
 import {
   getConfigDir,
@@ -19,12 +18,6 @@ import {
   printSuccess,
   printWarning,
 } from "../output/formatter.js";
-import {
-  hasPasskey,
-  setPasskey,
-  verifyPasskey,
-  removePasskey,
-} from "../util/passkey.js";
 import { promptHiddenInput } from "../util/session.js";
 
 const BANNER = [
@@ -51,10 +44,7 @@ Examples:
   $ revx configure get                      Show current configuration
   $ revx configure set --api-key <key>      Set API key
   $ revx configure generate-keypair         Generate Ed25519 keypair
-  $ revx configure path                     Print config directory path
-  $ revx configure passkey set              Set or change passkey
-  $ revx configure passkey remove           Remove passkey
-  $ revx configure passkey status           Show passkey status`,
+  $ revx configure path                     Print config directory path`,
     );
 
   configure.action(async () => {
@@ -149,9 +139,6 @@ Examples:
     }
 
     console.log("");
-    await setupPasskeyInteractive();
-
-    console.log("");
     console.log(chalk.dim("─".repeat(44)));
     if (isConfigured()) {
       printSuccess(
@@ -182,7 +169,6 @@ Examples:
         ],
         ["Private key", formatState(existsSync(getPrivateKeyFile()))],
         ["Public key", formatState(existsSync(getPublicKeyFile()))],
-        ["Passkey", formatState(hasPasskey())],
         ["Configured", isConfigured() ? chalk.green("yes") : chalk.red("no")],
       ];
       printKeyValue(entries);
@@ -243,141 +229,6 @@ Examples:
     .action(() => {
       console.log(chalk.cyan(getConfigDir()));
     });
-
-  const passkey = configure
-    .command("passkey")
-    .description("Manage the write-operation passkey");
-
-  passkey
-    .command("set")
-    .description("Set or change the passkey")
-    .action(async () => {
-      ensureConfigDir();
-      if (hasPasskey()) {
-        const current = await promptHiddenInput(
-          chalk.bold.cyan("❯ Current passkey: "),
-        );
-        if (!verifyPasskey(current)) {
-          console.error(chalk.red("✖ Error: Incorrect passkey."));
-          process.exit(1);
-        }
-      }
-      await setNewPasskey();
-      printSuccess("✓ Passkey updated.");
-    });
-
-  passkey
-    .command("remove")
-    .description(
-      "Remove passkey (write operations will proceed without passkey protection)",
-    )
-    .action(async () => {
-      if (!hasPasskey()) {
-        printWarning("No passkey configured.");
-        return;
-      }
-      const current = await promptHiddenInput(
-        chalk.bold.cyan("❯ Current passkey: "),
-      );
-      if (!verifyPasskey(current)) {
-        console.error(chalk.red("✖ Error: Incorrect passkey."));
-        process.exit(1);
-      }
-      removePasskey();
-      printSuccess("✓ Passkey removed.");
-    });
-
-  passkey
-    .command("status")
-    .description("Show passkey configuration status")
-    .action(() => {
-      printKeyValue([
-        [
-          "Passkey",
-          hasPasskey() ? chalk.green("configured") : chalk.dim("(not set)"),
-        ],
-      ]);
-    });
-}
-
-async function setupPasskeyInteractive(): Promise<void> {
-  printSection("Passkey");
-  console.log(chalk.white("Protects write operations (orders, bots)."));
-  console.log(chalk.dim("Input is hidden.\n"));
-
-  if (hasPasskey()) {
-    console.log(chalk.green("✓ Passkey already configured."));
-    console.log(chalk.dim("  (Press Enter to keep existing)\n"));
-
-    while (true) {
-      const input = await promptHiddenInput(
-        chalk.bold.cyan("❯ Enter new passkey ") +
-          chalk.dim("(leave blank to keep existing): "),
-      );
-      if (!input.trim()) {
-        console.log(chalk.dim("  Passkey unchanged."));
-        return;
-      }
-      const confirm = await promptHiddenInput(
-        chalk.bold.cyan("❯ Confirm new passkey: "),
-      );
-      if (!safeStringEqual(input, confirm)) {
-        printWarning("Passphrases do not match. Try again.\n");
-        continue;
-      }
-      setPasskey(input);
-      printSuccess("✓ Passkey updated.");
-      return;
-    }
-  }
-
-  console.log(chalk.yellow("! No Passkey configured.\n"));
-  while (true) {
-    const input = await promptHiddenInput(
-      chalk.bold.cyan("❯ Enter passkey ") +
-        chalk.dim("(optional, leave blank to skip): "),
-    );
-    if (!input.trim()) {
-      console.log(chalk.dim("  Passkey setup skipped."));
-      return;
-    }
-    const confirm = await promptHiddenInput(
-      chalk.bold.cyan("❯ Confirm passkey: "),
-    );
-    if (!safeStringEqual(input, confirm)) {
-      printWarning("Passphrases do not match. Try again.\n");
-      continue;
-    }
-    setPasskey(input);
-    printSuccess("✓ Passkey configured.");
-    return;
-  }
-}
-
-async function setNewPasskey(): Promise<void> {
-  while (true) {
-    const input = await promptHiddenInput(chalk.bold.cyan("❯ New passkey: "));
-    if (!input.trim()) {
-      printWarning("Passkey cannot be empty.\n");
-      continue;
-    }
-    const confirm = await promptHiddenInput(
-      chalk.bold.cyan("❯ Confirm passkey: "),
-    );
-    if (!safeStringEqual(input, confirm)) {
-      printWarning("Passphrases do not match. Try again.\n");
-      continue;
-    }
-    setPasskey(input);
-    return;
-  }
-}
-
-function safeStringEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) return false;
-  return timingSafeEqual(aBuf, bBuf);
 }
 
 function maskKey(key: string): string {

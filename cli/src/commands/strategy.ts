@@ -15,7 +15,6 @@ import {
   createGrid,
 } from "../shared/backtest/index.js";
 import { ForegroundGridBot, type GridBotConfig } from "../engine/grid-bot.js";
-import { requireSessionAuth } from "../util/session.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
@@ -522,7 +521,6 @@ async function handleRun(
     reset?: boolean;
   },
 ): Promise<void> {
-  await requireSessionAuth();
   pair = validatePair(pair);
 
   const levelsPerSide = parseInt(opts.levels, 10);

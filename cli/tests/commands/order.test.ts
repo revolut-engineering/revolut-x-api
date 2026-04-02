@@ -22,8 +22,9 @@ vi.mock("../../src/util/client.js", () => ({
   })),
 }));
 
-vi.mock("../../src/util/session.js", () => ({
-  requireSessionAuth: vi.fn().mockResolvedValue(undefined),
+vi.mock("../../src/util/parse.js", () => ({
+  parseTimestamp: vi.fn((val) => Number(val)),
+  parsePositiveInt: vi.fn((val) => Number(val)),
 }));
 
 vi.mock("api-k9x2a", () => {
@@ -312,6 +313,31 @@ describe("order open", () => {
     );
   });
 
+  it("passes advanced filter options to API", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "open",
+      "--order-states",
+      "new,partially_filled",
+      "--order-types",
+      "limit,conditional",
+      "--side",
+      "buy",
+      "--limit",
+      "10",
+    ]);
+    expect(mockGetActiveOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderStates: ["new", "partially_filled"],
+        orderTypes: ["limit", "conditional"],
+        side: "buy",
+        limit: 10,
+      }),
+    );
+  });
+
   it("passes --cursor to API", async () => {
     await program.parseAsync([
       "node",
@@ -344,11 +370,11 @@ describe("order open", () => {
   it("displays cursor if returned", async () => {
     mockGetActiveOrders.mockResolvedValue({
       data: [sampleOrder],
-      cursor: "cursor-123",
+      metadata: { next_cursor: "cursor-123" },
     });
     await program.parseAsync(["node", "revx", "order", "open"]);
     const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("Cursor: cursor-123");
+    expect(output).toContain("cursor-123");
   });
 });
 
@@ -379,6 +405,7 @@ describe("order history", () => {
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith({});
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC-USD");
+    expect(output).toContain("Period: Default / Recent"); // Verify default subtitle formatting
   });
 
   it("passes --symbols filter to API", async () => {
@@ -393,6 +420,47 @@ describe("order history", () => {
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({ symbols: ["BTC-USD"] }),
     );
+  });
+
+  it("passes advanced filter options and date ranges to API", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "history",
+      "--order-states",
+      "filled,cancelled",
+      "--order-types",
+      "market",
+      "--start-date",
+      "1700000000000",
+      "--end-date",
+      "1700000000000",
+      "--limit",
+      "50",
+    ]);
+    expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderStates: ["filled", "cancelled"],
+        orderTypes: ["market"],
+        startDate: 1700000000000,
+        endDate: 1700000000000,
+        limit: 50,
+      }),
+    );
+  });
+
+  it("displays period subtitle in header when date ranges are provided", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "history",
+      "--start-date",
+      "1700000000000",
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Period: Since");
   });
 
   it("passes --cursor to API", async () => {
@@ -426,11 +494,11 @@ describe("order history", () => {
   it("displays cursor if returned", async () => {
     mockGetHistoricalOrders.mockResolvedValue({
       data: [{ ...sampleOrder, status: "filled" }],
-      cursor: "cursor-123",
+      metadata: { next_cursor: "cursor-123" },
     });
     await program.parseAsync(["node", "revx", "order", "history"]);
     const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("Cursor: cursor-123");
+    expect(output).toContain("cursor-123");
   });
 });
 
