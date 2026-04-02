@@ -3,7 +3,7 @@
   "name": "RevolutX",
   "version": "1.0.1",
   "display_name": "RevolutX",
-  "description": "Trade smarter on Revolut X. Check balances, analyze markets, view orders, and run grid trading backtests. All through natural language in Claude.",
+  "description": "Check balances, view orders, analyze markets, and backtest trading strategies on RevolutX. All through natural language in Claude.",
   "author": {
     "name": "Revolut LTD."
   },
@@ -13,8 +13,6 @@
     "exchange",
     "trading",
     "revolut",
-    "alerts",
-    "telegram",
     "technical-analysis",
     "indicators"
   ],
