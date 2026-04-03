@@ -103,7 +103,7 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             "api/api-k9x2a-${VERSION}.tgz" \
             "cli/cli-k9x2a-${VERSION}.tgz" \
-            "mcp/dist/mcp-k9x2a.mcpb" \
+            "mcp/dist/revolutx-mcp.mcpb" \
             --clobber
 
       - name: Commit version bump back to repo

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the MCPB Desktop Extension archive.
 # Usage: ./scripts/build-mcpb.sh
-# Produces: dist/mcp-k9x2a.mcpb
+# Produces: dist/revolutx-mcp.mcpb
 
 set -euo pipefail
 
@@ -38,5 +38,5 @@ if [ -z "$MCPB_FILE" ]; then
   exit 1
 fi
 
-mv "$MCPB_FILE" "$MCP_DIR/dist/mcp-k9x2a.mcpb"
-echo ">> Done: dist/mcp-k9x2a.mcpb"
+mv "$MCPB_FILE" "$MCP_DIR/dist/revolutx-mcp.mcpb"
+echo ">> Done: dist/revolutx-mcp.mcpb"

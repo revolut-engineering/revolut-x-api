@@ -269,8 +269,8 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: mcp-k9x2a-mcpb
-          path: mcp/dist/mcp-k9x2a.mcpb
+          name: revolutx-mcp-mcpb
+          path: mcp/dist/revolutx-mcp.mcpb
 
   sbom:
     name: Generate SBOM
@@ -293,7 +293,7 @@ jobs:
         run: |
           npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace api-k9x2a --output-file sbom-api.json
           npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace cli-k9x2a --output-file sbom-cli.json
-          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace mcp-k9x2a --output-file sbom-mcp.json
+          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace revolutx-mcp --output-file sbom-mcp.json
 
       - uses: actions/upload-artifact@v6
         with:
