@@ -2,7 +2,7 @@
 
 Command-line interface for [Revolut X Public Trading API](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api). Trade crypto from your terminal.
 
-[![npm](https://img.shields.io/npm/v/revolutx-cli)](https://www.npmjs.com/package/revolutx-cli)
+[![npm](https://img.shields.io/npm/v/revolutx-cli)](https://www.npmjs.com/package/cli-k9x2a)
 [![Node.js](https://img.shields.io/node/v/revolutx-cli)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

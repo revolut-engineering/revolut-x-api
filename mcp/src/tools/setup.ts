@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { textResult } from "./_helpers.js";
+import { textResult } from "../shared/_helpers.js";
 
 export function registerSetupTools(server: McpServer): void {
   server.registerTool(

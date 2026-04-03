@@ -252,7 +252,6 @@ Examples:
     )
     .option("--side <side>", "Filter by side (buy|sell)")
     .option("--limit <n>", "Max results")
-    .option("--cursor <cursor>", "Pagination cursor")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -262,7 +261,6 @@ Examples:
         orderTypes?: string;
         side?: string;
         limit?: string;
-        cursor?: string;
         json?: boolean;
         output?: string;
       }) => {
@@ -285,7 +283,6 @@ Examples:
             queryOpts.side = opts.side.toLowerCase() as "buy" | "sell";
           if (opts.limit)
             queryOpts.limit = parsePositiveInt(opts.limit, "limit");
-          if (opts.cursor) queryOpts.cursor = opts.cursor;
 
           const result = await client.getActiveOrders(queryOpts);
 
@@ -297,14 +294,6 @@ Examples:
               console.log(chalk.gray("No open orders found.\n"));
             } else {
               printTable(result.data, OPEN_ORDER_COLUMNS);
-              const nextCursor = (
-                result as { metadata?: { next_cursor?: string } }
-              ).metadata?.next_cursor;
-              if (nextCursor) {
-                console.log(
-                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
-                );
-              }
             }
           }
         } catch (err) {
@@ -337,7 +326,6 @@ Examples:
       "End date (ISO, epoch ms, or relative: today, yesterday)",
     )
     .option("--limit <n>", "Max results")
-    .option("--cursor <cursor>", "Pagination cursor")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -348,57 +336,90 @@ Examples:
         startDate?: string;
         endDate?: string;
         limit?: string;
-        cursor?: string;
         json?: boolean;
         output?: string;
       }) => {
         try {
           const client = getClient({ requireAuth: true });
-          const queryOpts: Parameters<typeof client.getHistoricalOrders>[0] =
-            {};
+          const baseOpts: Parameters<typeof client.getHistoricalOrders>[0] = {};
           if (opts.symbols)
-            queryOpts.symbols = opts.symbols
+            baseOpts.symbols = opts.symbols
               .split(",")
               .map((s) => s.toUpperCase());
           if (opts.orderStates)
-            queryOpts.orderStates = opts.orderStates.split(",") as NonNullable<
+            baseOpts.orderStates = opts.orderStates.split(",") as NonNullable<
               Parameters<typeof client.getHistoricalOrders>[0]
             >["orderStates"];
           if (opts.orderTypes)
-            queryOpts.orderTypes = opts.orderTypes.split(",") as NonNullable<
+            baseOpts.orderTypes = opts.orderTypes.split(",") as NonNullable<
               Parameters<typeof client.getHistoricalOrders>[0]
             >["orderTypes"];
-          if (opts.startDate)
-            queryOpts.startDate = parseTimestamp(opts.startDate);
-          if (opts.endDate) queryOpts.endDate = parseTimestamp(opts.endDate);
-          if (opts.limit)
-            queryOpts.limit = parsePositiveInt(opts.limit, "limit");
-          if (opts.cursor) queryOpts.cursor = opts.cursor;
+          const userLimit = opts.limit
+            ? parsePositiveInt(opts.limit, "limit")
+            : undefined;
 
-          const result = await client.getHistoricalOrders(queryOpts);
+          const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+          const endTimeMs = opts.endDate
+            ? parseTimestamp(opts.endDate)
+            : Date.now();
+          let currentStart = opts.startDate
+            ? parseTimestamp(opts.startDate)
+            : endTimeMs - THIRTY_DAYS_MS;
+
+          type HistOrder = Awaited<
+            ReturnType<typeof client.getHistoricalOrders>
+          >["data"][number];
+          const allOrders: HistOrder[] = [];
+
+          while (currentStart < endTimeMs) {
+            const currentEndMs = Math.min(
+              currentStart + THIRTY_DAYS_MS,
+              endTimeMs,
+            );
+            let cursor: string | undefined = undefined;
+
+            while (true) {
+              const result = await client.getHistoricalOrders({
+                ...baseOpts,
+                startDate: currentStart,
+                endDate: currentEndMs,
+                cursor,
+              });
+
+              if (result.data.length > 0) {
+                if (userLimit !== undefined) {
+                  allOrders.push(
+                    ...result.data.slice(0, userLimit - allOrders.length),
+                  );
+                } else {
+                  allOrders.push(...result.data);
+                }
+              }
+
+              if (userLimit !== undefined && allOrders.length >= userLimit)
+                break;
+
+              cursor = result.metadata?.next_cursor;
+              if (!cursor) break;
+            }
+
+            if (userLimit !== undefined && allOrders.length >= userLimit) break;
+            currentStart = currentEndMs;
+          }
 
           if (isJsonOutput(opts)) {
-            printJson(result);
+            printJson({ data: allOrders });
           } else {
-            // --- MODIFIED: Pass the formatted period to the header ---
             const periodText = formatPeriod(
-              queryOpts.startDate,
-              queryOpts.endDate,
+              opts.startDate ? parseTimestamp(opts.startDate) : undefined,
+              opts.endDate ? parseTimestamp(opts.endDate) : undefined,
             );
             printSectionHeader("Order History", periodText);
 
-            if (result.data.length === 0) {
+            if (allOrders.length === 0) {
               console.log(chalk.gray("No order history found.\n"));
             } else {
-              printTable(result.data, HISTORY_ORDER_COLUMNS);
-              const nextCursor = (
-                result as { metadata?: { next_cursor?: string } }
-              ).metadata?.next_cursor;
-              if (nextCursor) {
-                console.log(
-                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
-                );
-              }
+              printTable(allOrders, HISTORY_ORDER_COLUMNS);
             }
           }
         } catch (err) {

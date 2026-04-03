@@ -74,17 +74,32 @@ describe("trade private", () => {
 
   it("fetches private trades for given symbol", async () => {
     await program.parseAsync(["node", "revx", "trade", "private", "BTC-USD"]);
-    expect(mockGetPrivateTrades).toHaveBeenCalledWith("BTC-USD", {});
+    expect(mockGetPrivateTrades).toHaveBeenCalledWith(
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: expect.any(Number),
+        endDate: expect.any(Number),
+      }),
+    );
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("trade-1");
   });
 
   it("normalizes symbol to uppercase", async () => {
     await program.parseAsync(["node", "revx", "trade", "private", "btc-usd"]);
-    expect(mockGetPrivateTrades).toHaveBeenCalledWith("BTC-USD", {});
+    expect(mockGetPrivateTrades).toHaveBeenCalledWith(
+      "BTC-USD",
+      expect.objectContaining({}),
+    );
   });
 
-  it("passes --limit to API", async () => {
+  it("respects --limit by capping total results", async () => {
+    const trade2 = { ...samplePrivateTrade, id: "trade-2" };
+    const trade3 = { ...samplePrivateTrade, id: "trade-3" };
+    mockGetPrivateTrades.mockResolvedValue({
+      data: [samplePrivateTrade, trade2, trade3],
+      metadata: {},
+    });
     await program.parseAsync([
       "node",
       "revx",
@@ -92,31 +107,15 @@ describe("trade private", () => {
       "private",
       "BTC-USD",
       "--limit",
-      "50",
+      "2",
     ]);
-    expect(mockGetPrivateTrades).toHaveBeenCalledWith(
-      "BTC-USD",
-      expect.objectContaining({ limit: 50 }),
-    );
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("trade-1");
+    expect(output).toContain("trade-2");
+    expect(output).not.toContain("trade-3");
   });
 
-  it("passes --cursor to API", async () => {
-    await program.parseAsync([
-      "node",
-      "revx",
-      "trade",
-      "private",
-      "BTC-USD",
-      "--cursor",
-      "next-page-id",
-    ]);
-    expect(mockGetPrivateTrades).toHaveBeenCalledWith(
-      "BTC-USD",
-      expect.objectContaining({ cursor: "next-page-id" }),
-    );
-  });
-
-  it("passes --start-date and --end-date to API", async () => {
+  it("passes --start-date to API as lower bound", async () => {
     await program.parseAsync([
       "node",
       "revx",
@@ -125,15 +124,10 @@ describe("trade private", () => {
       "BTC-USD",
       "--start-date",
       "7d",
-      "--end-date",
-      "today",
     ]);
     expect(mockGetPrivateTrades).toHaveBeenCalledWith(
       "BTC-USD",
-      expect.objectContaining({
-        startDate: 1600000000000,
-        endDate: 1600000000000,
-      }),
+      expect.objectContaining({ startDate: 1600000000000 }),
     );
   });
 
@@ -158,15 +152,27 @@ describe("trade private", () => {
     expect(parsed.data[0].id).toBe("trade-1");
   });
 
-  it("displays cursor if returned via metadata.next_cursor", async () => {
-    mockGetPrivateTrades.mockResolvedValue({
-      data: [samplePrivateTrade],
-      metadata: { next_cursor: "cursor-123" },
-    });
+  it("fetches all pages automatically within a date window", async () => {
+    const trade2 = { ...samplePrivateTrade, id: "trade-page2" };
+    mockGetPrivateTrades
+      .mockResolvedValueOnce({
+        data: [samplePrivateTrade],
+        metadata: { next_cursor: "cursor-xyz" },
+      })
+      .mockResolvedValueOnce({
+        data: [trade2],
+        metadata: {},
+      });
     await program.parseAsync(["node", "revx", "trade", "private", "BTC-USD"]);
+    expect(mockGetPrivateTrades).toHaveBeenCalledTimes(2);
+    expect(mockGetPrivateTrades).toHaveBeenNthCalledWith(
+      2,
+      "BTC-USD",
+      expect.objectContaining({ cursor: "cursor-xyz" }),
+    );
     const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("Next page cursor:");
-    expect(output).toContain("cursor-123");
+    expect(output).toContain("trade-1");
+    expect(output).toContain("trade-page2");
   });
 });
 
@@ -192,17 +198,32 @@ describe("trade public", () => {
 
   it("fetches public trades for given symbol", async () => {
     await program.parseAsync(["node", "revx", "trade", "public", "BTC-USD"]);
-    expect(mockGetAllTrades).toHaveBeenCalledWith("BTC-USD", {});
+    expect(mockGetAllTrades).toHaveBeenCalledWith(
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: expect.any(Number),
+        endDate: expect.any(Number),
+      }),
+    );
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("pub-trade-1");
   });
 
   it("normalizes symbol to uppercase", async () => {
     await program.parseAsync(["node", "revx", "trade", "public", "eth-usd"]);
-    expect(mockGetAllTrades).toHaveBeenCalledWith("ETH-USD", {});
+    expect(mockGetAllTrades).toHaveBeenCalledWith(
+      "ETH-USD",
+      expect.objectContaining({}),
+    );
   });
 
-  it("passes --limit to API", async () => {
+  it("respects --limit by capping total results", async () => {
+    const trade2 = { ...samplePublicTrade, id: "pub-trade-2" };
+    const trade3 = { ...samplePublicTrade, id: "pub-trade-3" };
+    mockGetAllTrades.mockResolvedValue({
+      data: [samplePublicTrade, trade2, trade3],
+      metadata: {},
+    });
     await program.parseAsync([
       "node",
       "revx",
@@ -210,31 +231,15 @@ describe("trade public", () => {
       "public",
       "BTC-USD",
       "--limit",
-      "100",
+      "2",
     ]);
-    expect(mockGetAllTrades).toHaveBeenCalledWith(
-      "BTC-USD",
-      expect.objectContaining({ limit: 100 }),
-    );
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("pub-trade-1");
+    expect(output).toContain("pub-trade-2");
+    expect(output).not.toContain("pub-trade-3");
   });
 
-  it("passes --cursor to API", async () => {
-    await program.parseAsync([
-      "node",
-      "revx",
-      "trade",
-      "public",
-      "BTC-USD",
-      "--cursor",
-      "next-page-id",
-    ]);
-    expect(mockGetAllTrades).toHaveBeenCalledWith(
-      "BTC-USD",
-      expect.objectContaining({ cursor: "next-page-id" }),
-    );
-  });
-
-  it("passes --start-date and --end-date to API", async () => {
+  it("passes --start-date to API as lower bound", async () => {
     await program.parseAsync([
       "node",
       "revx",
@@ -243,15 +248,10 @@ describe("trade public", () => {
       "BTC-USD",
       "--start-date",
       "7d",
-      "--end-date",
-      "today",
     ]);
     expect(mockGetAllTrades).toHaveBeenCalledWith(
       "BTC-USD",
-      expect.objectContaining({
-        startDate: 1600000000000,
-        endDate: 1600000000000,
-      }),
+      expect.objectContaining({ startDate: 1600000000000 }),
     );
   });
 
@@ -276,14 +276,26 @@ describe("trade public", () => {
     expect(parsed.data[0].id).toBe("pub-trade-1");
   });
 
-  it("displays cursor if returned via metadata.next_cursor", async () => {
-    mockGetAllTrades.mockResolvedValue({
-      data: [samplePublicTrade],
-      metadata: { next_cursor: "cursor-123" },
-    });
+  it("fetches all pages automatically within a date window", async () => {
+    const trade2 = { ...samplePublicTrade, id: "pub-trade-page2" };
+    mockGetAllTrades
+      .mockResolvedValueOnce({
+        data: [samplePublicTrade],
+        metadata: { next_cursor: "cursor-pub" },
+      })
+      .mockResolvedValueOnce({
+        data: [trade2],
+        metadata: {},
+      });
     await program.parseAsync(["node", "revx", "trade", "public", "BTC-USD"]);
+    expect(mockGetAllTrades).toHaveBeenCalledTimes(2);
+    expect(mockGetAllTrades).toHaveBeenNthCalledWith(
+      2,
+      "BTC-USD",
+      expect.objectContaining({ cursor: "cursor-pub" }),
+    );
     const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("Next page cursor:");
-    expect(output).toContain("cursor-123");
+    expect(output).toContain("pub-trade-1");
+    expect(output).toContain("pub-trade-page2");
   });
 });

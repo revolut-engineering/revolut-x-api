@@ -255,7 +255,7 @@ describe("market data tools", () => {
     expect(text).toContain("90000");
     expect(text).toContain("1 total");
     expect(text).toContain(
-      "NOTE TO LLM: This is the complete batch for your request.",
+      "NOTE TO LLM: The requested range contains more than 50,000 candles.",
     );
   });
 
@@ -382,5 +382,134 @@ describe("market data tools", () => {
     expect(mockClient.getAllTrades).toHaveBeenCalledTimes(2);
     expect(text).toContain("trade-123");
     expect(text).toContain("trade-456");
+  });
+
+  it("get_public_trades splits requests into 30-day batches for ranges over 30 days", async () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const startMs = new Date("2023-01-01T00:00:00Z").getTime();
+    const endMs = new Date("2023-03-03T00:00:00Z").getTime(); // 61 days → 3 batches
+
+    const batch1End = startMs + THIRTY_DAYS_MS;
+    const batch2End = batch1End + THIRTY_DAYS_MS;
+
+    const trade = {
+      id: "trade-batch",
+      symbol: "BTC-USD",
+      price: "95000",
+      quantity: "0.5",
+      timestamp: startMs,
+    };
+
+    mockClient.getAllTrades.mockResolvedValue({
+      data: [trade],
+      metadata: {},
+    });
+
+    const client = await createClient();
+    await client.callTool({
+      name: "get_public_trades",
+      arguments: {
+        symbol: "BTC-USD",
+        start_date: "2023-01-01T00:00:00Z",
+        end_date: "2023-03-03T00:00:00Z",
+      },
+    });
+
+    expect(mockClient.getAllTrades).toHaveBeenCalledTimes(3);
+    expect(mockClient.getAllTrades).toHaveBeenNthCalledWith(
+      1,
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: startMs,
+        endDate: batch1End,
+        cursor: undefined,
+      }),
+    );
+    expect(mockClient.getAllTrades).toHaveBeenNthCalledWith(
+      2,
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: batch1End,
+        endDate: batch2End,
+        cursor: undefined,
+      }),
+    );
+    expect(mockClient.getAllTrades).toHaveBeenNthCalledWith(
+      3,
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: batch2End,
+        endDate: endMs,
+        cursor: undefined,
+      }),
+    );
+  });
+
+  it("get_public_trades exhausts cursor within each 30-day batch before advancing", async () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const startMs = new Date("2023-01-01T00:00:00Z").getTime();
+    const endMs = new Date("2023-03-02T00:00:00Z").getTime(); // 60 days → 2 batches
+    const batch1End = startMs + THIRTY_DAYS_MS;
+
+    const trade = {
+      id: "t",
+      symbol: "BTC-USD",
+      price: "95000",
+      quantity: "0.5",
+      timestamp: startMs,
+    };
+
+    mockClient.getAllTrades
+      .mockResolvedValueOnce({
+        data: [trade],
+        metadata: { next_cursor: "cursor-batch1" },
+      })
+      .mockResolvedValueOnce({
+        data: [trade],
+        metadata: {},
+      })
+      .mockResolvedValueOnce({
+        data: [trade],
+        metadata: {},
+      });
+
+    const client = await createClient();
+    await client.callTool({
+      name: "get_public_trades",
+      arguments: {
+        symbol: "BTC-USD",
+        start_date: "2023-01-01T00:00:00Z",
+        end_date: "2023-03-02T00:00:00Z",
+      },
+    });
+
+    expect(mockClient.getAllTrades).toHaveBeenCalledTimes(3);
+    expect(mockClient.getAllTrades).toHaveBeenNthCalledWith(
+      1,
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: startMs,
+        endDate: batch1End,
+        cursor: undefined,
+      }),
+    );
+    expect(mockClient.getAllTrades).toHaveBeenNthCalledWith(
+      2,
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: startMs,
+        endDate: batch1End,
+        cursor: "cursor-batch1",
+      }),
+    );
+    expect(mockClient.getAllTrades).toHaveBeenNthCalledWith(
+      3,
+      "BTC-USD",
+      expect.objectContaining({
+        startDate: batch1End,
+        endDate: endMs,
+        cursor: undefined,
+      }),
+    );
   });
 });

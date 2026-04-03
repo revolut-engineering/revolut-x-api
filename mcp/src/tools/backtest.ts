@@ -5,9 +5,9 @@ import type { Candle } from "api-k9x2a";
 import {
   textResult,
   validateSymbol,
+  validateResolution,
   handleApiError,
-  VALID_RESOLUTIONS,
-} from "./_helpers.js";
+} from "../shared/_helpers.js";
 import {
   createGrid,
   runBacktest,
@@ -15,6 +15,7 @@ import {
   type BacktestResult,
   type OptimizationResult,
 } from "../shared/backtest/index.js";
+import { RESOLUTIONS_MAP } from "../shared/common.js";
 
 function parseDecimal(
   value: string,
@@ -61,6 +62,58 @@ function parseCandles(candles: Candle[]): ParsedCandle[] {
   }
   parsed.sort((a, b) => a.ts - b.ts);
   return parsed.map((p) => p.candle);
+}
+
+async function fetchBacktestCandles(
+  symbol: string,
+  resolution: string,
+  days: number,
+  fetchCandles: (opts: {
+    interval: string;
+    startDate: number;
+  }) => Promise<{ data: Candle[] }>,
+  setupGuide: string,
+): Promise<
+  | { error: ReturnType<typeof textResult> }
+  | { candles: ParsedCandle[]; actualDays: number; llmNotice: string }
+> {
+  const now = Date.now();
+  let startDate = now - days * 24 * 60 * 60 * 1000;
+
+  const intervalMs = RESOLUTIONS_MAP[resolution] || 60 * 60 * 1000;
+  const expectedCandles = Math.ceil((now - startDate) / intervalMs);
+
+  let actualDays = days;
+  let llmNotice =
+    "\n\n*** NOTE TO LLM: This is the complete batch for your request. There is no more data available. ***";
+
+  if (expectedCandles > 50000) {
+    startDate = now - 50000 * intervalMs;
+    actualDays = Number(((now - startDate) / (24 * 60 * 60 * 1000)).toFixed(2));
+    llmNotice =
+      "\n\n*** NOTE TO LLM: The requested range contains more than 50,000 candles. Returning the last 50,000 candles from the current timestamp. This is all the data available. ***";
+  }
+
+  let candleResult;
+  try {
+    candleResult = await fetchCandles({ interval: resolution, startDate });
+  } catch (error) {
+    const handled = await handleApiError(error, setupGuide);
+    if (handled) return { error: handled };
+    throw error;
+  }
+
+  const candles = parseCandles(candleResult.data);
+
+  if (!candles.length) {
+    return {
+      error: textResult(
+        `No candle data found for ${symbol} (${resolution}). Try get more recent data`,
+      ),
+    };
+  }
+
+  return { candles, actualDays, llmNotice };
 }
 
 function formatBacktestResult(
@@ -232,7 +285,7 @@ export function registerBacktestTools(server: McpServer): void {
         "Run a grid trading backtest on historical candle data from Revolut X. " +
         "Simulates a grid strategy: places buy orders at geometrically spaced price levels " +
         "below the starting price, sells at the next level above. " +
-        "Returns total trades, realized P&L, net return, max drawdown, and annualized return.",
+        "If the requested date range contains more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD".'),
         grid_levels: z
@@ -290,12 +343,8 @@ export function registerBacktestTools(server: McpServer): void {
       }
       const totalLevels = grid_levels * 2;
 
-      if (!VALID_RESOLUTIONS.has(resolution)) {
-        return textResult(
-          `Invalid resolution '${resolution}'. ` +
-            `Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
-        );
-      }
+      const resError = validateResolution(resolution);
+      if (resError) return resError;
 
       const [rawRange, rangeErr] = parseDecimal(range_pct, "range_pct");
       if (rangeErr) return textResult(rangeErr);
@@ -308,27 +357,15 @@ export function registerBacktestTools(server: McpServer): void {
         return textResult(`days must be between 1 and 365, got ${days}.`);
       }
 
-      const startDate = Date.now() - days * 24 * 60 * 60 * 1000;
-
-      let candleResult;
-      try {
-        candleResult = await getRevolutXClient().getCandles(symbol, {
-          interval: resolution,
-          startDate,
-        });
-      } catch (error) {
-        const handled = await handleApiError(error, SETUP_GUIDE);
-        if (handled) return handled;
-        throw error;
-      }
-
-      const candles = parseCandles(candleResult.data);
-
-      if (!candles.length) {
-        return textResult(
-          `No candle data found for ${symbol} (${resolution}).`,
-        );
-      }
+      const fetchResult = await fetchBacktestCandles(
+        symbol,
+        resolution,
+        days,
+        (opts) => getRevolutXClient().getCandles(symbol, opts),
+        SETUP_GUIDE,
+      );
+      if ("error" in fetchResult) return fetchResult.error;
+      const { candles, actualDays, llmNotice } = fetchResult;
 
       const result = runBacktest(candles, totalLevels, rangeDec, investDec!);
 
@@ -341,8 +378,8 @@ export function registerBacktestTools(server: McpServer): void {
           totalLevels,
           rangeDec,
           investDec!,
-          days,
-        ),
+          actualDays,
+        ) + llmNotice,
       );
     },
   );
@@ -354,7 +391,8 @@ export function registerBacktestTools(server: McpServer): void {
       description:
         "Test multiple grid parameter combinations and return ranked results. " +
         "Runs grid backtest for every combination of grid levels and range percentages, " +
-        "then ranks by total return. Also shows best by Calmar ratio, most trades, and lowest drawdown.",
+        "then ranks by total return. If the requested date range contains more than 50,000 candles, " +
+        "it defaults to testing against the last 50,000 candles from the current timestamp.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD".'),
         investment: z
@@ -403,15 +441,11 @@ export function registerBacktestTools(server: McpServer): void {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       symbol = symbol.trim().toUpperCase();
-      const error = validateSymbol(symbol);
-      if (error) return textResult(error);
+      const symError = validateSymbol(symbol);
+      if (symError) return textResult(symError);
 
-      if (!VALID_RESOLUTIONS.has(resolution)) {
-        return textResult(
-          `Invalid resolution '${resolution}'. ` +
-            `Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
-        );
-      }
+      const resError = validateResolution(resolution);
+      if (resError) return resError;
 
       const [investDec, err1] = parseDecimal(investment, "investment");
       if (err1) return textResult(err1);
@@ -465,34 +499,22 @@ export function registerBacktestTools(server: McpServer): void {
 
       top_n = Math.max(1, Math.min(top_n, 50));
 
-      const startDate = Date.now() - days * 24 * 60 * 60 * 1000;
-
-      let candleResult;
-      try {
-        candleResult = await getRevolutXClient().getCandles(symbol, {
-          interval: resolution,
-          startDate,
-        });
-      } catch (error) {
-        const handled = await handleApiError(error, SETUP_GUIDE);
-        if (handled) return handled;
-        throw error;
-      }
-
-      const candles = parseCandles(candleResult.data);
-
-      if (!candles.length) {
-        return textResult(
-          `No candle data found for ${symbol} (${resolution}).`,
-        );
-      }
+      const fetchResult = await fetchBacktestCandles(
+        symbol,
+        resolution,
+        days,
+        (opts) => getRevolutXClient().getCandles(symbol, opts),
+        SETUP_GUIDE,
+      );
+      if ("error" in fetchResult) return fetchResult.error;
+      const { candles, actualDays, llmNotice } = fetchResult;
 
       const results = optimizeGridParams(
         candles,
         levelsList,
         rangesList,
         investDec!,
-        days,
+        actualDays,
       );
 
       return textResult(
@@ -503,8 +525,8 @@ export function registerBacktestTools(server: McpServer): void {
           resolution,
           totalCombos,
           top_n,
-          days,
-        ),
+          actualDays,
+        ) + llmNotice,
       );
     },
   );

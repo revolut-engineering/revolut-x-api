@@ -5,12 +5,14 @@ import {
   formatDescription,
   handleApiError,
   LARGE_DATASET_HINT,
+  parseDateRange,
   REQUIRE_COMPLETE_DATA_HINT,
   textResult,
-  VALID_RESOLUTIONS,
+  validateResolution,
   validateSymbol,
-} from "./_helpers.js";
+} from "../shared/_helpers.js";
 import { TRADES_API_LIMIT } from "../constants.js";
+import { RESOLUTIONS_MAP } from "../shared/common.js";
 
 export function registerMarketDataTools(server: McpServer): void {
   server.registerTool(
@@ -245,9 +247,8 @@ export function registerMarketDataTools(server: McpServer): void {
       title: "Get Candlestick Data",
       description:
         "Get OHLCV candlestick data for a trading pair. " +
-        "Always returns 1 batch query. If the requested date range contains " +
-        "more than 50,000 candles, the results are truncated to the first 50,000. " +
-        "There is no more data to fetch.",
+        "Always returns 1 batch query. If the requested date range is too old or contains " +
+        "more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         resolution: z
@@ -280,36 +281,37 @@ export function registerMarketDataTools(server: McpServer): void {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       symbol = symbol.trim().toUpperCase();
-      const error = validateSymbol(symbol);
-      if (error) return textResult(error);
+      const symError = validateSymbol(symbol);
+      if (symError) return textResult(symError);
 
-      if (!VALID_RESOLUTIONS.has(resolution)) {
-        return textResult(
-          `Invalid resolution '${resolution}'. ` +
-            `Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
-        );
-      }
+      const resError = validateResolution(resolution);
+      if (resError) return resError;
 
-      let parsedStartDate = undefined;
-      if (start_date) {
-        const d = new Date(start_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedStartDate = d.getTime();
-      }
+      const dates = parseDateRange(start_date, end_date);
+      if ("error" in dates) return dates.error;
 
-      let parsedEndDate = undefined;
-      if (end_date) {
-        const d = new Date(end_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedEndDate = d.getTime();
+      const intervalMs = RESOLUTIONS_MAP[resolution] || 60 * 60 * 1000;
+      const now = Date.now();
+      const maxHistoryMs = 50000 * intervalMs;
+      const oldestAvailableDate = now - maxHistoryMs;
+
+      let fetchStart = dates.parsedStartDate;
+      let fetchEnd = dates.parsedEndDate || now;
+      let llmNotice =
+        "*** NOTE TO LLM: This is the complete batch for your request. There is no more data available. ***";
+
+      if (dates.parsedEndDate && dates.parsedEndDate < oldestAvailableDate) {
+        fetchStart = oldestAvailableDate;
+        fetchEnd = now;
+        llmNotice = `*** NOTE TO LLM: The requested data range (${start_date || "N/A"} to ${end_date || "N/A"}) does not exist. Here is the data for the last 50,000 candles from the current timestamp instead. ***`;
+      } else if (
+        !fetchStart ||
+        Math.ceil((fetchEnd - fetchStart) / intervalMs) > 50000
+      ) {
+        fetchStart = oldestAvailableDate;
+        fetchEnd = now;
+        llmNotice =
+          "*** NOTE TO LLM: The requested range contains more than 50,000 candles. Returning the last 50,000 candles from the current timestamp. This is all the data available. ***";
       }
 
       type Candle = Awaited<
@@ -320,8 +322,8 @@ export function registerMarketDataTools(server: McpServer): void {
       try {
         const result = await getRevolutXClient().getCandles(symbol, {
           interval: resolution,
-          startDate: parsedStartDate,
-          endDate: parsedEndDate,
+          startDate: fetchStart,
+          endDate: fetchEnd,
         });
         candles = result.data;
       } catch (err) {
@@ -334,12 +336,6 @@ export function registerMarketDataTools(server: McpServer): void {
         return textResult(
           `No candle data found for ${symbol} (${resolution}).`,
         );
-      }
-
-      let isTruncated = false;
-      if (candles.length > 50000) {
-        candles = candles.slice(0, 50000);
-        isTruncated = true;
       }
 
       const lines = [
@@ -364,17 +360,7 @@ export function registerMarketDataTools(server: McpServer): void {
       }
 
       lines.push("");
-
-      if (isTruncated) {
-        lines.push(
-          "*** NOTE TO LLM: The requested date range contained more than 50,000 candles. " +
-            "The results have been truncated to the first 50,000. There is no more data available. ***",
-        );
-      } else {
-        lines.push(
-          "*** NOTE TO LLM: This is the complete batch for your request. There is no more data available. ***",
-        );
-      }
+      lines.push(llmNotice);
 
       return textResult(lines.join("\n"));
     },
@@ -423,27 +409,9 @@ export function registerMarketDataTools(server: McpServer): void {
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      let parsedStartDate = undefined;
-      if (start_date) {
-        const d = new Date(start_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedStartDate = d.getTime();
-      }
-
-      let parsedEndDate = undefined;
-      if (end_date) {
-        const d = new Date(end_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedEndDate = d.getTime();
-      }
+      const dates = parseDateRange(start_date, end_date);
+      if ("error" in dates) return dates.error;
+      const { parsedStartDate, parsedEndDate } = dates;
 
       type PublicTrade = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getAllTrades"]>
@@ -452,22 +420,18 @@ export function registerMarketDataTools(server: McpServer): void {
       const trades: PublicTrade[] = [];
 
       try {
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
         const endTimeMs = parsedEndDate || Date.now();
-        let currentStart =
-          parsedStartDate || endTimeMs - 30 * 24 * 60 * 60 * 1000;
+        let currentStart = parsedStartDate || endTimeMs - THIRTY_DAYS_MS;
         while (currentStart < endTimeMs) {
-          const currentEndObj = new Date(currentStart);
-          currentEndObj.setMonth(currentEndObj.getMonth() + 1);
-          let currentEndMs = currentEndObj.getTime();
-
-          if (currentEndMs > endTimeMs) {
-            currentEndMs = endTimeMs;
-          }
+          const currentEndMs = Math.min(
+            currentStart + THIRTY_DAYS_MS,
+            endTimeMs,
+          );
 
           let currentCursor: string | undefined = undefined;
-          let hasMoreInMonth = true;
 
-          while (hasMoreInMonth) {
+          while (true) {
             const result = await getRevolutXClient().getAllTrades(symbol, {
               startDate: currentStart,
               endDate: currentEndMs,
@@ -487,9 +451,7 @@ export function registerMarketDataTools(server: McpServer): void {
             if (limit !== undefined && trades.length >= limit) break;
 
             currentCursor = result.metadata?.next_cursor;
-            if (!currentCursor) {
-              hasMoreInMonth = false;
-            }
+            if (!currentCursor) break;
           }
 
           if (limit !== undefined && trades.length >= limit) break;

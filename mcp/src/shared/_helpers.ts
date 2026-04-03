@@ -1,3 +1,5 @@
+import { VALID_RESOLUTIONS } from "./common.js";
+
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
 export function textResult(text: string) {
@@ -14,21 +16,6 @@ export function validateSymbol(symbol: string): string | null {
   }
   return null;
 }
-
-export const VALID_RESOLUTIONS = new Set([
-  "1m",
-  "5m",
-  "15m",
-  "30m",
-  "1h",
-  "4h",
-  "1d",
-  "2d",
-  "4d",
-  "1w",
-  "2w",
-  "4w",
-]);
 
 export async function handleApiError(
   error: unknown,
@@ -52,6 +39,53 @@ export const REQUIRE_COMPLETE_DATA_HINT =
   "Always return complete objects with all available fields. Never truncate, summarize, or omit data.";
 export const LARGE_DATASET_HINT =
   "If the dataset exceeds 100 items, display only the first 100. Clearly state the total item count (e.g., 'Showing 100 of X items') and ask the user if they would like to view the next batch, see all results, or refine their query.";
+
+export function validateResolution(
+  resolution: string,
+): ReturnType<typeof textResult> | null {
+  if (!VALID_RESOLUTIONS.has(resolution)) {
+    return textResult(
+      `Invalid resolution '${resolution}'. ` +
+        `Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
+    );
+  }
+  return null;
+}
+
+export function parseDateRange(
+  start_date: string | undefined,
+  end_date: string | undefined,
+):
+  | { error: ReturnType<typeof textResult> }
+  | { parsedStartDate: number | undefined; parsedEndDate: number | undefined } {
+  let parsedStartDate: number | undefined = undefined;
+  if (start_date) {
+    const ds = new Date(start_date);
+    if (isNaN(ds.getTime())) {
+      return {
+        error: textResult(
+          "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
+        ),
+      };
+    }
+    parsedStartDate = ds.getTime();
+  }
+
+  let parsedEndDate: number | undefined = undefined;
+  if (end_date) {
+    const de = new Date(end_date);
+    if (isNaN(de.getTime())) {
+      return {
+        error: textResult(
+          "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
+        ),
+      };
+    }
+    parsedEndDate = de.getTime();
+  }
+
+  return { parsedStartDate, parsedEndDate };
+}
 
 export function formatDescription(
   baseDescription: string,

@@ -74,7 +74,6 @@ Examples:
       "End date (ISO, epoch ms, or relative: today, yesterday)",
     )
     .option("--limit <n>", "Max results")
-    .option("--cursor <cursor>", "Pagination cursor")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -84,7 +83,6 @@ Examples:
           startDate?: string;
           endDate?: string;
           limit?: string;
-          cursor?: string;
           json?: boolean;
           output?: string;
         },
@@ -92,35 +90,68 @@ Examples:
         try {
           const client = getClient({ requireAuth: true });
           const cleanSymbol = symbol.trim().toUpperCase();
-          const queryOpts: {
-            startDate?: number;
-            endDate?: number;
-            limit?: number;
-            cursor?: string;
-          } = {};
+          const userLimit = opts.limit
+            ? parsePositiveInt(opts.limit, "limit")
+            : undefined;
 
-          if (opts.startDate)
-            queryOpts.startDate = parseTimestamp(opts.startDate);
-          if (opts.endDate) queryOpts.endDate = parseTimestamp(opts.endDate);
-          if (opts.limit)
-            queryOpts.limit = parsePositiveInt(opts.limit, "limit");
-          if (opts.cursor) queryOpts.cursor = opts.cursor;
+          const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+          const endTimeMs = opts.endDate
+            ? parseTimestamp(opts.endDate)
+            : Date.now();
+          let currentStart = opts.startDate
+            ? parseTimestamp(opts.startDate)
+            : endTimeMs - THIRTY_DAYS_MS;
 
-          const result = await client.getPrivateTrades(cleanSymbol, queryOpts);
+          const allTrades: Trade[] = [];
+
+          while (currentStart < endTimeMs) {
+            const currentEndMs = Math.min(
+              currentStart + THIRTY_DAYS_MS,
+              endTimeMs,
+            );
+            let cursor: string | undefined = undefined;
+
+            while (true) {
+              const result = await client.getPrivateTrades(cleanSymbol, {
+                startDate: currentStart,
+                endDate: currentEndMs,
+                cursor,
+              });
+
+              if (result.data.length > 0) {
+                if (userLimit !== undefined) {
+                  allTrades.push(
+                    ...result.data.slice(0, userLimit - allTrades.length),
+                  );
+                } else {
+                  allTrades.push(...result.data);
+                }
+              }
+
+              if (userLimit !== undefined && allTrades.length >= userLimit)
+                break;
+
+              cursor = result.metadata?.next_cursor;
+              if (!cursor) break;
+            }
+
+            if (userLimit !== undefined && allTrades.length >= userLimit) break;
+            currentStart = currentEndMs;
+          }
 
           if (isJsonOutput(opts)) {
-            printJson(result);
+            printJson({ data: allTrades });
           } else {
             const periodText = formatPeriod(
-              queryOpts.startDate,
-              queryOpts.endDate,
+              opts.startDate ? parseTimestamp(opts.startDate) : undefined,
+              opts.endDate ? parseTimestamp(opts.endDate) : undefined,
             );
             printSectionHeader(`Private Trades: ${cleanSymbol}`, periodText);
 
-            if (result.data.length === 0) {
+            if (allTrades.length === 0) {
               console.log(chalk.gray("No private trades found.\n"));
             } else {
-              printTable(result.data, [
+              printTable(allTrades, [
                 { header: "Trade ID", key: "id" },
                 { header: "Symbol", key: "symbol" },
                 {
@@ -138,15 +169,6 @@ Examples:
                   accessor: (t) => new Date(t.timestamp).toISOString(),
                 },
               ]);
-
-              const nextCursor = (
-                result as { metadata?: { next_cursor?: string } }
-              ).metadata?.next_cursor;
-              if (nextCursor) {
-                console.log(
-                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
-                );
-              }
             }
           }
         } catch (err) {
@@ -168,7 +190,6 @@ Examples:
       "End date (ISO, epoch ms, or relative: today, yesterday)",
     )
     .option("--limit <n>", "Max results")
-    .option("--cursor <cursor>", "Pagination cursor")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -178,7 +199,6 @@ Examples:
           startDate?: string;
           endDate?: string;
           limit?: string;
-          cursor?: string;
           json?: boolean;
           output?: string;
         },
@@ -186,32 +206,65 @@ Examples:
         try {
           const client = getClient({ requireAuth: true });
           const cleanSymbol = symbol.trim().toUpperCase();
-          const queryOpts: {
-            startDate?: number;
-            endDate?: number;
-            limit?: number;
-            cursor?: string;
-          } = {};
+          const userLimit = opts.limit
+            ? parsePositiveInt(opts.limit, "limit")
+            : undefined;
 
-          if (opts.startDate)
-            queryOpts.startDate = parseTimestamp(opts.startDate);
-          if (opts.endDate) queryOpts.endDate = parseTimestamp(opts.endDate);
-          if (opts.limit)
-            queryOpts.limit = parsePositiveInt(opts.limit, "limit");
-          if (opts.cursor) queryOpts.cursor = opts.cursor;
+          const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+          const endTimeMs = opts.endDate
+            ? parseTimestamp(opts.endDate)
+            : Date.now();
+          let currentStart = opts.startDate
+            ? parseTimestamp(opts.startDate)
+            : endTimeMs - THIRTY_DAYS_MS;
 
-          const result = await client.getAllTrades(cleanSymbol, queryOpts);
+          const allTrades: PublicTrade[] = [];
+
+          while (currentStart < endTimeMs) {
+            const currentEndMs = Math.min(
+              currentStart + THIRTY_DAYS_MS,
+              endTimeMs,
+            );
+            let cursor: string | undefined = undefined;
+
+            while (true) {
+              const result = await client.getAllTrades(cleanSymbol, {
+                startDate: currentStart,
+                endDate: currentEndMs,
+                cursor,
+              });
+
+              if (result.data.length > 0) {
+                if (userLimit !== undefined) {
+                  allTrades.push(
+                    ...result.data.slice(0, userLimit - allTrades.length),
+                  );
+                } else {
+                  allTrades.push(...result.data);
+                }
+              }
+
+              if (userLimit !== undefined && allTrades.length >= userLimit)
+                break;
+
+              cursor = result.metadata?.next_cursor;
+              if (!cursor) break;
+            }
+
+            if (userLimit !== undefined && allTrades.length >= userLimit) break;
+            currentStart = currentEndMs;
+          }
 
           if (isJsonOutput(opts)) {
-            printJson(result);
+            printJson({ data: allTrades });
           } else {
             const periodText = formatPeriod(
-              queryOpts.startDate,
-              queryOpts.endDate,
+              opts.startDate ? parseTimestamp(opts.startDate) : undefined,
+              opts.endDate ? parseTimestamp(opts.endDate) : undefined,
             );
             printSectionHeader(`Public Trades: ${cleanSymbol}`, periodText);
 
-            if (result.data.length === 0) {
+            if (allTrades.length === 0) {
               console.log(chalk.gray("No public trades found.\n"));
             } else {
               const columns: ColumnDef<PublicTrade>[] = [
@@ -224,16 +277,7 @@ Examples:
                   accessor: (t) => new Date(t.timestamp).toISOString(),
                 },
               ];
-              printTable(result.data, columns);
-
-              const nextCursor = (
-                result as { metadata?: { next_cursor?: string } }
-              ).metadata?.next_cursor;
-              if (nextCursor) {
-                console.log(
-                  `\n  ${chalk.cyan("→ Next page cursor:")} ${chalk.white(nextCursor)}`,
-                );
-              }
+              printTable(allTrades, columns);
             }
           }
         } catch (err) {

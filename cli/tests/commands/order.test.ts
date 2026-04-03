@@ -338,20 +338,6 @@ describe("order open", () => {
     );
   });
 
-  it("passes --cursor to API", async () => {
-    await program.parseAsync([
-      "node",
-      "revx",
-      "order",
-      "open",
-      "--cursor",
-      "next-page-id",
-    ]);
-    expect(mockGetActiveOrders).toHaveBeenCalledWith(
-      expect.objectContaining({ cursor: "next-page-id" }),
-    );
-  });
-
   it("shows empty message when no open orders", async () => {
     mockGetActiveOrders.mockResolvedValue({ data: [] });
     await program.parseAsync(["node", "revx", "order", "open"]);
@@ -365,16 +351,6 @@ describe("order open", () => {
     const parsed = JSON.parse(output);
     expect(parsed.data).toHaveLength(1);
     expect(parsed.data[0].symbol).toBe("BTC-USD");
-  });
-
-  it("displays cursor if returned", async () => {
-    mockGetActiveOrders.mockResolvedValue({
-      data: [sampleOrder],
-      metadata: { next_cursor: "cursor-123" },
-    });
-    await program.parseAsync(["node", "revx", "order", "open"]);
-    const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("cursor-123");
   });
 });
 
@@ -402,10 +378,15 @@ describe("order history", () => {
 
   it("lists historical orders", async () => {
     await program.parseAsync(["node", "revx", "order", "history"]);
-    expect(mockGetHistoricalOrders).toHaveBeenCalledWith({});
+    expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startDate: expect.any(Number),
+        endDate: expect.any(Number),
+      }),
+    );
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC-USD");
-    expect(output).toContain("Period: Default / Recent"); // Verify default subtitle formatting
+    expect(output).toContain("Period: Default / Recent");
   });
 
   it("passes --symbols filter to API", async () => {
@@ -435,17 +416,13 @@ describe("order history", () => {
       "--start-date",
       "1700000000000",
       "--end-date",
-      "1700000000000",
-      "--limit",
-      "50",
+      "1701000000000",
     ]);
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({
         orderStates: ["filled", "cancelled"],
         orderTypes: ["market"],
         startDate: 1700000000000,
-        endDate: 1700000000000,
-        limit: 50,
       }),
     );
   });
@@ -463,20 +440,6 @@ describe("order history", () => {
     expect(output).toContain("Period: Since");
   });
 
-  it("passes --cursor to API", async () => {
-    await program.parseAsync([
-      "node",
-      "revx",
-      "order",
-      "history",
-      "--cursor",
-      "next-page-id",
-    ]);
-    expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
-      expect.objectContaining({ cursor: "next-page-id" }),
-    );
-  });
-
   it("shows empty message when no history found", async () => {
     mockGetHistoricalOrders.mockResolvedValue({ data: [] });
     await program.parseAsync(["node", "revx", "order", "history"]);
@@ -491,14 +454,84 @@ describe("order history", () => {
     expect(parsed.data[0].status).toBe("filled");
   });
 
-  it("displays cursor if returned", async () => {
+  it("fetches all pages automatically within a date window", async () => {
+    const orderA = { ...sampleOrder, id: "order-page1", status: "filled" };
+    const orderB = { ...sampleOrder, id: "order-page2", status: "filled" };
+    mockGetHistoricalOrders
+      .mockResolvedValueOnce({
+        data: [orderA],
+        metadata: { next_cursor: "cursor-abc" },
+      })
+      .mockResolvedValueOnce({
+        data: [orderB],
+        metadata: {},
+      });
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "history",
+      "--start-date",
+      "1700000000000",
+      "--end-date",
+      "1700086400000",
+    ]);
+    expect(mockGetHistoricalOrders).toHaveBeenCalledTimes(2);
+    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ cursor: "cursor-abc" }),
+    );
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("order-page1");
+    expect(output).toContain("order-page2");
+  });
+
+  it("splits requests into 30-day batches for ranges over 30 days", async () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const startMs = 1672531200000; // 2023-01-01
+    const endMs = startMs + 61 * 24 * 60 * 60 * 1000; // 61 days → 3 batches
+
     mockGetHistoricalOrders.mockResolvedValue({
       data: [{ ...sampleOrder, status: "filled" }],
-      metadata: { next_cursor: "cursor-123" },
+      metadata: {},
     });
-    await program.parseAsync(["node", "revx", "order", "history"]);
-    const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("cursor-123");
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "history",
+      "--start-date",
+      String(startMs),
+      "--end-date",
+      String(endMs),
+    ]);
+
+    expect(mockGetHistoricalOrders).toHaveBeenCalledTimes(3);
+    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        startDate: startMs,
+        endDate: startMs + THIRTY_DAYS_MS,
+        cursor: undefined,
+      }),
+    );
+    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        startDate: startMs + THIRTY_DAYS_MS,
+        endDate: startMs + 2 * THIRTY_DAYS_MS,
+        cursor: undefined,
+      }),
+    );
+    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        startDate: startMs + 2 * THIRTY_DAYS_MS,
+        endDate: endMs,
+        cursor: undefined,
+      }),
+    );
   });
 });
 

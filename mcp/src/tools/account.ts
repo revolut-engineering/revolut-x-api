@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { textResult } from "./_helpers.js";
+import { textResult } from "../shared/_helpers.js";
 
 export function registerAccountTools(server: McpServer): void {
   server.registerTool(

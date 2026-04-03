@@ -5,7 +5,12 @@ import {
   HISTORICAL_ORDERS_API_LIMIT,
   TRADES_API_LIMIT,
 } from "../constants.js";
-import { textResult, validateSymbol, handleApiError } from "./_helpers.js";
+import {
+  textResult,
+  validateSymbol,
+  handleApiError,
+  parseDateRange,
+} from "../shared/_helpers.js";
 
 function formatTrigger(
   label: string,
@@ -62,7 +67,7 @@ export function registerTradingTools(server: McpServer): void {
           .max(ACTIVE_ORDERS_API_LIMIT)
           .default(ACTIVE_ORDERS_API_LIMIT)
           .describe(
-            `Maximum total number of orders to return. Default is 100. Max is ${HISTORICAL_ORDERS_API_LIMIT}.`,
+            `Maximum total number of orders to return. Default is ${ACTIVE_ORDERS_API_LIMIT}. Max is ${ACTIVE_ORDERS_API_LIMIT}.`,
           ),
       },
       annotations: {
@@ -210,27 +215,9 @@ export function registerTradingTools(server: McpServer): void {
         if (error) return textResult(error);
       }
 
-      let parsedStartDate = undefined;
-      if (start_date) {
-        const d = new Date(start_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedStartDate = d.getTime();
-      }
-
-      let parsedEndDate = undefined;
-      if (end_date) {
-        const d = new Date(end_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedEndDate = d.getTime();
-      }
+      const dates = parseDateRange(start_date, end_date);
+      if ("error" in dates) return dates.error;
+      const { parsedStartDate, parsedEndDate } = dates;
 
       type Order = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getHistoricalOrders"]>
@@ -239,19 +226,18 @@ export function registerTradingTools(server: McpServer): void {
       const allOrders: Order[] = [];
 
       try {
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
         const endTimeMs = parsedEndDate || Date.now();
-        let currentStart =
-          parsedStartDate || endTimeMs - 30 * 24 * 60 * 60 * 1000;
+        let currentStart = parsedStartDate || endTimeMs - THIRTY_DAYS_MS;
         while (currentStart < endTimeMs) {
-          const currentEndObj = new Date(currentStart);
-          currentEndObj.setMonth(currentEndObj.getMonth() + 1);
-          let currentEndMs = currentEndObj.getTime();
-          if (currentEndMs > endTimeMs) currentEndMs = endTimeMs;
+          const currentEndMs = Math.min(
+            currentStart + THIRTY_DAYS_MS,
+            endTimeMs,
+          );
 
           let currentCursor: string | undefined = undefined;
-          let hasMoreInMonth = true;
 
-          while (hasMoreInMonth) {
+          while (true) {
             const result = await getRevolutXClient().getHistoricalOrders({
               symbols: symbol ? [symbol] : undefined,
               orderStates: order_states,
@@ -274,7 +260,7 @@ export function registerTradingTools(server: McpServer): void {
             if (limit !== undefined && allOrders.length >= limit) break;
 
             currentCursor = result.metadata?.next_cursor;
-            if (!currentCursor) hasMoreInMonth = false;
+            if (!currentCursor) break;
           }
 
           if (limit !== undefined && allOrders.length >= limit) break;
@@ -364,27 +350,9 @@ export function registerTradingTools(server: McpServer): void {
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      let parsedStartDate = undefined;
-      if (start_date) {
-        const d = new Date(start_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedStartDate = d.getTime();
-      }
-
-      let parsedEndDate = undefined;
-      if (end_date) {
-        const d = new Date(end_date);
-        if (isNaN(d.getTime())) {
-          return textResult(
-            "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-          );
-        }
-        parsedEndDate = d.getTime();
-      }
+      const dates = parseDateRange(start_date, end_date);
+      if ("error" in dates) return dates.error;
+      const { parsedStartDate, parsedEndDate } = dates;
 
       type Trade = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getPrivateTrades"]>
@@ -393,19 +361,18 @@ export function registerTradingTools(server: McpServer): void {
       const allTrades: Trade[] = [];
 
       try {
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
         const endTimeMs = parsedEndDate || Date.now();
-        let currentStart =
-          parsedStartDate || endTimeMs - 30 * 24 * 60 * 60 * 1000;
+        let currentStart = parsedStartDate || endTimeMs - THIRTY_DAYS_MS;
         while (currentStart < endTimeMs) {
-          const currentEndObj = new Date(currentStart);
-          currentEndObj.setMonth(currentEndObj.getMonth() + 1);
-          let currentEndMs = currentEndObj.getTime();
-          if (currentEndMs > endTimeMs) currentEndMs = endTimeMs;
+          const currentEndMs = Math.min(
+            currentStart + THIRTY_DAYS_MS,
+            endTimeMs,
+          );
 
           let currentCursor: string | undefined = undefined;
-          let hasMoreInMonth = true;
 
-          while (hasMoreInMonth) {
+          while (true) {
             const result = await getRevolutXClient().getPrivateTrades(symbol, {
               startDate: currentStart,
               endDate: currentEndMs,
@@ -425,7 +392,7 @@ export function registerTradingTools(server: McpServer): void {
             if (limit !== undefined && allTrades.length >= limit) break;
 
             currentCursor = result.metadata?.next_cursor;
-            if (!currentCursor) hasMoreInMonth = false;
+            if (!currentCursor) break;
           }
 
           if (limit !== undefined && allTrades.length >= limit) break;
