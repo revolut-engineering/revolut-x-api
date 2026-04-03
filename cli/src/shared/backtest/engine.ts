@@ -1,6 +1,6 @@
 import { Decimal } from "decimal.js";
 
-export interface GridLevel {
+interface GridLevel {
   price: Decimal;
   index: number;
   hasBuyOrder: boolean;
@@ -8,7 +8,7 @@ export interface GridLevel {
   baseHeld: Decimal;
 }
 
-export interface BacktestResult {
+interface BacktestResult {
   totalTrades: number;
   totalBuys: number;
   totalSells: number;
@@ -19,7 +19,7 @@ export interface BacktestResult {
   tradeLog: string[];
 }
 
-export interface OptimizationResult {
+interface OptimizationResult {
   gridLevels: number;
   rangePct: Decimal;
   investment: Decimal;
@@ -133,7 +133,7 @@ function runSellPass(
   return quoteBalance;
 }
 
-export function simulateCandle(
+function simulateCandle(
   levels: GridLevel[],
   open: Decimal,
   low: Decimal,

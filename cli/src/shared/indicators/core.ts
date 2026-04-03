@@ -1,6 +1,6 @@
 import { Decimal } from "decimal.js";
 
-export function decimalSqrt(value: Decimal, precision: number = 20): Decimal {
+function decimalSqrt(value: Decimal, precision: number = 20): Decimal {
   if (value.isNegative()) {
     throw new Error("Cannot compute sqrt of negative number");
   }
@@ -13,18 +13,6 @@ export function decimalSqrt(value: Decimal, precision: number = 20): Decimal {
     x = x.plus(value.div(x)).div(2);
   }
   return x;
-}
-
-export function computeSma(values: Decimal[], period: number): Decimal | null {
-  if (values.length < period || period < 1) {
-    return null;
-  }
-  const window = values.slice(-period);
-  let sum = new Decimal(0);
-  for (const v of window) {
-    sum = sum.plus(v);
-  }
-  return sum.div(period);
 }
 
 export function computeEma(values: Decimal[], period: number): Decimal | null {

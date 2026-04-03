@@ -13,7 +13,7 @@ export interface TelegramConnection {
   updated_at: string;
 }
 
-export interface Event {
+interface Event {
   id: string;
   ts: string;
   category: string;
@@ -49,7 +49,7 @@ export function loadConnections(): TelegramConnection[] {
   return loadArray<TelegramConnection>(TELEGRAM_FILE);
 }
 
-export function saveConnections(connections: TelegramConnection[]): void {
+function saveConnections(connections: TelegramConnection[]): void {
   saveArray(TELEGRAM_FILE, connections);
 }
 
@@ -104,7 +104,6 @@ export function deleteConnection(id: string): boolean {
 }
 
 const EVENTS_FILE = "events.json";
-const MAX_EVENTS = 1000;
 
 export function loadEvents(opts?: {
   category?: string;
@@ -118,21 +117,4 @@ export function loadEvents(opts?: {
     events = events.slice(-opts.limit);
   }
   return events;
-}
-
-export function appendEvent(
-  category: string,
-  details: Record<string, unknown>,
-): void {
-  const events = loadArray<Event>(EVENTS_FILE);
-  events.push({
-    id: randomUUID(),
-    ts: new Date().toISOString(),
-    category,
-    details,
-  });
-  while (events.length > MAX_EVENTS) {
-    events.shift();
-  }
-  saveArray(EVENTS_FILE, events);
 }

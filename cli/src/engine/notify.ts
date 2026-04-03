@@ -4,12 +4,12 @@ import type { EvalResult } from "../shared/indicators/evaluators.js";
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const SEND_TIMEOUT = 10_000;
 
-export interface TelegramResult {
+interface TelegramResult {
   success: boolean;
   error?: string;
 }
 
-export async function sendMessage(
+async function sendMessage(
   botToken: string,
   chatId: string,
   text: string,

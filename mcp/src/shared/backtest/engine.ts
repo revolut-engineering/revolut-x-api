@@ -1,6 +1,6 @@
 import { Decimal } from "decimal.js";
 
-export interface GridLevel {
+interface GridLevel {
   price: Decimal;
   index: number;
   hasBuyOrder: boolean;
@@ -133,7 +133,7 @@ function runSellPass(
   return quoteBalance;
 }
 
-export function simulateCandle(
+function simulateCandle(
   levels: GridLevel[],
   open: Decimal,
   low: Decimal,

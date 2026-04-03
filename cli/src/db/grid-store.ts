@@ -4,7 +4,6 @@ import {
   writeFileSync,
   renameSync,
   unlinkSync,
-  readdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, ensureConfigDir } from "api-k9x2a";
@@ -109,17 +108,5 @@ export function deleteGridState(pair: string): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-export function listGridStates(): string[] {
-  const dir = getConfigDir();
-  if (!existsSync(dir)) return [];
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.startsWith(STATE_PREFIX) && f.endsWith(".json"))
-      .map((f) => f.slice(STATE_PREFIX.length, -5).replace(/_/g, "-"));
-  } catch {
-    return [];
   }
 }

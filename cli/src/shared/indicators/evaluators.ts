@@ -41,8 +41,6 @@ export const CANDLE_ALERT_TYPES = new Set([
 
 export const ORDERBOOK_ALERT_TYPES = new Set(["obi"]);
 
-export const TICKER_ALERT_TYPES = new Set(["price", "spread"]);
-
 function parseConfig(alert: Record<string, unknown>): Record<string, unknown> {
   const raw = alert.config_json;
   if (!raw) return {};

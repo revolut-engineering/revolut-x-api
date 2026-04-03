@@ -23,25 +23,11 @@ export interface MarketSnapshot {
   };
 }
 
-export interface EvalResult {
+interface EvalResult {
   conditionMet: boolean;
   detail: string;
   current?: { label: string; value: string };
 }
-
-export const CANDLE_ALERT_TYPES = new Set([
-  "rsi",
-  "ema_cross",
-  "macd",
-  "bollinger",
-  "volume_spike",
-  "price_change_pct",
-  "atr_breakout",
-]);
-
-export const ORDERBOOK_ALERT_TYPES = new Set(["obi"]);
-
-export const TICKER_ALERT_TYPES = new Set(["price", "spread"]);
 
 function parseConfig(alert: Record<string, unknown>): Record<string, unknown> {
   const raw = alert.config_json;

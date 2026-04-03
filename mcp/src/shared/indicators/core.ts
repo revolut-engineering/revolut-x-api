@@ -1,6 +1,6 @@
 import { Decimal } from "decimal.js";
 
-export function decimalSqrt(value: Decimal, precision: number = 20): Decimal {
+function decimalSqrt(value: Decimal, precision: number = 20): Decimal {
   if (value.isNegative()) {
     throw new Error("Cannot compute sqrt of negative number");
   }
