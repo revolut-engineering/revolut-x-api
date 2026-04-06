@@ -1,6 +1,6 @@
 {
   "name": "revolut-x",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Explains Gemini CLI how to use the Revolut X CLI (revx) for crypto trading, market data, monitoring, and grid bot strategies",
   "contextFileName": "GEMINI.md"
 }
