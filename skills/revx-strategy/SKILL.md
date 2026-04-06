@@ -126,8 +126,6 @@ revx strategy grid run BTC-USD --investment 500 --reset
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
 
-**Passkey required** — see `revx-auth` skill to set one up.
-
 Ctrl+C for graceful shutdown (cancels open orders, prints summary).
 
 **Persistence:** State auto-saved for crash recovery. Clean shutdown deletes state. Crashed sessions auto-reconcile on restart.

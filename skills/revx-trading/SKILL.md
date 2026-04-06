@@ -12,8 +12,6 @@ description: >
 
 Ensure `revx` is installed and configured — see `revx-auth` skill.
 
-**Passkey required** for all order placement and cancellation — see `revx-auth` skill to set one up.
-
 Symbols use `BASE-QUOTE` format with a dash: `BTC-USD`, `ETH-EUR`, `SOL-USD`. Check pair constraints with `revx market pairs` (see `revx-market` skill).
 
 `order place` supports `--json` or `--output json` for machine-readable output.

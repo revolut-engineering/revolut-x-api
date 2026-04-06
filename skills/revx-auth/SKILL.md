@@ -58,17 +58,6 @@ revx configure get             # Show config status (keys redacted)
 revx configure path            # Print config directory path
 ```
 
-### Step 3: (Optional) Set a Passkey
-
-A passkey is required for placing/cancelling orders and running the grid bot. Set it once:
-
-```bash
-revx configure passkey set     # Prompts for passkey
-revx configure passkey status  # Verify passkey is set
-```
-
----
-
 ## Config Commands
 
 ```bash
@@ -77,9 +66,6 @@ revx configure get                      # Show config status (keys redacted)
 revx configure set --api-key <key>      # Set API key
 revx configure generate-keypair         # Generate Ed25519 keypair
 revx configure path                     # Print config directory path
-revx configure passkey set              # Set or change passkey
-revx configure passkey remove           # Remove passkey
-revx configure passkey status           # Show passkey status
 ```
 
 ## Config Location
