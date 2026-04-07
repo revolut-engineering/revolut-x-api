@@ -108,17 +108,13 @@ jobs:
             "mcp/dist/revolutx-mcp.mcpb" \
             --clobber
 
-      - name: Obtain npm token via OIDC
+      - name: Obtain npm OIDC token
         run: |
-          OIDC_TOKEN=$(curl -sSf \
+          TOKEN=$(curl -sSf \
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm" | jq -r '.value')
-          NPM_TOKEN=$(curl -sSf -X POST \
-            -H "Content-Type: application/json" \
-            -d "{\"token\":\"$OIDC_TOKEN\"}" \
-            https://registry.npmjs.org/-/npm/v1/login/oidc | jq -r '.token')
-          echo "::add-mask::$NPM_TOKEN"
-          echo "NPM_TOKEN=$NPM_TOKEN" >> "$GITHUB_ENV"
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | jq -r '.value')
+          echo "::add-mask::$TOKEN"
+          echo "NPM_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Publish API to npm
         env:
