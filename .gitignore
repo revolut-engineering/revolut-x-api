@@ -51,3 +51,6 @@ pnpm-debug.log*
 
 # Gemini CLI
 .gemini/
+
+# Claude Code
+.claude/

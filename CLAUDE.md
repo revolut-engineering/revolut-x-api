@@ -18,12 +18,18 @@ npm ci                        # install all workspaces
 npm run build                 # build all workspaces (handles build order automatically)
 ```
 
-For individual packages:
+For individual packages (build order matters — `api` must be built first):
 
 ```bash
 npm run build -w api          # or: cd api && npm run build
 npm run build -w cli
 npm run build -w mcp
+```
+
+Install CLI globally after building:
+
+```bash
+cd cli && npm link
 ```
 
 Dev build (targets `https://revx.revolut.codes` instead of production):
@@ -47,6 +53,13 @@ Run a single test file:
 
 ```bash
 npx vitest run tests/client/orders.test.ts -w api
+```
+
+Watch mode and coverage:
+
+```bash
+npm run test:watch -w api
+npm run test:coverage -w api   # generates coverage/index.html
 ```
 
 Coverage thresholds: api 74% statements, cli 32% statements. Tests use `nock` for HTTP mocking.
@@ -80,7 +93,9 @@ Requests use dashes (`BTC-USD`), responses use slashes (`BTC/USD`).
 
 **API client** (`api/src/client.ts`): `RevolutXClient` is the main entry point. Auth uses Ed25519 keypairs stored in `~/.config/revolut-x/`. Requests are signed with three headers: `X-Revx-API-Key`, `X-Revx-Timestamp`, `X-Revx-Signature`. HTTP layer has automatic retry with exponential backoff (retries on 429, 409, 5xx). Errors extend `RevolutXError` with specific subtypes (AuthenticationError, RateLimitError, OrderError, etc.).
 
-**CLI** (`cli/src/bin/revx.ts`): Commander.js with hierarchical subcommands in `commands/`. Business logic lives in `engine/` (grid bot, monitor, candle cache). State persisted as JSON in `db/` (grid-store uses atomic writes). Technical indicators (RSI, EMA, MACD, Bollinger, etc.) in `shared/indicators/`.
+**CLI** (`cli/src/bin/revx.ts`): Commander.js with hierarchical subcommands in `commands/`. Business logic lives in `engine/` (grid bot, monitor, candle cache). State persisted as JSON in `db/` (grid-store uses atomic writes). Technical indicators (RSI, EMA, MACD, Bollinger, etc.) in `shared/indicators/`. Output formatting in `output/`. Client init, error handling, passkey, and session utilities in `util/`.
+
+**Session auth**: Scrypt-hashed passkey with timing-safe comparison. Active session tokens stored in `/tmp/revx_sessions/`. Passkey required for order placement and cancellation.
 
 **MCP server** (`mcp/src/index.ts`): Tools registered in `server.ts`, implementations in `tools/`. Some tools call the API directly, others generate `revx` CLI commands for the user to run. Built as a single esbuild bundle (~500KB).
 
