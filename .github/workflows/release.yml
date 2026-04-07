@@ -109,6 +109,8 @@ jobs:
             --clobber
 
       - name: Publish API to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --workspace api --access public --provenance 2>&1 || {
             if npm view api-k9x2a@"$VERSION" version >/dev/null 2>&1; then
@@ -119,6 +121,8 @@ jobs:
           }
 
       - name: Publish CLI to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --workspace cli --access public --provenance 2>&1 || {
             if npm view cli-k9x2a@"$VERSION" version >/dev/null 2>&1; then
