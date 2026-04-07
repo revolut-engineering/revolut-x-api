@@ -22,6 +22,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -115,6 +116,8 @@ jobs:
             --clobber
 
       - name: Publish API to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cd api
           npm publish --access public 2>&1 || {
@@ -126,6 +129,8 @@ jobs:
           }
 
       - name: Publish CLI to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cd cli
           npm publish --access public 2>&1 || {
