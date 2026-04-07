@@ -24,7 +24,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
-          registry-url: https://registry.npmjs.org
 
       - name: Set version from release tag
         run: |
@@ -109,10 +108,8 @@ jobs:
             --clobber
 
       - name: Publish API to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish --workspace api --access public 2>&1 || {
+          npm publish --workspace api --access public --provenance 2>&1 || {
             if npm view api-k9x2a@"$VERSION" version >/dev/null 2>&1; then
               echo "api-k9x2a@$VERSION already published, skipping"
             else
@@ -121,10 +118,8 @@ jobs:
           }
 
       - name: Publish CLI to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish --workspace cli --access public 2>&1 || {
+          npm publish --workspace cli --access public --provenance 2>&1 || {
             if npm view cli-k9x2a@"$VERSION" version >/dev/null 2>&1; then
               echo "cli-k9x2a@$VERSION already published, skipping"
             else
