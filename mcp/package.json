@@ -1,6 +1,6 @@
 {
   "name": "revolutx-mcp",
-  "version": "1.0.2",
+  "version": "1.0.7",
   "type": "module",
   "private": true,
   "engines": {
