@@ -146,4 +146,6 @@ jobs:
             gemini-extension.json \
             package-lock.json
           git commit -m "chore: bump version to ${VERSION} [skip ci]" || echo "No changes to commit"
+          git fetch origin master
+          git rebase origin/master
           git push origin HEAD:master
