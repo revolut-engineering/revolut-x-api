@@ -12,7 +12,6 @@
     "directory": "api"
   },
   "license": "MIT",
-  "author": "author",
   "type": "module",
   "exports": {
     ".": {

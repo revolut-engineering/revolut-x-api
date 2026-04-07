@@ -17,21 +17,14 @@ jobs:
     name: Build & Upload Tarballs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: package-lock.json
-
-      - name: DEBUG - Names for NPM
-        run: |
-          echo "----------------------------------------"
-          echo "Organization Name: ${{ github.repository_owner }}"
-          echo "Repository Name: ${{ github.event.repository.name }}"
-          echo "----------------------------------------"
 
       - name: Set version from release tag
         run: |
