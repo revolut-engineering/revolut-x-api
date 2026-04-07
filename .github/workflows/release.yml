@@ -28,6 +28,14 @@ jobs:
       - name: Upgrade npm for Trusted Publishing
         run: npm install -g npm@latest
 
+      - name: DEBUG - Print Exact Names for NPM
+        run: |
+            echo "----------------------------------------"
+            echo "COPY THESE EXACT STRINGS INTO NPM:"
+            echo "Organization Name: ${{ github.repository_owner }}"
+            echo "Repository Name: ${{ github.event.repository.name }}"
+            echo "----------------------------------------"
+
       - name: Set version from release tag
         run: |
           TAG="${{ github.event.release.tag_name }}"
