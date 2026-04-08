@@ -40,17 +40,8 @@ The CLI tarball includes the API client bundled inside — no extra dependencies
 
 ### Build from source
 
-**Production** (targets `https://revx.revolut.com`):
-
 ```bash
 cd api && npm install && npm run build && cd ..
-cd cli && npm install && npm run build && npm link && cd ..
-```
-
-**Development** (targets `https://revx.revolut.codes`):
-
-```bash
-cd api && npm install && npm run build:dev && cd ..
 cd cli && npm install && npm run build && npm link && cd ..
 ```
 

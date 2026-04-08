@@ -32,12 +32,6 @@ Install CLI globally after building:
 cd cli && npm link
 ```
 
-Dev build (targets `https://revx.revolut.codes` instead of production):
-
-```bash
-cd api && npm run build:dev
-```
-
 ## Test
 
 Vitest across all packages. Run from repo root:

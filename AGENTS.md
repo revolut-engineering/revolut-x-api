@@ -25,11 +25,6 @@ cd cli && npm run build && cd ..  # CLI
 cd mcp && npm run build && cd ..  # MCP server bundle
 ```
 
-Dev build (targets `https://revx.revolut.codes`):
-```bash
-cd api && npm run build:dev && cd ..
-```
-
 Install CLI globally after building:
 ```bash
 cd cli && npm link
