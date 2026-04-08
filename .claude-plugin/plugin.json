@@ -1,0 +1,21 @@
+{
+  "name": "revolut-x",
+  "version": "1.0.18",
+  "description": "Explains AI assistants how to use the Revolut X CLI (revx) for crypto trading, market data, monitoring, and grid bot strategies",
+  "author": {
+    "name": "Revolut X",
+    "url": "https://exchange.revolut.com"
+  },
+  "homepage": "https://github.com/revolut-engineering/revolut-x-api",
+  "repository": "https://github.com/revolut-engineering/revolut-x-api",
+  "license": "MIT",
+  "keywords": [
+    "revolut",
+    "crypto",
+    "exchange",
+    "trading",
+    "cli",
+    "market-data",
+    "grid-bot"
+  ]
+}

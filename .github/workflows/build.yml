@@ -1,0 +1,306 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/cache@v5
+        id: modules-cache
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - name: Install all dependencies
+        if: steps.modules-cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+  build-api:
+    name: Build API
+    needs: install
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache@v5
+        id: api-dist-cache
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+
+      - run: npm run build
+        if: steps.api-dist-cache.outputs.cache-hit != 'true'
+
+  lint:
+    name: Lint & Format
+    needs: [install, build-api]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+          restore-keys: api-dist-${{ runner.os }}-
+
+      - run: npm run format:check
+
+      - run: npm run lint
+
+  test-api:
+    name: Test API
+    needs: install
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  test-mcp:
+    name: Test MCP
+    needs: [install, build-api]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+          restore-keys: api-dist-${{ runner.os }}-
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  test-cli:
+    name: Test CLI
+    needs: build-api
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+          restore-keys: api-dist-${{ runner.os }}-
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  pack-api:
+    name: Pack API
+    needs: [build-api, test-api]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+          restore-keys: api-dist-${{ runner.os }}-
+
+      - run: npm pack
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: api-k9x2a
+          path: api/api-k9x2a-*.tgz
+
+  pack-cli:
+    name: Pack CLI
+    needs: test-cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+          restore-keys: api-dist-${{ runner.os }}-
+
+      - name: Build CLI
+        run: cd cli && npm run build
+
+      - name: Pack tarball
+        run: cd cli && npm pack
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-k9x2a
+          path: cli/cli-k9x2a-*.tgz
+
+  pack-mcp:
+    name: Pack MCP
+    needs: test-mcp
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: api/dist
+          key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
+          restore-keys: api-dist-${{ runner.os }}-
+
+      - name: Build MCPB archive
+        run: bash scripts/build-mcpb.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: revolutx-mcp-mcpb
+          path: mcp/dist/revolutx-mcp.mcpb
+
+  sbom:
+    name: Generate SBOM
+    needs: [pack-api, pack-cli, pack-mcp]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+
+      - name: Generate SBOMs
+        run: |
+          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace api-k9x2a --output-file sbom-api.json
+          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace cli-k9x2a --output-file sbom-cli.json
+          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace revolutx-mcp --output-file sbom-mcp.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom-*.json

@@ -1,0 +1,134 @@
+{
+  "manifest_version": "0.4",
+  "name": "RevolutX",
+  "version": "1.0.18",
+  "display_name": "RevolutX",
+  "description": "Check balances, view orders, analyze markets, and backtest trading strategies on RevolutX. All through natural language in Claude.",
+  "author": {
+    "name": "Revolut LTD."
+  },
+  "icon": "icon.png",
+  "keywords": [
+    "crypto",
+    "exchange",
+    "trading",
+    "revolut",
+    "technical-analysis",
+    "indicators"
+  ],
+  "license": "MIT",
+  "privacy_policies": [
+    "https://github.com/revolut-engineering/revolut-x-api/blob/main/PRIVACY.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/revolut-engineering/revolut-x-api"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
+      "env": {
+        "REVOLUTX_CONFIG_DIR": "${user_config.config_dir}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "get_instructions",
+      "description": "CALL THIS FIRST. Returns mandatory usage rules and tool overview. Rule 1: never assume any tool exists — verify first. Rule 2: all tools are read-only — no tool places, modifies, or cancels orders. For trading actions, call get_trading_setup."
+    },
+    {
+      "name": "get_trading_setup",
+      "description": "Returns setup instructions for trading capabilities not available in this read-only MCP server. Call this when the user wants to place orders, buy or sell crypto, cancel orders, run a grid bot, set up price monitors, or configure Telegram alerts."
+    },
+    {
+      "name": "generate_keypair",
+      "description": "Generate a new Ed25519 keypair for Revolut X API authentication. Creates a private key (stored securely on your machine) and returns the public key. You must add the public key to your Revolut X account under Profile > API Keys."
+    },
+    {
+      "name": "configure_api_key",
+      "description": "Save your Revolut X API key. Run this after you have added your public key to your Revolut X account and received an API key."
+    },
+    {
+      "name": "check_auth_status",
+      "description": "Check if Revolut X API authentication is configured and working. Tests the connection by fetching available currencies."
+    },
+    {
+      "name": "get_balances",
+      "description": "Get all crypto exchange balances for your Revolut X account. Returns a list of all currencies with available, reserved, and total amounts."
+    },
+    {
+      "name": "get_currencies",
+      "description": "Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status."
+    },
+    {
+      "name": "get_currency_pairs",
+      "description": "Get all tradeable currency pairs on Revolut X exchange. Returns pair details including base/quote currencies, step sizes, min/max order sizes, and status."
+    },
+    {
+      "name": "get_order_book",
+      "description": "Get the current order book for a trading pair."
+    },
+    {
+      "name": "get_tickers",
+      "description": "Get current ticker data for all trading pairs. Returns bid, ask, mid, and last price for each pair."
+    },
+    {
+      "name": "get_candles",
+      "description": "Get OHLCV candlestick data for a trading pair."
+    },
+    {
+      "name": "get_active_orders",
+      "description": "Get all currently active (open) orders on your Revolut X account."
+    },
+    {
+      "name": "get_historical_orders",
+      "description": "Get your historical (completed, cancelled, rejected) orders on Revolut X. Optionally filter by trading pair and date range."
+    },
+    {
+      "name": "get_client_trades",
+      "description": "Get your personal trade history (fills) for a specific trading pair."
+    },
+    {
+      "name": "get_order_fills",
+      "description": "Get fill details for a specific order. Returns individual trade executions that filled the order."
+    },
+    {
+      "name": "grid_backtest",
+      "description": "Run a grid trading backtest on historical candle data from Revolut X. Simulates a grid strategy with geometrically spaced price levels. Returns total trades, realized P&L, net return, max drawdown, and annualized return."
+    },
+    {
+      "name": "grid_optimize",
+      "description": "Test multiple grid parameter combinations and return ranked results. Runs grid backtest for every combination of grid levels and range percentages, then ranks by total return, Calmar ratio, and drawdown."
+    },
+    {
+      "name": "get_order_by_id",
+      "description": "Get the full details of a single order by its venue order ID. Supports market, limit, conditional, and tpsl orders."
+    }
+  ],
+  "user_config": {
+    "config_dir": {
+      "type": "directory",
+      "title": "Config Directory",
+      "description": "Directory for storing API keys and configuration",
+      "default": "~/.config/revolut-x",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}

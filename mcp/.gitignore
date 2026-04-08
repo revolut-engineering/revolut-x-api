@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+
+# SQLite databases (runtime, if any)
+*.db
+*.db-wal
+*.db-shm
+
+# Environment / secrets
+.env
+.env.local
+
+# MCPB packaging staging
+packaging/mcpb/stage/
+
+# macOS
+.DS_Store

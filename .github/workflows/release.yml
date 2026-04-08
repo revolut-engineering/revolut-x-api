@@ -1,0 +1,153 @@
+name: Release Packages
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build & Upload Tarballs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set version from release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#release-}"
+          VERSION="${VERSION#v}"
+          echo "Resolved version: $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          # npm packages
+          for dir in api cli mcp; do
+            (cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+          done
+
+          # JSON config files with "version" field
+          VERSION="$VERSION" node -e "
+            const fs = require('fs');
+            const files = [
+              'mcp/packaging/mcpb/manifest.json',
+              '.claude-plugin/plugin.json',
+              'gemini-extension.json',
+            ];
+            for (const f of files) {
+              const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+              m.version = process.env.VERSION;
+              fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
+            }
+            // marketplace.json has version nested inside plugins[0]
+            const mf = '.claude-plugin/marketplace.json';
+            const mp = JSON.parse(fs.readFileSync(mf, 'utf8'));
+            mp.plugins[0].version = process.env.VERSION;
+            fs.writeFileSync(mf, JSON.stringify(mp, null, 2) + '\n');
+          "
+
+          # MCP server hardcoded version in TypeScript source
+          VERSION="$VERSION" node -e "
+            const fs = require('fs');
+            const f = 'mcp/src/server.ts';
+            let src = fs.readFileSync(f, 'utf8');
+            src = src.replace(
+              /new McpServer\(\{(\s*name:\s*\"[^\"]*\",\s*)version:\s*\"[^\"]*\"/,
+              'new McpServer({\$1version: \"' + process.env.VERSION + '\"'
+            );
+            fs.writeFileSync(f, src);
+          "
+
+          # Sync package-lock.json
+          npm install --package-lock-only
+
+      - name: Install all dependencies
+        run: npm ci
+
+      - name: Build & test API
+        run: cd api && npm run typecheck && npm test && npm run build
+
+      - name: Test CLI & MCP
+        run: |
+          (cd cli && npm run typecheck && npm test && npm run build) &
+          (cd mcp && npm run typecheck && npm test) &
+          wait
+
+      - name: Lint & format check
+        run: npm run format:check && npm run lint
+
+      - name: Pack API tarball
+        run: cd api && npm pack
+
+      - name: Pack CLI tarball
+        run: cd cli && npm pack
+
+      - name: Build MCPB archive
+        run: cd mcp && bash scripts/build-mcpb.sh
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$TAG_NAME" \
+            "api/api-k9x2a-${VERSION}.tgz" \
+            "cli/cli-k9x2a-${VERSION}.tgz" \
+            "mcp/dist/revolutx-mcp.mcpb" \
+            --clobber
+
+      - name: Publish API to npm
+        run: |
+          cd api
+          npm publish --access public 2>&1 || {
+            if npm view api-k9x2a@"$VERSION" version >/dev/null 2>&1; then
+              echo "api-k9x2a@$VERSION already published, skipping"
+            else
+              exit 1
+            fi
+          }
+
+      - name: Publish CLI to npm
+        run: |
+          cd cli
+          npm publish --access public 2>&1 || {
+            if npm view cli-k9x2a@"$VERSION" version >/dev/null 2>&1; then
+              echo "cli-k9x2a@$VERSION already published, skipping"
+            else
+              exit 1
+            fi
+          }
+
+
+      - name: Commit version bump back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add \
+            api/package.json \
+            cli/package.json \
+            mcp/package.json \
+            mcp/src/server.ts \
+            mcp/packaging/mcpb/manifest.json \
+            .claude-plugin/plugin.json \
+            .claude-plugin/marketplace.json \
+            gemini-extension.json \
+            package-lock.json
+          git commit -m "chore: bump version to ${VERSION} [skip ci]" || echo "No changes to commit"
+          git fetch origin master
+          git rebase origin/master
+          git push origin HEAD:master

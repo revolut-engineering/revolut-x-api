@@ -1,0 +1,26 @@
+{
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "api",
+    "cli",
+    "mcp"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint api/src api/tests cli/src cli/tests mcp/src mcp/tests",
+    "lint:fix": "eslint api/src api/tests cli/src cli/tests mcp/src mcp/tests --fix",
+    "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

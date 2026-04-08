@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": [
+    "api/src/**/*.ts",
+    "api/tests/**/*.ts",
+    "cli/src/**/*.ts",
+    "cli/tests/**/*.ts",
+    "mcp/src/**/*.ts",
+    "mcp/tests/**/*.ts"
+  ],
+  "exclude": ["node_modules", "**/node_modules", "**/dist"]
+}
