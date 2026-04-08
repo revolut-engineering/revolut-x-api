@@ -10,7 +10,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/private-repo-k9x2a",
+    "url": "https://github.com/revolut-engineering/revolut-x-api",
     "directory": "cli"
   },
   "license": "MIT",
