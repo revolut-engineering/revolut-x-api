@@ -16,7 +16,8 @@ vi.mock("../../src/db/store.js", () => ({
   deleteConnection: (id: unknown) => mockDeleteConnection(id),
 }));
 
-vi.mock("api-k9x2a", () => {
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}
   class AuthenticationError extends RevolutXError {}
@@ -25,6 +26,7 @@ vi.mock("api-k9x2a", () => {
   class NotFoundError extends RevolutXError {}
   class NetworkError extends RevolutXError {}
   return {
+    ...actual,
     getConfigDir: () => "/tmp/revx-test",
     ensureConfigDir: () => {},
     RevolutXError,

@@ -90,6 +90,10 @@ export async function makeRequest(
     Accept: "application/json",
   };
 
+  if (options.isAgent) {
+    headers["X-GENERATED-BY"] = "AGENT";
+  }
+
   if (options.apiKey && options.privateKey) {
     const authHeaders = buildAuthHeaders(
       options.apiKey,

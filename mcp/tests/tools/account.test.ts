@@ -16,7 +16,21 @@ vi.mock("api-k9x2a", async () => {
   class AuthNotConfiguredError extends Error {
     name = "AuthNotConfiguredError";
   }
-  return { AuthNotConfiguredError };
+  class ForbiddenError extends Error {
+    name = "ForbiddenError";
+  }
+  class RateLimitError extends Error {
+    name = "RateLimitError";
+  }
+  class ServerError extends Error {
+    name = "ServerError";
+  }
+  return {
+    AuthNotConfiguredError,
+    ForbiddenError,
+    RateLimitError,
+    ServerError,
+  };
 });
 
 async function createClient(): Promise<Client> {
@@ -83,5 +97,19 @@ describe("account tools", () => {
     });
     const text = getText(result);
     expect(text).toContain("Setup guide text");
+  });
+
+  it("get_balances returns help message on forbidden error", async () => {
+    const { ForbiddenError } = await import("api-k9x2a");
+    mockGetBalances.mockRejectedValue(new ForbiddenError("access denied"));
+
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_balances",
+      arguments: {},
+    });
+    const text = getText(result);
+    expect(text).toContain("Access Forbidden");
+    expect(text).toContain("Add public key");
   });
 });

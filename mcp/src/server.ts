@@ -15,7 +15,7 @@ let _client: RevolutXClient | null = null;
 
 export function getRevolutXClient(): RevolutXClient {
   if (_client === null) {
-    _client = new RevolutXClient();
+    _client = new RevolutXClient({ isAgent: true });
   }
   return _client;
 }

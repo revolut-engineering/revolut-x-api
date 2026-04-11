@@ -79,6 +79,28 @@ describe("Authentication", () => {
     });
   });
 
+  describe("agent header", () => {
+    it("includes X-GENERATED-BY header when isAgent is true", async () => {
+      const client = createTestClient({ isAgent: true });
+      nock(BASE_URL)
+        .get("/api/1.0/balances")
+        .matchHeader("X-GENERATED-BY", "AGENT")
+        .reply(200, []);
+
+      await client.getBalances();
+    });
+
+    it("omits X-GENERATED-BY header when isAgent is false", async () => {
+      const client = createTestClient({ isAgent: false });
+      nock(BASE_URL)
+        .get("/api/1.0/balances")
+        .matchHeader("X-GENERATED-BY", (value) => value === undefined)
+        .reply(200, []);
+
+      await client.getBalances();
+    });
+  });
+
   describe("authentication vs authorization", () => {
     it("throws AuthenticationError (401) for invalid credentials", async () => {
       const client = createTestClient();

@@ -2,26 +2,31 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerAllTools } from "../../src/tools/index.js";
+import { vi, describe, it, expect } from "vitest";
 
 vi.mock("../../src/server.js", () => ({
   getRevolutXClient: vi.fn(() => ({})),
   SETUP_GUIDE: "Setup guide",
 }));
 
-vi.mock("api-k9x2a", () => ({
-  AuthNotConfiguredError: class extends Error {},
-  ensureConfigDir: vi.fn(),
-  getConfigDir: vi.fn(() => "/fake/config"),
-  getPrivateKeyFile: vi.fn(() => "/fake/path/private.pem"),
-  getPublicKeyFile: vi.fn(() => "/fake/path/public.pem"),
-  generateKeypair: vi.fn(),
-  loadPrivateKey: vi.fn(),
-  getPublicKeyPem: vi.fn(),
-  loadConfig: vi.fn(() => ({})),
-  saveConfig: vi.fn(),
-  isConfigured: vi.fn(() => false),
-  loadCredentials: vi.fn(),
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    AuthNotConfiguredError: class extends Error {},
+    ensureConfigDir: vi.fn(),
+    getConfigDir: vi.fn(() => "/fake/config"),
+    getPrivateKeyFile: vi.fn(() => "/fake/path/private.pem"),
+    getPublicKeyFile: vi.fn(() => "/fake/path/public.pem"),
+    generateKeypair: vi.fn(),
+    loadPrivateKey: vi.fn(),
+    getPublicKeyPem: vi.fn(),
+    loadConfig: vi.fn(() => ({})),
+    saveConfig: vi.fn(),
+    isConfigured: vi.fn(() => false),
+    loadCredentials: vi.fn(),
+  };
+});
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");

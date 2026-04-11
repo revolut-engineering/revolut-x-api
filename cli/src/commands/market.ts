@@ -346,8 +346,32 @@ Examples:
           } = {};
 
           candleOpts.interval = intervalMinutes;
-          if (opts.since) candleOpts.startDate = parseTimestamp(opts.since);
-          if (opts.until) candleOpts.endDate = parseTimestamp(opts.until);
+
+          let startDate = opts.since ? parseTimestamp(opts.since) : undefined;
+          let endDate = opts.until ? parseTimestamp(opts.until) : undefined;
+
+          const now = Date.now();
+          const intervalMs = intervalMinutes * 60 * 1000;
+          const maxHistoryMs = 50000 * intervalMs;
+          const oldestAvailableDate = now - maxHistoryMs;
+
+          const fetchEnd = endDate || now;
+
+          if (endDate && endDate < oldestAvailableDate) {
+            startDate = oldestAvailableDate;
+            endDate = now;
+          } else if (
+            !startDate ||
+            Math.ceil(
+              (fetchEnd - (startDate || oldestAvailableDate)) / intervalMs,
+            ) > 50000
+          ) {
+            startDate = oldestAvailableDate;
+            endDate = now;
+          }
+
+          if (startDate) candleOpts.startDate = startDate;
+          if (endDate) candleOpts.endDate = endDate;
 
           const result = await client.getCandles(cleanSymbol, candleOpts);
 

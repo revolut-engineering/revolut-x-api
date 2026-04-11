@@ -25,18 +25,22 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, existsSync: mockExistsSync };
 });
 
-vi.mock("api-k9x2a", () => ({
-  getConfigDir: () => "/tmp/revx-test",
-  ensureConfigDir: vi.fn(),
-  loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
-  saveConfig: (...args: unknown[]) => mockSaveConfig(...args),
-  isConfigured: (...args: unknown[]) => mockIsConfigured(...args),
-  generateKeypair: (...args: unknown[]) => mockGenerateKeypair(...args),
-  loadPrivateKey: (...args: unknown[]) => mockLoadPrivateKey(...args),
-  getPublicKeyPem: (...args: unknown[]) => mockGetPublicKeyPem(...args),
-  getPrivateKeyFile: () => "/tmp/revx-test/private.pem",
-  getPublicKeyFile: () => "/tmp/revx-test/public.pem",
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getConfigDir: () => "/tmp/revx-test",
+    ensureConfigDir: vi.fn(),
+    loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+    saveConfig: (...args: unknown[]) => mockSaveConfig(...args),
+    isConfigured: (...args: unknown[]) => mockIsConfigured(...args),
+    generateKeypair: (...args: unknown[]) => mockGenerateKeypair(...args),
+    loadPrivateKey: (...args: unknown[]) => mockLoadPrivateKey(...args),
+    getPublicKeyPem: (...args: unknown[]) => mockGetPublicKeyPem(...args),
+    getPrivateKeyFile: () => "/tmp/revx-test/private.pem",
+    getPublicKeyFile: () => "/tmp/revx-test/public.pem",
+  };
+});
 
 vi.mock("../../src/util/session.js", () => ({
   promptHiddenInput: vi.fn().mockResolvedValue(""),

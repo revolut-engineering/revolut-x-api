@@ -18,7 +18,8 @@ vi.mock("../../src/util/client.js", () => ({
   })),
 }));
 
-vi.mock("api-k9x2a", () => {
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}
   class AuthenticationError extends RevolutXError {}
@@ -27,6 +28,7 @@ vi.mock("api-k9x2a", () => {
   class NotFoundError extends RevolutXError {}
   class NetworkError extends RevolutXError {}
   return {
+    ...actual,
     RevolutXClient: vi.fn(),
     getConfigDir: () => "/tmp/revx-test",
     ensureConfigDir: () => {},
@@ -365,6 +367,20 @@ describe("market candles", () => {
     exitSpy.mockRestore();
   });
 
+  it("trims range when no start date provided (more than 50,000 candles)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await program.parseAsync(["node", "revx", "market", "candles", "BTC-USD"]);
+    expect(mockGetCandles).toHaveBeenCalledWith(
+      "BTC-USD",
+      expect.objectContaining({
+        interval: 60,
+        startDate: expect.any(Number),
+        endDate: expect.any(Number),
+      }),
+    );
+    warnSpy.mockRestore();
+  });
+
   it("fetches candles with default 1h interval (60 minutes)", async () => {
     await program.parseAsync(["node", "revx", "market", "candles", "BTC-USD"]);
     expect(mockGetCandles).toHaveBeenCalledWith(
@@ -428,6 +444,56 @@ describe("market candles", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     const parsed = JSON.parse(output);
     expect(parsed.data).toHaveLength(1);
+  });
+
+  it("respects provided since/until dates when within 50,000 candle limit", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const now = Date.now();
+    const oneHourAgo = now - 60 * 60 * 1000; // 1 hour = 1 candle at 1h interval
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "candles",
+      "BTC-USD",
+      "--since",
+      String(oneHourAgo),
+      "--until",
+      String(now),
+    ]);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(mockGetCandles).toHaveBeenCalledWith(
+      "BTC-USD",
+      expect.objectContaining({
+        interval: 60,
+        startDate: oneHourAgo,
+        endDate: now,
+      }),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("trims to last 50,000 candles when requested range is too large", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const now = Date.now();
+    const twoMonthsAgo = now - 60 * 24 * 60 * 60 * 1000;
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "candles",
+      "BTC-USD",
+      "--interval",
+      "1m",
+      "--since",
+      String(twoMonthsAgo),
+      "--until",
+      String(now),
+    ]);
+    warnSpy.mockRestore();
   });
 });
 

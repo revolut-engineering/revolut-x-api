@@ -6,6 +6,7 @@ import {
   BadRequestError,
   NotFoundError,
   NetworkError,
+  ForbiddenError,
 } from "api-k9x2a";
 import chalk from "chalk";
 
@@ -28,6 +29,23 @@ export function handleError(err: unknown): never {
     console.error(
       chalk.gray("    Run 'revx configure' to update your credentials.\n"),
     );
+    process.exit(1);
+  }
+
+  if (err instanceof ForbiddenError) {
+    const SUGGESTIONS = [
+      " ↳ Go to Revolut X → Profile → Add public key",
+      "   Check your API scopes to ensure you have the correct permissions",
+      "   Ensure the 'CLI/MCP usage' flag is enabled",
+    ];
+
+    console.error(`\n${ERROR_PREFIX} ${chalk.white("Access Forbidden")}`);
+
+    console.error(chalk.cyan("How to fix this:"));
+    SUGGESTIONS.forEach((step) => {
+      console.error(chalk.gray(`  ${chalk.blue("→")} ${step}`));
+    });
+    console.error("");
     process.exit(1);
   }
 

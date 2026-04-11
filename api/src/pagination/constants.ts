@@ -1,0 +1,5 @@
+export const RATE_LIMIT_MAX_RETRIES = 30;
+export const HISTORICAL_ORDERS_API_LIMIT = 1900;
+export const ACTIVE_ORDERS_API_LIMIT = 300;
+export const TRADES_API_LIMIT = 1900;
+export const PAGINATED_DATA_MAX_LIMIT = 50000;

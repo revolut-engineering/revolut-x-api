@@ -1,3 +1,0 @@
-export const HISTORICAL_ORDERS_API_LIMIT = 1900;
-export const ACTIVE_ORDERS_API_LIMIT = 1900;
-export const TRADES_API_LIMIT = 1900;

@@ -12,11 +12,15 @@ vi.mock("../../src/util/client.js", () => ({
   })),
 }));
 
-vi.mock("api-k9x2a", () => ({
-  RevolutXClient: vi.fn(),
-  getConfigDir: () => "/tmp/revx-test",
-  ensureConfigDir: () => {},
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    RevolutXClient: vi.fn(),
+    getConfigDir: () => "/tmp/revx-test",
+    ensureConfigDir: () => {},
+  };
+});
 
 vi.mock("../../src/util/parse.js", async (importOriginal) => {
   const actual =
@@ -35,6 +39,7 @@ const samplePrivateTrade = {
   price: "95000",
   quantity: "0.001",
   maker: false,
+  orderId: "order-1",
   timestamp: 1700000000000,
 };
 
@@ -127,7 +132,7 @@ describe("trade private", () => {
     ]);
     expect(mockGetPrivateTrades).toHaveBeenCalledWith(
       "BTC-USD",
-      expect.objectContaining({ startDate: 1600000000000 }),
+      expect.objectContaining({ startDate: expect.any(Number) }),
     );
   });
 
@@ -173,6 +178,12 @@ describe("trade private", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("trade-1");
     expect(output).toContain("trade-page2");
+  });
+
+  it("displays orderId in the output", async () => {
+    await program.parseAsync(["node", "revx", "trade", "private", "BTC-USD"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("order-1");
   });
 });
 
@@ -251,7 +262,7 @@ describe("trade public", () => {
     ]);
     expect(mockGetAllTrades).toHaveBeenCalledWith(
       "BTC-USD",
-      expect.objectContaining({ startDate: 1600000000000 }),
+      expect.objectContaining({ startDate: expect.any(Number) }),
     );
   });
 

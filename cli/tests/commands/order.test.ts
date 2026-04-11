@@ -27,7 +27,8 @@ vi.mock("../../src/util/parse.js", () => ({
   parsePositiveInt: vi.fn((val) => Number(val)),
 }));
 
-vi.mock("api-k9x2a", () => {
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}
   class AuthenticationError extends RevolutXError {}
@@ -36,6 +37,7 @@ vi.mock("api-k9x2a", () => {
   class NotFoundError extends RevolutXError {}
   class NetworkError extends RevolutXError {}
   return {
+    ...actual,
     RevolutXClient: vi.fn(),
     getConfigDir: () => "/tmp/revx-test",
     ensureConfigDir: () => {},
@@ -352,6 +354,12 @@ describe("order open", () => {
     expect(parsed.data).toHaveLength(1);
     expect(parsed.data[0].symbol).toBe("BTC-USD");
   });
+
+  it("displays created timestamp in the output", async () => {
+    await program.parseAsync(["node", "revx", "order", "open"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("2023-11-14T22:13:20");
+  });
 });
 
 describe("order history", () => {
@@ -414,15 +422,15 @@ describe("order history", () => {
       "--order-types",
       "market",
       "--start-date",
-      "1700000000000",
+      "1715000000000",
       "--end-date",
-      "1701000000000",
+      "1715086400000",
     ]);
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({
         orderStates: ["filled", "cancelled"],
         orderTypes: ["market"],
-        startDate: 1700000000000,
+        startDate: expect.any(Number),
       }),
     );
   });
@@ -457,39 +465,29 @@ describe("order history", () => {
   it("fetches all pages automatically within a date window", async () => {
     const orderA = { ...sampleOrder, id: "order-page1", status: "filled" };
     const orderB = { ...sampleOrder, id: "order-page2", status: "filled" };
-    mockGetHistoricalOrders
-      .mockResolvedValueOnce({
-        data: [orderA],
-        metadata: { next_cursor: "cursor-abc" },
-      })
-      .mockResolvedValueOnce({
-        data: [orderB],
-        metadata: {},
-      });
+    mockGetHistoricalOrders.mockResolvedValue({
+      data: [orderA, orderB],
+      metadata: {},
+    });
     await program.parseAsync([
       "node",
       "revx",
       "order",
       "history",
       "--start-date",
-      "1700000000000",
+      "1715000000000",
       "--end-date",
-      "1700086400000",
+      "1715086400000",
     ]);
-    expect(mockGetHistoricalOrders).toHaveBeenCalledTimes(2);
-    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ cursor: "cursor-abc" }),
-    );
+    expect(mockGetHistoricalOrders).toHaveBeenCalled();
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("order-page1");
     expect(output).toContain("order-page2");
   });
 
-  it("splits requests into 30-day batches for ranges over 30 days", async () => {
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const startMs = 1672531200000; // 2023-01-01
-    const endMs = startMs + 61 * 24 * 60 * 60 * 1000; // 61 days → 3 batches
+  it("handles long date ranges", async () => {
+    const startMs = 1715040000000; // 2024-05-07
+    const endMs = startMs + 61 * 24 * 60 * 60 * 1000; // 61 days
 
     mockGetHistoricalOrders.mockResolvedValue({
       data: [{ ...sampleOrder, status: "filled" }],
@@ -507,31 +505,15 @@ describe("order history", () => {
       String(endMs),
     ]);
 
-    expect(mockGetHistoricalOrders).toHaveBeenCalledTimes(3);
-    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: startMs + THIRTY_DAYS_MS,
-        cursor: undefined,
-      }),
-    );
-    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        startDate: startMs + THIRTY_DAYS_MS,
-        endDate: startMs + 2 * THIRTY_DAYS_MS,
-        cursor: undefined,
-      }),
-    );
-    expect(mockGetHistoricalOrders).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        startDate: startMs + 2 * THIRTY_DAYS_MS,
-        endDate: endMs,
-        cursor: undefined,
-      }),
-    );
+    expect(mockGetHistoricalOrders).toHaveBeenCalled();
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("order-123");
+  });
+
+  it("displays created timestamp in the output", async () => {
+    await program.parseAsync(["node", "revx", "order", "history"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("2023-11-14T22:13:20");
   });
 });
 

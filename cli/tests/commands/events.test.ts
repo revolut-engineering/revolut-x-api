@@ -8,10 +8,14 @@ vi.mock("../../src/db/store.js", () => ({
   loadEvents: (...args: unknown[]) => mockLoadEvents(...args),
 }));
 
-vi.mock("api-k9x2a", () => ({
-  getConfigDir: () => "/tmp/revx-test",
-  ensureConfigDir: () => {},
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getConfigDir: () => "/tmp/revx-test",
+    ensureConfigDir: () => {},
+  };
+});
 
 const sampleEvents = [
   {

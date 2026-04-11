@@ -2,9 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockRevolutXClient = vi.fn();
 
-vi.mock("api-k9x2a", () => ({
-  RevolutXClient: mockRevolutXClient,
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    RevolutXClient: mockRevolutXClient,
+  };
+});
 
 // Reset module cache between tests so cachedClient is cleared
 beforeEach(async () => {

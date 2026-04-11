@@ -3,8 +3,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   ACTIVE_ORDERS_API_LIMIT,
   HISTORICAL_ORDERS_API_LIMIT,
+  PAGINATED_DATA_MAX_LIMIT,
   TRADES_API_LIMIT,
-} from "../constants.js";
+  paginateWithDynamicWindows,
+} from "api-k9x2a";
 import {
   textResult,
   validateSymbol,
@@ -40,8 +42,7 @@ export function registerTradingTools(server: McpServer): void {
     "get_active_orders",
     {
       title: "Get Active Orders",
-      description:
-        "Get all currently active (open) orders on your Revolut X account.",
+      description: `Get all currently active (open) orders on your Revolut X account. The maximum amount user can have is ${ACTIVE_ORDERS_API_LIMIT}.`,
       inputSchema: {
         symbols: z
           .array(z.string())
@@ -152,14 +153,22 @@ export function registerTradingTools(server: McpServer): void {
     {
       title: "Get Historical Orders",
       description:
-        "Get your historical (filled, cancelled, rejected) orders on Revolut X. " +
-        "Always returns 1 complete batch for the given time range. Do not attempt to paginate.",
+        "Get historical (filled, cancelled, rejected) orders on Revolut X. " +
+        "Handles all pagination internally — NEVER call this tool multiple times to paginate or split date ranges. " +
+        "If only start_date is provided, returns ALL orders from that date until now. " +
+        "If neither date is provided, defaults to the last 30 days. " +
+        "If the user asks for 'all orders' or 'all historical orders', set start_date to 2024-05-07 to fetch everything. " +
+        "The earliest supported start_date is 2024-05-07 — any earlier date is clamped to this. " +
+        "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 orders). " +
+        "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit. " +
+        "ALWAYS tell the user the date range used in your response. " +
+        "The symbols parameter accepts multiple trading pairs at once — pass an array to filter by several symbols in one call, or omit it to fetch orders for all pairs.",
       inputSchema: {
-        symbol: z
-          .string()
+        symbols: z
+          .array(z.string())
           .optional()
           .describe(
-            'Filter by trading pair, e.g. "BTC-USD". Omit to get orders for all pairs.',
+            'Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"]. Omit to get orders for all pairs.',
           ),
         order_states: z
           .array(z.enum(["filled", "cancelled", "rejected", "replaced"]))
@@ -175,21 +184,28 @@ export function registerTradingTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Start of date range in standard ISO format (e.g., '2023-01-01' or '2023-01-01T12:00:00Z').",
+            "Start of UTC date range. Accepts ISO format (e.g. '2024-05-07') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
+              "Earliest supported date is 2024-05-07. " +
+              "If only start_date is provided, all orders from this date until now are returned. " +
+              "If omitted, defaults to 30 days before end_date (or 30 days ago when both dates are omitted).",
           ),
         end_date: z
           .string()
           .optional()
           .describe(
-            "End of date range in standard ISO format (e.g., '2023-12-31' or '2023-12-31T23:59:59Z').",
+            "End of UTC date range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
+              "If omitted, defaults to the current timestamp.",
           ),
-        limit: z
+        totalLimit: z
           .number()
           .int()
           .positive()
+          .max(PAGINATED_DATA_MAX_LIMIT)
           .optional()
           .describe(
-            "Maximum total number of orders to return across all pages. Omit to fetch all orders in the date range.",
+            `Maximum total number of orders to return across all paginated batches. Max is ${PAGINATED_DATA_MAX_LIMIT}. ` +
+              "WARNING: If omitted, ALL orders in the date range are returned which may be very large (>10,000). " +
+              "Always ask the user to confirm or suggest a reasonable limit before omitting this parameter.",
           ),
       },
       annotations: {
@@ -200,83 +216,69 @@ export function registerTradingTools(server: McpServer): void {
       },
     },
     async ({
-      symbol,
+      symbols,
       order_states,
       order_types,
       start_date,
       end_date,
-      limit,
+      totalLimit,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
-      if (symbol) {
-        symbol = symbol.trim().toUpperCase();
-        const error = validateSymbol(symbol);
-        if (error) return textResult(error);
+      let normalizedSymbols: string[] | undefined;
+      if (symbols?.length) {
+        normalizedSymbols = symbols.map((s) => s.trim().toUpperCase());
+        for (const sym of normalizedSymbols) {
+          const error = validateSymbol(sym);
+          if (error) return textResult(error);
+        }
       }
 
-      const dates = parseDateRange(start_date, end_date);
+      const dates = parseDateRange(start_date, end_date, {
+        defaultWindowMs: 30 * 24 * 60 * 60 * 1000,
+        minStartDate: new Date("2024-05-07T00:00:00Z").getTime(),
+        endDefaultsToNow: true,
+      });
       if ("error" in dates) return dates.error;
-      const { parsedStartDate, parsedEndDate } = dates;
+      const {
+        parsedStartDate: resolvedStartDate,
+        parsedEndDate: resolvedEndDate,
+      } = dates;
 
       type Order = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getHistoricalOrders"]>
       >["data"][number];
 
-      const allOrders: Order[] = [];
+      let displayOrders: Order[];
 
       try {
-        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-        const endTimeMs = parsedEndDate || Date.now();
-        let currentStart = parsedStartDate || endTimeMs - THIRTY_DAYS_MS;
-        while (currentStart < endTimeMs) {
-          const currentEndMs = Math.min(
-            currentStart + THIRTY_DAYS_MS,
-            endTimeMs,
-          );
-
-          let currentCursor: string | undefined = undefined;
-
-          while (true) {
-            const result = await getRevolutXClient().getHistoricalOrders({
-              symbols: symbol ? [symbol] : undefined,
+        const client = getRevolutXClient();
+        displayOrders = await paginateWithDynamicWindows<Order>({
+          fetchPage: (startDate, endDate, cursor, apiLimit) =>
+            client.getHistoricalOrders({
+              symbols: normalizedSymbols,
               orderStates: order_states,
               orderTypes: order_types,
-              startDate: currentStart,
-              endDate: currentEndMs,
-              cursor: currentCursor,
-              limit: HISTORICAL_ORDERS_API_LIMIT,
-            });
-
-            if (result.data && result.data.length > 0) {
-              if (limit !== undefined) {
-                const remaining = limit - allOrders.length;
-                allOrders.push(...result.data.slice(0, remaining));
-              } else {
-                allOrders.push(...result.data);
-              }
-            }
-
-            if (limit !== undefined && allOrders.length >= limit) break;
-
-            currentCursor = result.metadata?.next_cursor;
-            if (!currentCursor) break;
-          }
-
-          if (limit !== undefined && allOrders.length >= limit) break;
-          currentStart = currentEndMs;
-        }
+              startDate,
+              endDate,
+              cursor,
+              limit: apiLimit,
+            }),
+          startDate: resolvedStartDate,
+          endDate: resolvedEndDate,
+          apiLimit: HISTORICAL_ORDERS_API_LIMIT,
+          userLimit: totalLimit,
+        });
       } catch (error) {
         const handled = await handleApiError(error, SETUP_GUIDE);
         if (handled) return handled;
         throw error;
       }
 
-      const displayOrders =
-        limit !== undefined ? allOrders.slice(0, limit) : allOrders;
-
       if (!displayOrders.length) {
-        return textResult("No historical orders found.");
+        return textResult(
+          `No historical orders found for ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}.`,
+        );
       }
 
       const lines = [`Historical orders (${displayOrders.length} returned):\n`];
@@ -302,6 +304,13 @@ export function registerTradingTools(server: McpServer): void {
         );
       }
 
+      lines.push("");
+      lines.push(
+        `*** NOTE TO LLM: Complete results for ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}. ` +
+          "This is the full dataset — do NOT call this tool again to paginate. " +
+          "ALWAYS ask the user if they need a wider date range (earliest available: 2024-05-07). ***",
+      );
+
       return textResult(lines.join("\n"));
     },
   );
@@ -312,28 +321,42 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Trade History",
       description:
         "Get your personal trade history (fills) for a specific trading pair. " +
-        "Always returns 1 complete batch for the given time range. Do not attempt to paginate.",
+        "Handles all pagination internally — NEVER call this tool multiple times to paginate or split date ranges. " +
+        "If only start_date is provided, returns ALL trades from that date until now. " +
+        "If neither date is provided, defaults to the last 30 days. " +
+        "If the user asks for 'all trades' or 'all trade history', set start_date to 2024-05-07 to fetch everything. " +
+        "The earliest supported start_date is 2024-05-07 — any earlier date is clamped to this. " +
+        "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 trades). " +
+        "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit. " +
+        "ALWAYS tell the user the date range used in your response.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         start_date: z
           .string()
           .optional()
           .describe(
-            "Start of date range in standard ISO format (e.g., '2023-01-01' or '2023-01-01T12:00:00Z').",
+            "Start of UTC date range. Accepts ISO format (e.g. '2024-05-07') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
+              "Earliest supported date is 2024-05-07. " +
+              "If only start_date is provided, all trades from this date until now are returned. " +
+              "If omitted, defaults to 30 days before end_date (or 30 days ago when both dates are omitted).",
           ),
         end_date: z
           .string()
           .optional()
           .describe(
-            "End of date range in standard ISO format (e.g., '2023-12-31' or '2023-12-31T23:59:59Z').",
+            "End of UTC date range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
+              "If omitted, defaults to the current timestamp.",
           ),
-        limit: z
+        totalLimit: z
           .number()
           .int()
           .positive()
+          .max(PAGINATED_DATA_MAX_LIMIT)
           .optional()
           .describe(
-            "Maximum total number of trades to return across all pages. Omit to fetch all trades in the date range.",
+            `Maximum total number of trades to return across all paginated batches. Max is ${PAGINATED_DATA_MAX_LIMIT}. ` +
+              "WARNING: If omitted, ALL trades in the date range are returned which may be very large (>10,000). " +
+              "Always ask the user to confirm or suggest a reasonable limit before omitting this parameter.",
           ),
       },
       annotations: {
@@ -343,72 +366,55 @@ export function registerTradingTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ symbol, start_date, end_date, limit }) => {
+    async ({ symbol, start_date, end_date, totalLimit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      const dates = parseDateRange(start_date, end_date);
+      const dates = parseDateRange(start_date, end_date, {
+        defaultWindowMs: 30 * 24 * 60 * 60 * 1000,
+        minStartDate: new Date("2024-05-07T00:00:00Z").getTime(),
+        endDefaultsToNow: true,
+      });
       if ("error" in dates) return dates.error;
-      const { parsedStartDate, parsedEndDate } = dates;
+      const {
+        parsedStartDate: resolvedStartDate,
+        parsedEndDate: resolvedEndDate,
+      } = dates;
 
       type Trade = Awaited<
         ReturnType<ReturnType<typeof getRevolutXClient>["getPrivateTrades"]>
       >["data"][number];
 
-      const allTrades: Trade[] = [];
+      let displayTrades: Trade[];
 
       try {
-        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-        const endTimeMs = parsedEndDate || Date.now();
-        let currentStart = parsedStartDate || endTimeMs - THIRTY_DAYS_MS;
-        while (currentStart < endTimeMs) {
-          const currentEndMs = Math.min(
-            currentStart + THIRTY_DAYS_MS,
-            endTimeMs,
-          );
-
-          let currentCursor: string | undefined = undefined;
-
-          while (true) {
-            const result = await getRevolutXClient().getPrivateTrades(symbol, {
-              startDate: currentStart,
-              endDate: currentEndMs,
-              cursor: currentCursor,
-              limit: TRADES_API_LIMIT,
-            });
-
-            if (result.data && result.data.length > 0) {
-              if (limit !== undefined) {
-                const remaining = limit - allTrades.length;
-                allTrades.push(...result.data.slice(0, remaining));
-              } else {
-                allTrades.push(...result.data);
-              }
-            }
-
-            if (limit !== undefined && allTrades.length >= limit) break;
-
-            currentCursor = result.metadata?.next_cursor;
-            if (!currentCursor) break;
-          }
-
-          if (limit !== undefined && allTrades.length >= limit) break;
-          currentStart = currentEndMs;
-        }
+        const client = getRevolutXClient();
+        displayTrades = await paginateWithDynamicWindows<Trade>({
+          fetchPage: (startDate, endDate, cursor, apiLimit) =>
+            client.getPrivateTrades(symbol, {
+              startDate,
+              endDate,
+              cursor,
+              limit: apiLimit,
+            }),
+          startDate: resolvedStartDate,
+          endDate: resolvedEndDate,
+          apiLimit: TRADES_API_LIMIT,
+          userLimit: totalLimit,
+        });
       } catch (err) {
         const handled = await handleApiError(err, SETUP_GUIDE);
         if (handled) return handled;
         throw err;
       }
 
-      const displayTrades =
-        limit !== undefined ? allTrades.slice(0, limit) : allTrades;
-
       if (!displayTrades.length)
-        return textResult(`No trade history found for ${symbol}.`);
+        return textResult(
+          `No trade history found for ${symbol} from ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}.`,
+        );
 
       const lines = [
         `Your trades for ${symbol} (${displayTrades.length} returned):\n`,
@@ -429,6 +435,13 @@ export function registerTradingTools(server: McpServer): void {
             `${new Date(t.timestamp).toISOString()}`,
         );
       }
+
+      lines.push("");
+      lines.push(
+        `*** NOTE TO LLM: Complete results for ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}. ` +
+          "This is the full dataset — do NOT call this tool again to paginate. " +
+          "ALWAYS ask the user if they need a wider date range (earliest available: 2024-05-07). ***",
+      );
 
       return textResult(lines.join("\n"));
     },

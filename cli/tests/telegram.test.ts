@@ -11,10 +11,14 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-vi.mock("api-k9x2a", () => ({
-  getConfigDir: () => tempDir,
-  ensureConfigDir: () => {},
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getConfigDir: () => tempDir,
+    ensureConfigDir: () => {},
+  };
+});
 
 const {
   createConnection,

@@ -11,7 +11,11 @@ import {
   validateResolution,
   validateSymbol,
 } from "../shared/_helpers.js";
-import { TRADES_API_LIMIT } from "../constants.js";
+import {
+  PAGINATED_DATA_MAX_LIMIT,
+  TRADES_API_LIMIT,
+  paginateWithDynamicWindows,
+} from "api-k9x2a";
 import { RESOLUTIONS_MAP } from "../shared/common.js";
 
 export function registerMarketDataTools(server: McpServer): void {
@@ -261,13 +265,13 @@ export function registerMarketDataTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Start of time range in standard ISO format (e.g., '2023-01-01' or '2023-01-01T12:00:00Z').",
+            "Start of UTC time range. Accepts ISO format (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago).",
           ),
         end_date: z
           .string()
           .optional()
           .describe(
-            "End of time range in standard ISO format (e.g., '2023-12-31' or '2023-12-31T23:59:59Z').",
+            "End of UTC time range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
           ),
       },
       annotations: {
@@ -371,28 +375,34 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get public Trades",
       description:
-        "Get public trade history for a trading pair. Always returns 1 complete batch of trades for the given time range. Do not attempt to paginate.",
+        "Get public trade history for a trading pair. " +
+        "Handles all pagination internally — NEVER call this tool multiple times to paginate or split date ranges. " +
+        "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 trades). " +
+        "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         start_date: z
           .string()
           .optional()
           .describe(
-            "Start of date range in standard ISO format (e.g., '2023-01-01' or '2023-01-01T12:00:00Z').",
+            "Start of UTC date range. Accepts ISO format (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days before end_date if omitted.",
           ),
         end_date: z
           .string()
           .optional()
           .describe(
-            "End of date range in standard ISO format (e.g., '2023-12-31' or '2023-12-31T23:59:59Z').",
+            "End of UTC date range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
           ),
-        limit: z
+        totalLimit: z
           .number()
           .int()
           .positive()
+          .max(PAGINATED_DATA_MAX_LIMIT)
           .optional()
           .describe(
-            `Maximum total number of trades to return across all pages. Omit to fetch all trades in the date range.`,
+            `Maximum total number of trades to return across all paginated batches. Max is ${PAGINATED_DATA_MAX_LIMIT}. ` +
+              "WARNING: If omitted, ALL trades in the date range are returned which may be very large (>10,000). " +
+              "Always ask the user to confirm or suggest a reasonable limit before omitting this parameter.",
           ),
       },
       annotations: {
@@ -402,7 +412,7 @@ export function registerMarketDataTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ symbol, start_date, end_date, limit }) => {
+    async ({ symbol, start_date, end_date, totalLimit }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
       symbol = symbol.trim().toUpperCase();
@@ -417,57 +427,31 @@ export function registerMarketDataTools(server: McpServer): void {
         ReturnType<ReturnType<typeof getRevolutXClient>["getAllTrades"]>
       >["data"][number];
 
-      const trades: PublicTrade[] = [];
+      let displayTrades: PublicTrade[];
 
       try {
-        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-        const endTimeMs = parsedEndDate || Date.now();
-        let currentStart = parsedStartDate || endTimeMs - THIRTY_DAYS_MS;
-        while (currentStart < endTimeMs) {
-          const currentEndMs = Math.min(
-            currentStart + THIRTY_DAYS_MS,
-            endTimeMs,
-          );
-
-          let currentCursor: string | undefined = undefined;
-
-          while (true) {
-            const result = await getRevolutXClient().getAllTrades(symbol, {
-              startDate: currentStart,
-              endDate: currentEndMs,
-              cursor: currentCursor,
-              limit: TRADES_API_LIMIT,
-            });
-
-            if (result.data && result.data.length > 0) {
-              if (limit !== undefined) {
-                const remaining = limit - trades.length;
-                trades.push(...result.data.slice(0, remaining));
-              } else {
-                trades.push(...result.data);
-              }
-            }
-
-            if (limit !== undefined && trades.length >= limit) break;
-
-            currentCursor = result.metadata?.next_cursor;
-            if (!currentCursor) break;
-          }
-
-          if (limit !== undefined && trades.length >= limit) break;
-          currentStart = currentEndMs;
-        }
+        const client = getRevolutXClient();
+        displayTrades = await paginateWithDynamicWindows<PublicTrade>({
+          fetchPage: (startDate, endDate, cursor, apiLimit) =>
+            client.getAllTrades(symbol, {
+              startDate,
+              endDate,
+              cursor,
+              limit: apiLimit,
+            }),
+          startDate: parsedStartDate,
+          endDate: parsedEndDate,
+          apiLimit: TRADES_API_LIMIT,
+          userLimit: totalLimit,
+        });
       } catch (err) {
         const handled = await handleApiError(err, SETUP_GUIDE);
         if (handled) return handled;
         throw err;
       }
 
-      if (!trades || !trades.length)
+      if (!displayTrades.length)
         return textResult(`No trades found for ${symbol}.`);
-
-      const displayTrades =
-        limit !== undefined ? trades.slice(0, limit) : trades;
       const lines = [
         `All trades for ${symbol} (${displayTrades.length} returned):\n`,
       ];
@@ -487,7 +471,7 @@ export function registerMarketDataTools(server: McpServer): void {
 
       lines.push("");
       lines.push(
-        "*** NOTE TO LLM: This is the complete batch for your request. All trades in the specified date range have been fetched. There is no more data available. ***",
+        `*** NOTE TO LLM: Results above are for the range ${new Date(parsedStartDate).toISOString()} to ${new Date(parsedEndDate).toISOString()}. Do NOT request additional data automatically — ask the user if they want to fetch a different date range first. ***`,
       );
 
       return textResult(lines.join("\n"));

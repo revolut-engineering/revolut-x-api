@@ -79,7 +79,7 @@ export class ForegroundGridBot {
   async run(): Promise<void> {
     this._running = true;
     this._startTime = Date.now();
-    this._client = new RevolutXClient();
+    this._client = new RevolutXClient({ isAgent: true });
     this._connections = loadConnections().filter((c) => c.enabled);
 
     if (!this._client.isAuthenticated) {

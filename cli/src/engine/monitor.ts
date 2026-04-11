@@ -88,7 +88,7 @@ export class ForegroundMonitor {
 
   async run(): Promise<void> {
     this._running = true;
-    this._client = new RevolutXClient();
+    this._client = new RevolutXClient({ isAgent: true });
     if (!this._client.isAuthenticated) {
       throw new Error(
         "API credentials not configured. Run 'revx configure' first.",

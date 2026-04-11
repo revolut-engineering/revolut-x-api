@@ -1,5 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import {
+  type Trade,
+  paginateWithDynamicWindows,
+  TRADES_API_LIMIT,
+} from "api-k9x2a";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
 import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
@@ -9,7 +14,6 @@ import {
   printTable,
   type ColumnDef,
 } from "../output/formatter.js";
-import { Trade } from "api-k9x2a";
 
 type PublicTrade = {
   id: string;
@@ -98,46 +102,23 @@ Examples:
           const endTimeMs = opts.endDate
             ? parseTimestamp(opts.endDate)
             : Date.now();
-          let currentStart = opts.startDate
+          const startTimeMs = opts.startDate
             ? parseTimestamp(opts.startDate)
             : endTimeMs - THIRTY_DAYS_MS;
 
-          const allTrades: Trade[] = [];
-
-          while (currentStart < endTimeMs) {
-            const currentEndMs = Math.min(
-              currentStart + THIRTY_DAYS_MS,
-              endTimeMs,
-            );
-            let cursor: string | undefined = undefined;
-
-            while (true) {
-              const result = await client.getPrivateTrades(cleanSymbol, {
-                startDate: currentStart,
-                endDate: currentEndMs,
+          const allTrades = await paginateWithDynamicWindows<Trade>({
+            fetchPage: (startDate, endDate, cursor, apiLimit) =>
+              client.getPrivateTrades(cleanSymbol, {
+                startDate,
+                endDate,
                 cursor,
-              });
-
-              if (result.data.length > 0) {
-                if (userLimit !== undefined) {
-                  allTrades.push(
-                    ...result.data.slice(0, userLimit - allTrades.length),
-                  );
-                } else {
-                  allTrades.push(...result.data);
-                }
-              }
-
-              if (userLimit !== undefined && allTrades.length >= userLimit)
-                break;
-
-              cursor = result.metadata?.next_cursor;
-              if (!cursor) break;
-            }
-
-            if (userLimit !== undefined && allTrades.length >= userLimit) break;
-            currentStart = currentEndMs;
-          }
+                limit: apiLimit,
+              }),
+            startDate: startTimeMs,
+            endDate: endTimeMs,
+            apiLimit: TRADES_API_LIMIT,
+            userLimit,
+          });
 
           if (isJsonOutput(opts)) {
             printJson({ data: allTrades });
@@ -153,6 +134,7 @@ Examples:
             } else {
               printTable(allTrades, [
                 { header: "Trade ID", key: "id" },
+                { header: "Order ID", key: "orderId" },
                 { header: "Symbol", key: "symbol" },
                 {
                   header: "Side",
@@ -214,46 +196,23 @@ Examples:
           const endTimeMs = opts.endDate
             ? parseTimestamp(opts.endDate)
             : Date.now();
-          let currentStart = opts.startDate
+          const startTimeMs = opts.startDate
             ? parseTimestamp(opts.startDate)
             : endTimeMs - THIRTY_DAYS_MS;
 
-          const allTrades: PublicTrade[] = [];
-
-          while (currentStart < endTimeMs) {
-            const currentEndMs = Math.min(
-              currentStart + THIRTY_DAYS_MS,
-              endTimeMs,
-            );
-            let cursor: string | undefined = undefined;
-
-            while (true) {
-              const result = await client.getAllTrades(cleanSymbol, {
-                startDate: currentStart,
-                endDate: currentEndMs,
+          const allTrades = await paginateWithDynamicWindows<PublicTrade>({
+            fetchPage: (startDate, endDate, cursor, apiLimit) =>
+              client.getAllTrades(cleanSymbol, {
+                startDate,
+                endDate,
                 cursor,
-              });
-
-              if (result.data.length > 0) {
-                if (userLimit !== undefined) {
-                  allTrades.push(
-                    ...result.data.slice(0, userLimit - allTrades.length),
-                  );
-                } else {
-                  allTrades.push(...result.data);
-                }
-              }
-
-              if (userLimit !== undefined && allTrades.length >= userLimit)
-                break;
-
-              cursor = result.metadata?.next_cursor;
-              if (!cursor) break;
-            }
-
-            if (userLimit !== undefined && allTrades.length >= userLimit) break;
-            currentStart = currentEndMs;
-          }
+                limit: apiLimit,
+              }),
+            startDate: startTimeMs,
+            endDate: endTimeMs,
+            apiLimit: TRADES_API_LIMIT,
+            userLimit,
+          });
 
           if (isJsonOutput(opts)) {
             printJson({ data: allTrades });

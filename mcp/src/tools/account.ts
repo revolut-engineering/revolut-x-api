@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { textResult } from "../shared/_helpers.js";
+import { handleApiError, textResult } from "../shared/_helpers.js";
 
 export function registerAccountTools(server: McpServer): void {
   server.registerTool(
@@ -17,15 +17,13 @@ export function registerAccountTools(server: McpServer): void {
     },
     async () => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-      const { AuthNotConfiguredError } = await import("api-k9x2a");
 
       let balances;
       try {
         balances = await getRevolutXClient().getBalances();
       } catch (error) {
-        if (error instanceof AuthNotConfiguredError) {
-          return textResult(SETUP_GUIDE);
-        }
+        const handled = await handleApiError(error, SETUP_GUIDE);
+        if (handled) return handled;
         throw error;
       }
 

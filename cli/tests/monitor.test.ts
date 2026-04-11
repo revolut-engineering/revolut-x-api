@@ -6,16 +6,20 @@ const mockGetTickers = vi.fn();
 const mockGetCandles = vi.fn();
 const mockGetOrderBook = vi.fn();
 
-vi.mock("api-k9x2a", () => ({
-  RevolutXClient: vi.fn().mockImplementation(() => ({
-    isAuthenticated: true,
-    getTickers: mockGetTickers,
-    getCandles: mockGetCandles,
-    getOrderBook: mockGetOrderBook,
-  })),
-  getConfigDir: () => "/tmp/revx-test",
-  ensureConfigDir: () => {},
-}));
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    RevolutXClient: vi.fn().mockImplementation(() => ({
+      isAuthenticated: true,
+      getTickers: mockGetTickers,
+      getCandles: mockGetCandles,
+      getOrderBook: mockGetOrderBook,
+    })),
+    getConfigDir: () => "/tmp/revx-test",
+    ensureConfigDir: () => {},
+  };
+});
 
 const mockSendWithRetries = vi.fn();
 vi.mock("../src/engine/notify.js", () => ({

@@ -1,6 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import type { Order } from "api-k9x2a";
+import {
+  type Order,
+  paginateWithDynamicWindows,
+  HISTORICAL_ORDERS_API_LIMIT,
+} from "api-k9x2a";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
 import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
@@ -111,9 +115,19 @@ const OPEN_ORDER_COLUMNS: ColumnDef<Order>[] = [
       return conds.join(", ") || chalk.dim("—");
     },
   },
+  {
+    header: "Created",
+    accessor: (o) => new Date(o.created_date).toISOString(),
+  },
 ];
 
-const HISTORY_ORDER_COLUMNS: ColumnDef<Order>[] = [...COMMON_ORDER_COLUMNS];
+const HISTORY_ORDER_COLUMNS: ColumnDef<Order>[] = [
+  ...COMMON_ORDER_COLUMNS,
+  {
+    header: "Created",
+    accessor: (o) => new Date(o.created_date).toISOString(),
+  },
+];
 
 export function registerOrderCommand(program: Command): void {
   const order = program
@@ -362,50 +376,24 @@ Examples:
           const endTimeMs = opts.endDate
             ? parseTimestamp(opts.endDate)
             : Date.now();
-          let currentStart = opts.startDate
+          const startTimeMs = opts.startDate
             ? parseTimestamp(opts.startDate)
             : endTimeMs - THIRTY_DAYS_MS;
 
-          type HistOrder = Awaited<
-            ReturnType<typeof client.getHistoricalOrders>
-          >["data"][number];
-          const allOrders: HistOrder[] = [];
-
-          while (currentStart < endTimeMs) {
-            const currentEndMs = Math.min(
-              currentStart + THIRTY_DAYS_MS,
-              endTimeMs,
-            );
-            let cursor: string | undefined = undefined;
-
-            while (true) {
-              const result = await client.getHistoricalOrders({
+          const allOrders = await paginateWithDynamicWindows<Order>({
+            fetchPage: (startDate, endDate, cursor, apiLimit) =>
+              client.getHistoricalOrders({
                 ...baseOpts,
-                startDate: currentStart,
-                endDate: currentEndMs,
+                startDate,
+                endDate,
                 cursor,
-              });
-
-              if (result.data.length > 0) {
-                if (userLimit !== undefined) {
-                  allOrders.push(
-                    ...result.data.slice(0, userLimit - allOrders.length),
-                  );
-                } else {
-                  allOrders.push(...result.data);
-                }
-              }
-
-              if (userLimit !== undefined && allOrders.length >= userLimit)
-                break;
-
-              cursor = result.metadata?.next_cursor;
-              if (!cursor) break;
-            }
-
-            if (userLimit !== undefined && allOrders.length >= userLimit) break;
-            currentStart = currentEndMs;
-          }
+                limit: apiLimit,
+              }),
+            startDate: startTimeMs,
+            endDate: endTimeMs,
+            apiLimit: HISTORICAL_ORDERS_API_LIMIT,
+            userLimit,
+          });
 
           if (isJsonOutput(opts)) {
             printJson({ data: allOrders });

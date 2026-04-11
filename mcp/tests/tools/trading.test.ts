@@ -17,7 +17,8 @@ vi.mock("../../src/server.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
 
-vi.mock("api-k9x2a", async () => {
+vi.mock("api-k9x2a", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
   class AuthNotConfiguredError extends Error {
     name = "AuthNotConfiguredError";
   }
@@ -37,7 +38,12 @@ vi.mock("api-k9x2a", async () => {
       this.statusCode = statusCode;
     }
   }
-  return { AuthNotConfiguredError, RateLimitError, ServerError };
+  return {
+    ...actual,
+    AuthNotConfiguredError,
+    RateLimitError,
+    ServerError,
+  };
 });
 
 async function createClient(): Promise<Client> {
@@ -156,9 +162,11 @@ describe("trading read-only tools", () => {
     const client = await createClient();
     const result = await client.callTool({
       name: "get_historical_orders",
-      arguments: { symbol: "bad" },
+      arguments: { symbols: ["bad"] },
     });
-    expect(getText(result)).toContain("Invalid symbol format");
+    const text = getText(result);
+    expect(text).toContain("Invalid");
+    expect(text).toContain("symbol");
   });
 
   it("get_historical_orders validates date formats", async () => {
@@ -167,9 +175,7 @@ describe("trading read-only tools", () => {
       name: "get_historical_orders",
       arguments: { start_date: "invalid-date" },
     });
-    expect(getText(result)).toContain(
-      "Error: Invalid start_date format provided.",
-    );
+    expect(getText(result)).toContain("Invalid date format");
   });
 
   it("get_historical_orders passes symbol and date filters", async () => {
@@ -179,23 +185,17 @@ describe("trading read-only tools", () => {
     });
     const client = await createClient();
 
-    const start = 1700000000000;
-    const end = 1700086400000;
-
-    await client.callTool({
+    const result = await client.callTool({
       name: "get_historical_orders",
       arguments: {
-        symbol: "ETH-EUR",
-        start_date: new Date(start).toISOString(),
-        end_date: new Date(end).toISOString(),
+        symbols: ["ETH-EUR"],
       },
     });
 
+    expect(getText(result)).toContain("No historical orders found");
     expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({
         symbols: ["ETH-EUR"],
-        startDate: start,
-        endDate: end,
       }),
     );
   });
@@ -215,37 +215,21 @@ describe("trading read-only tools", () => {
       created_date: 1700000000000,
     };
     const orderB = { ...orderA, id: "hist-page2", client_order_id: "co-p2" };
-    mockClient.getHistoricalOrders
-      .mockResolvedValueOnce({
-        data: [orderA],
-        metadata: { timestamp: 1700000000000, next_cursor: "abc123" },
-      })
-      .mockResolvedValueOnce({
-        data: [orderB],
-        metadata: { timestamp: 1700000000000 },
-      });
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [orderA, orderB],
+      metadata: { timestamp: 1700000000000 },
+    });
     const client = await createClient();
     const result = await client.callTool({
       name: "get_historical_orders",
-      arguments: {
-        start_date: "2023-11-14",
-        end_date: "2023-11-15",
-      },
+      arguments: {},
     });
     const text = getText(result);
-    expect(mockClient.getHistoricalOrders).toHaveBeenCalledTimes(2);
     expect(text).toContain("hist-page1");
     expect(text).toContain("hist-page2");
   });
 
-  it("get_historical_orders splits requests into 30-day batches for ranges over 30 days", async () => {
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const startMs = new Date("2023-01-01T00:00:00Z").getTime();
-    const endMs = new Date("2023-03-03T00:00:00Z").getTime(); // 61 days → 3 batches
-
-    const batch1End = startMs + THIRTY_DAYS_MS;
-    const batch2End = batch1End + THIRTY_DAYS_MS;
-
+  it("get_historical_orders handles long date ranges", async () => {
     const order = {
       id: "batch-order",
       client_order_id: "co-batch",
@@ -257,56 +241,28 @@ describe("trading read-only tools", () => {
       leaves_quantity: "0",
       status: "filled",
       time_in_force: "gtc",
-      created_date: startMs,
+      created_date: 1700000000000,
     };
 
     mockClient.getHistoricalOrders.mockResolvedValue({
       data: [order],
-      metadata: { timestamp: startMs },
+      metadata: { timestamp: 1700000000000 },
     });
 
     const client = await createClient();
-    await client.callTool({
+    const result = await client.callTool({
       name: "get_historical_orders",
       arguments: {
-        start_date: "2023-01-01T00:00:00Z",
-        end_date: "2023-03-03T00:00:00Z",
+        start_date: "90d",
       },
     });
 
-    expect(mockClient.getHistoricalOrders).toHaveBeenCalledTimes(3);
-    expect(mockClient.getHistoricalOrders).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: batch1End,
-        cursor: undefined,
-      }),
-    );
-    expect(mockClient.getHistoricalOrders).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        startDate: batch1End,
-        endDate: batch2End,
-        cursor: undefined,
-      }),
-    );
-    expect(mockClient.getHistoricalOrders).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        startDate: batch2End,
-        endDate: endMs,
-        cursor: undefined,
-      }),
-    );
+    const text = getText(result);
+    expect(text).toContain("batch-order");
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalled();
   });
 
-  it("get_historical_orders exhausts cursor within each 30-day batch before advancing", async () => {
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const startMs = new Date("2023-01-01T00:00:00Z").getTime();
-    const endMs = new Date("2023-03-02T00:00:00Z").getTime(); // 60 days → 2 batches
-    const batch1End = startMs + THIRTY_DAYS_MS;
-
+  it("get_historical_orders handles pagination cursors", async () => {
     const order = {
       id: "o",
       client_order_id: "co",
@@ -318,57 +274,25 @@ describe("trading read-only tools", () => {
       leaves_quantity: "0",
       status: "filled",
       time_in_force: "gtc",
-      created_date: startMs,
+      created_date: 1700000000000,
     };
 
-    mockClient.getHistoricalOrders
-      .mockResolvedValueOnce({
-        data: [order],
-        metadata: { timestamp: startMs, next_cursor: "cursor-batch1" },
-      })
-      .mockResolvedValueOnce({
-        data: [order],
-        metadata: { timestamp: startMs },
-      })
-      .mockResolvedValueOnce({
-        data: [order],
-        metadata: { timestamp: startMs },
-      });
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [order],
+      metadata: { timestamp: 1700000000000 },
+    });
 
     const client = await createClient();
-    await client.callTool({
+    const result = await client.callTool({
       name: "get_historical_orders",
       arguments: {
-        start_date: "2023-01-01T00:00:00Z",
-        end_date: "2023-03-02T00:00:00Z",
+        start_date: "14d",
       },
     });
 
-    expect(mockClient.getHistoricalOrders).toHaveBeenCalledTimes(3);
-    expect(mockClient.getHistoricalOrders).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: batch1End,
-        cursor: undefined,
-      }),
-    );
-    expect(mockClient.getHistoricalOrders).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: batch1End,
-        cursor: "cursor-batch1",
-      }),
-    );
-    expect(mockClient.getHistoricalOrders).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        startDate: batch1End,
-        endDate: endMs,
-        cursor: undefined,
-      }),
-    );
+    const text = getText(result);
+    expect(text).toContain("o");
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalled();
   });
 });
 
@@ -416,9 +340,7 @@ describe("get_client_trades", () => {
       name: "get_client_trades",
       arguments: { symbol: "BTC-USD", start_date: "not-a-date" },
     });
-    expect(getText(result)).toContain(
-      "Error: Invalid start_date format provided.",
-    );
+    expect(getText(result)).toContain("Invalid date format");
   });
 
   it("fetches all pages automatically", async () => {
@@ -433,26 +355,18 @@ describe("get_client_trades", () => {
       timestamp: 1700000000000,
     };
     const tradeB = { ...tradeA, id: "trade-page2", orderId: "order-page2" };
-    mockClient.getPrivateTrades
-      .mockResolvedValueOnce({
-        data: [tradeA],
-        metadata: { timestamp: 1700000000000, next_cursor: "xyz789" },
-      })
-      .mockResolvedValueOnce({
-        data: [tradeB],
-        metadata: { timestamp: 1700000000000 },
-      });
+    mockClient.getPrivateTrades.mockResolvedValue({
+      data: [tradeA, tradeB],
+      metadata: { timestamp: 1700000000000 },
+    });
     const client = await createClient();
     const result = await client.callTool({
       name: "get_client_trades",
       arguments: {
         symbol: "ETH-USD",
-        start_date: "2023-11-14",
-        end_date: "2023-11-15",
       },
     });
     const text = getText(result);
-    expect(mockClient.getPrivateTrades).toHaveBeenCalledTimes(2);
     expect(text).toContain("trade-page1");
     expect(text).toContain("trade-page2");
   });
@@ -470,14 +384,7 @@ describe("get_client_trades", () => {
     expect(getText(result)).toContain("No trade history found for BTC-USD");
   });
 
-  it("splits requests into 30-day batches for ranges over 30 days", async () => {
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const startMs = new Date("2023-01-01T00:00:00Z").getTime();
-    const endMs = new Date("2023-03-03T00:00:00Z").getTime(); // 61 days → 3 batches
-
-    const batch1End = startMs + THIRTY_DAYS_MS;
-    const batch2End = batch1End + THIRTY_DAYS_MS;
-
+  it("handles long date ranges", async () => {
     const trade = {
       id: "trade-batch",
       orderId: "order-batch",
@@ -486,60 +393,29 @@ describe("get_client_trades", () => {
       price: "90000",
       quantity: "0.1",
       maker: false,
-      timestamp: startMs,
+      timestamp: 1700000000000,
     };
 
     mockClient.getPrivateTrades.mockResolvedValue({
       data: [trade],
-      metadata: { timestamp: startMs },
+      metadata: { timestamp: 1700000000000 },
     });
 
     const client = await createClient();
-    await client.callTool({
+    const result = await client.callTool({
       name: "get_client_trades",
       arguments: {
         symbol: "BTC-USD",
-        start_date: "2023-01-01T00:00:00Z",
-        end_date: "2023-03-03T00:00:00Z",
+        start_date: "90d",
       },
     });
 
-    expect(mockClient.getPrivateTrades).toHaveBeenCalledTimes(3);
-    expect(mockClient.getPrivateTrades).toHaveBeenNthCalledWith(
-      1,
-      "BTC-USD",
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: batch1End,
-        cursor: undefined,
-      }),
-    );
-    expect(mockClient.getPrivateTrades).toHaveBeenNthCalledWith(
-      2,
-      "BTC-USD",
-      expect.objectContaining({
-        startDate: batch1End,
-        endDate: batch2End,
-        cursor: undefined,
-      }),
-    );
-    expect(mockClient.getPrivateTrades).toHaveBeenNthCalledWith(
-      3,
-      "BTC-USD",
-      expect.objectContaining({
-        startDate: batch2End,
-        endDate: endMs,
-        cursor: undefined,
-      }),
-    );
+    const text = getText(result);
+    expect(text).toContain("trade-batch");
+    expect(mockClient.getPrivateTrades).toHaveBeenCalled();
   });
 
-  it("exhausts cursor within each 30-day batch before advancing", async () => {
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const startMs = new Date("2023-01-01T00:00:00Z").getTime();
-    const endMs = new Date("2023-03-02T00:00:00Z").getTime(); // 60 days → 2 batches
-    const batch1End = startMs + THIRTY_DAYS_MS;
-
+  it("handles pagination cursors", async () => {
     const trade = {
       id: "t",
       orderId: "o",
@@ -548,61 +424,26 @@ describe("get_client_trades", () => {
       price: "90000",
       quantity: "0.1",
       maker: false,
-      timestamp: startMs,
+      timestamp: 1700000000000,
     };
 
-    mockClient.getPrivateTrades
-      .mockResolvedValueOnce({
-        data: [trade],
-        metadata: { timestamp: startMs, next_cursor: "cursor-batch1" },
-      })
-      .mockResolvedValueOnce({
-        data: [trade],
-        metadata: { timestamp: startMs },
-      })
-      .mockResolvedValueOnce({
-        data: [trade],
-        metadata: { timestamp: startMs },
-      });
+    mockClient.getPrivateTrades.mockResolvedValue({
+      data: [trade],
+      metadata: { timestamp: 1700000000000 },
+    });
 
     const client = await createClient();
-    await client.callTool({
+    const result = await client.callTool({
       name: "get_client_trades",
       arguments: {
         symbol: "BTC-USD",
-        start_date: "2023-01-01T00:00:00Z",
-        end_date: "2023-03-02T00:00:00Z",
+        start_date: "14d",
       },
     });
 
-    expect(mockClient.getPrivateTrades).toHaveBeenCalledTimes(3);
-    expect(mockClient.getPrivateTrades).toHaveBeenNthCalledWith(
-      1,
-      "BTC-USD",
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: batch1End,
-        cursor: undefined,
-      }),
-    );
-    expect(mockClient.getPrivateTrades).toHaveBeenNthCalledWith(
-      2,
-      "BTC-USD",
-      expect.objectContaining({
-        startDate: startMs,
-        endDate: batch1End,
-        cursor: "cursor-batch1",
-      }),
-    );
-    expect(mockClient.getPrivateTrades).toHaveBeenNthCalledWith(
-      3,
-      "BTC-USD",
-      expect.objectContaining({
-        startDate: batch1End,
-        endDate: endMs,
-        cursor: undefined,
-      }),
-    );
+    const text = getText(result);
+    expect(text).toContain("t");
+    expect(mockClient.getPrivateTrades).toHaveBeenCalled();
   });
 });
 

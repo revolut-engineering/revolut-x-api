@@ -21,9 +21,23 @@ export async function handleApiError(
   error: unknown,
   setupGuide: string,
 ): Promise<ReturnType<typeof textResult> | null> {
-  const { AuthNotConfiguredError, RateLimitError, ServerError } =
-    await import("api-k9x2a");
+  const {
+    AuthNotConfiguredError,
+    RateLimitError,
+    ServerError,
+    ForbiddenError,
+  } = await import("api-k9x2a");
   if (error instanceof AuthNotConfiguredError) return textResult(setupGuide);
+  if (error instanceof ForbiddenError) {
+    const suggestions = [
+      "• Go to Revolut X → Profile → Add public key",
+      "• Check your API scopes to ensure you have the correct permissions",
+      "• Ensure the 'CLI/MCP usage' flag is enabled",
+    ];
+    return textResult(
+      `Access Forbidden\n\nHow to fix this:\n${suggestions.join("\n")}`,
+    );
+  }
   if (error instanceof RateLimitError) {
     const retry = error.retryAfter ? ` Retry after ${error.retryAfter}ms.` : "";
     return textResult(`Rate limit exceeded.${retry}`);
@@ -52,39 +66,76 @@ export function validateResolution(
   return null;
 }
 
+const RELATIVE_DATE_PATTERN = /^(\d+)(m|h|d)$/;
+const RELATIVE_UNITS: Record<string, number> = {
+  m: 60 * 1000,
+  h: 60 * 60 * 1000,
+  d: 24 * 60 * 60 * 1000,
+};
+
+function parseRelativeDate(value: string): number | null {
+  const match = RELATIVE_DATE_PATTERN.exec(value);
+  if (!match) return null;
+  const amount = parseInt(match[1], 10);
+  const unitMs = RELATIVE_UNITS[match[2]];
+  return Date.now() - amount * unitMs;
+}
+
+function parseDate(value: string): number | { error: string } {
+  const relative = parseRelativeDate(value);
+  if (relative !== null) return relative;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) {
+    return {
+      error:
+        `Invalid date format: '${value}'. ` +
+        "Use ISO 8601 (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d').",
+    };
+  }
+  return d.getTime();
+}
+
 export function parseDateRange(
   start_date: string | undefined,
   end_date: string | undefined,
+  options?: {
+    defaultWindowMs?: number;
+    minStartDate?: number;
+    endDefaultsToNow?: boolean;
+  },
 ):
   | { error: ReturnType<typeof textResult> }
-  | { parsedStartDate: number | undefined; parsedEndDate: number | undefined } {
-  let parsedStartDate: number | undefined = undefined;
+  | { parsedStartDate: number; parsedEndDate: number } {
+  const defaultWindowMs = options?.defaultWindowMs ?? 7 * 24 * 60 * 60 * 1000;
+
+  let parsedStartDate: number | undefined;
   if (start_date) {
-    const ds = new Date(start_date);
-    if (isNaN(ds.getTime())) {
-      return {
-        error: textResult(
-          "Error: Invalid start_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-        ),
-      };
-    }
-    parsedStartDate = ds.getTime();
+    const startResult = parseDate(start_date);
+    if (typeof startResult === "object")
+      return { error: textResult(`Error: ${startResult.error}`) };
+    parsedStartDate = startResult;
   }
 
-  let parsedEndDate: number | undefined = undefined;
+  let parsedEndDate: number | undefined;
   if (end_date) {
-    const de = new Date(end_date);
-    if (isNaN(de.getTime())) {
-      return {
-        error: textResult(
-          "Error: Invalid end_date format provided. Please use ISO 8601 format like 'YYYY-MM-DD'.",
-        ),
-      };
-    }
-    parsedEndDate = de.getTime();
+    const endResult = parseDate(end_date);
+    if (typeof endResult === "object")
+      return { error: textResult(`Error: ${endResult.error}`) };
+    parsedEndDate = endResult;
   }
 
-  return { parsedStartDate, parsedEndDate };
+  const resolvedEndDate =
+    parsedEndDate ??
+    (parsedStartDate !== undefined && !options?.endDefaultsToNow
+      ? parsedStartDate + defaultWindowMs
+      : Date.now());
+  let resolvedStartDate = parsedStartDate ?? resolvedEndDate - defaultWindowMs;
+
+  if (options?.minStartDate !== undefined) {
+    resolvedStartDate = Math.max(resolvedStartDate, options.minStartDate);
+  }
+
+  return { parsedStartDate: resolvedStartDate, parsedEndDate: resolvedEndDate };
 }
 
 export function formatDescription(
