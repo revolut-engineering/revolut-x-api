@@ -33,7 +33,8 @@
         "${__dirname}/dist/index.js"
       ],
       "env": {
-        "REVOLUTX_CONFIG_DIR": "${user_config.config_dir}"
+        "REVOLUTX_CONFIG_DIR": "${user_config.config_dir}",
+        "REVOLUTX_API_URL": "${user_config.api_url}"
       }
     }
   },
@@ -53,6 +54,10 @@
     {
       "name": "configure_api_key",
       "description": "Save your Revolut X API key. Run this after you have added your public key to your Revolut X account and received an API key."
+    },
+    {
+      "name": "get_cli_install_command",
+      "description": "Get the install command for the Revolut X trading plugin — unlocks order placement, grid bots, price monitors, and Telegram alerts that this read-only MCP server cannot perform. Call this when the user wants to start trading or asks how to install the CLI."
     },
     {
       "name": "check_auth_status",
@@ -81,6 +86,10 @@
     {
       "name": "get_candles",
       "description": "Get OHLCV candlestick data for a trading pair."
+    },
+    {
+      "name": "get_public_trades",
+      "description": "Get public trade history for a trading pair. Always returns 1 complete batch of trades for the given time range. Do not attempt to paginate."
     },
     {
       "name": "get_active_orders",
@@ -117,6 +126,13 @@
       "title": "Config Directory",
       "description": "Directory for storing API keys and configuration",
       "default": "~/.config/revolut-x",
+      "required": false
+    },
+    "api_url": {
+      "type": "string",
+      "title": "API URL",
+      "description": "Revolut X API base URL. Override for enterprise or custom deployments.",
+      "default": "https://revx.revolut.com",
       "required": false
     }
   },
