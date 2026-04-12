@@ -4,12 +4,12 @@ Monorepo for open-source tooling around the [Revolut X](https://exchange.revolut
 
 ## Packages
 
-| Package | Description                                                                                                                                                                           |
-|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [`api/`](api/) | Typed HTTP client for the Revolut X REST API. Zero runtime dependencies — Node.js built-ins only.                                                                                     |
-| [`mcp/`](mcp/) | MCP server exposing tools for market data, account management, orders, monitoring, and grid strategy backtests. Use with Claude Desktop, Claude Code, or any MCP-compatible client. |
-| [`cli/`](cli/) | `revx` command-line interface for trading, monitoring, and running grid bots from the terminal.                                                                                       |
-| [`skills/`](skills/) | Claude Code skills —  focused `revx` CLI command references (auth, market, account, trading, monitor, telegram, strategy).                                                            |
+| Package              | Description                                                                                                                                                                         |
+|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [`api/`](api/)       | Typed HTTP client for the Revolut X REST API. Zero runtime dependencies — Node.js built-ins only.                                                                                   |
+| [`mcp/`](mcp/)       | MCP server exposing tools for market data, account management, orders, monitoring, and grid strategy backtests. Use with Claude Desktop, Claude Code, or any MCP-compatible client. |
+| [`cli/`](cli/)       | `revx` command-line interface for trading, monitoring, and running grid bots from the terminal.                                                                                     |
+| [`skills/`](skills/) | Claude Code skills —  focused `revx` CLI command references (auth, market, account, trading, monitor, telegram, strategy).                                                          |
 
 ---
 
@@ -288,6 +288,40 @@ This installs skills that teach Claude how to use the `revx` CLI.
 ```bash
 gemini extensions install https://github.com/revolut-engineering/revolut-x-api
 ```
+
+---
+
+## Security
+
+The MCP server and CLI handle cryptographic keys that authorize real trades on your Revolut X account. Follow these guidelines to minimize risk.
+
+### Private key protection
+
+- Keep your Ed25519 private key file (`private.pem`) readable only by your user account. On macOS/Linux the installer sets `chmod 600` automatically — verify with `ls -l ~/.config/revolut-x/private.pem`.
+- Never share, commit, or copy your private key to another machine. If compromised, rotate it immediately in your Revolut X account under Profile > API Keys.
+- Consider encrypting the config directory with your OS disk encryption (FileVault, BitLocker, LUKS).
+
+### Network isolation
+
+The MCP server and API client connect exclusively to `https://revx.revolut.com`. No other outbound connections are required.
+
+If your environment supports network policies (firewalls, container networking, proxy allowlists), restrict the server's outbound access to this single endpoint. This prevents a compromised dependency from exfiltrating data to an unrelated host.
+
+### Filesystem sandboxing
+
+The MCP server needs read access to a single directory (`~/.config/revolut-x/` by default). It does not need access to your home directory, project files, or any other path.
+
+When running in a container or sandboxed environment, mount only the config directory and the server bundle — nothing else.
+
+### MCP server scope
+
+The MCP server is **read-only by design** — it cannot place, modify, or cancel orders. All tool descriptions enforce this boundary and instruct the AI assistant not to attempt write operations.
+
+The server is self-contained: it calls the Revolut X REST API directly and does not depend on or invoke the `revx` CLI. In MCP hosts with shell access (Claude Code, Cursor, VS Code), always review any terminal commands before approving execution.
+
+### Responsible disclosure
+
+If you discover a security vulnerability, please report it via [GitHub Issues](https://github.com/revolut-engineering/revolut-x-api/issues) with the **security** label, or contact the maintainers directly. Do not disclose vulnerabilities publicly before a fix is available.
 
 ---
 
