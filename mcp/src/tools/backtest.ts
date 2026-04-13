@@ -401,11 +401,11 @@ export function registerBacktestTools(server: McpServer): void {
           .describe('Total investment in quote currency (default "1000").'),
         resolution: z
           .string()
-          .default("1h")
+          .default("1m")
           .describe('Candle interval (default "1h").'),
         days: z
           .number()
-          .default(30)
+          .default(3)
           .describe("Days of historical data to fetch (default 30)."),
         grid_levels_options: z
           .string()
