@@ -54,6 +54,7 @@ export class ForegroundGridBot {
   private _pairInfo: CurrencyPair | null = null;
   private _connections: TelegramConnection[] = [];
   private _boundaryAlerted = false;
+  private _lastNotifyOk = 0;
 
   constructor(config: GridBotConfig) {
     this._config = config;
@@ -191,10 +192,37 @@ export class ForegroundGridBot {
     console.log(renderShutdownSummary(this._state, currentPrice, remaining));
 
     const s = this._state.stats;
-    this._notify(
-      `Grid Bot stopped: ${this._state.pair} | ` +
-        `${s.totalBuys} buys, ${s.totalSells} sells | ` +
-        `P&L: $${new Decimal(s.realizedPnl).toFixed(2)}`,
+    let totalBaseHeld = new Decimal(0);
+    let costBasis = new Decimal(0);
+    for (const lv of this._state.levels) {
+      if (lv.hasPosition) {
+        const held = new Decimal(lv.baseHeld);
+        totalBaseHeld = totalBaseHeld.plus(held);
+        const cost =
+          lv.fillCost && lv.fillCost !== "0"
+            ? new Decimal(lv.fillCost)
+            : held.times(new Decimal(lv.price));
+        costBasis = costBasis.plus(cost);
+      }
+    }
+    const realizedPnl = new Decimal(s.realizedPnl);
+    const unrealized = totalBaseHeld.times(currentPrice).minus(costBasis);
+    const totalPnl = realizedPnl.plus(unrealized);
+    const investment = new Decimal(this._state.config.investment);
+    const netValue = investment.plus(totalPnl);
+
+    const fmtSigned = (v: Decimal) => {
+      const sign = v.gte(0) ? "+" : "";
+      return `${sign}$${v.toFixed(2)}`;
+    };
+
+    await this._notifyAndWait(
+      `Grid Bot stopped: ${this._state.pair}\n` +
+        `${s.totalBuys} buys, ${s.totalSells} sells\n` +
+        `Realized P&L: ${fmtSigned(realizedPnl)}\n` +
+        `Unrealized: ${fmtSigned(unrealized)}\n` +
+        `Total P&L: ${fmtSigned(totalPnl)}\n` +
+        `Net Value: $${netValue.toFixed(2)}`,
     );
   }
 
@@ -289,16 +317,20 @@ export class ForegroundGridBot {
     const upper = gridPrice.times(new Decimal(1).plus(rangePct));
 
     if (currentPrice.lt(lower) || currentPrice.gt(upper)) {
-      const direction = currentPrice.lt(lower) ? "below" : "above";
-      const boundary = currentPrice.lt(lower) ? lower : upper;
+      const below = currentPrice.lt(lower);
+      const direction = below ? "below" : "above";
+      const boundary = below ? lower : upper;
       this._warnings.push(
         `Price ${direction} grid range ($${boundary.toFixed(2)})`,
       );
       if (!this._boundaryAlerted) {
         this._boundaryAlerted = true;
+        const risk = below
+          ? "Buy orders may keep filling without matching sells — accumulating inventory."
+          : "Price is above all grid levels — bot is idle with no active orders.";
         this._notify(
           `Grid Bot ${state.pair}: Price exited grid range (${direction} $${boundary.toFixed(2)}). ` +
-            `Current: $${currentPrice.toFixed(2)}. Bot may be accumulating inventory without recovery.`,
+            `Current: $${currentPrice.toFixed(2)}. ${risk}`,
         );
       }
     } else {
@@ -900,6 +932,7 @@ export class ForegroundGridBot {
     const state = this._state!;
     const client = this._client!;
     this._warnings = [];
+    this._connections = loadConnections().filter((c) => c.enabled);
 
     const currentPrice = await this._getMidPrice();
     this._previousPrice = this._currentPrice;
@@ -965,9 +998,8 @@ export class ForegroundGridBot {
             await this._replaceGridBuy(level);
           }
         } catch (err) {
-          level.buyOrderId = null;
           this._warnings.push(
-            `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+            `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
           );
         }
       }
@@ -1005,7 +1037,8 @@ export class ForegroundGridBot {
             const base = this._config.pair.split("-")[0] ?? "";
             this._notify(
               `Grid Bot ${this._config.pair}: SELL filled @ $${sellPrice} | ` +
-                `${filledQty} ${base} | profit $${profit.toFixed(2)}`,
+                `${filledQty} ${base} | profit $${profit.toFixed(2)} | ` +
+                `total P&L: $${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
             );
 
             // Clear position on buy level (one below) and place buy back
@@ -1038,9 +1071,8 @@ export class ForegroundGridBot {
             }
           }
         } catch (err) {
-          level.sellOrderId = null;
           this._warnings.push(
-            `Check sell #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+            `Check sell #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
           );
         }
       }
@@ -1112,6 +1144,11 @@ export class ForegroundGridBot {
           `dry-${randomUUID().slice(0, 8)}`,
         );
 
+        const base = this._config.pair.split("-")[0] ?? "";
+        this._notify(
+          `Grid Bot ${this._config.pair}: BUY filled @ $${level.price} | ${filledQty} ${base} [DRY RUN]`,
+        );
+
         // Place sell on the level above
         const sellLevel = state.levels[level.index + 1];
         if (sellLevel) {
@@ -1149,6 +1186,13 @@ export class ForegroundGridBot {
           filledQty.toString(),
           `dry-${randomUUID().slice(0, 8)}`,
           profit.toFixed(2),
+        );
+
+        const base = this._config.pair.split("-")[0] ?? "";
+        this._notify(
+          `Grid Bot ${this._config.pair}: SELL filled @ $${sellPrice} | ` +
+            `${filledQty} ${base} | profit $${profit.toFixed(2)} | ` +
+            `total P&L: $${new Decimal(state.stats.realizedPnl).toFixed(2)} [DRY RUN]`,
         );
 
         // Place buy back on the buy level
@@ -1241,7 +1285,23 @@ export class ForegroundGridBot {
   private _notify(message: string): void {
     if (this._connections.length === 0) return;
     for (const tc of this._connections) {
-      void sendWithRetries(tc.bot_token, tc.chat_id, message);
+      void sendWithRetries(tc.bot_token, tc.chat_id, message).then((r) => {
+        if (r.success) this._lastNotifyOk = Date.now();
+      });
+    }
+  }
+
+  private async _notifyAndWait(message: string): Promise<void> {
+    if (this._connections.length === 0) return;
+    const results = await Promise.allSettled(
+      this._connections.map((tc) =>
+        sendWithRetries(tc.bot_token, tc.chat_id, message),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.success) {
+        this._lastNotifyOk = Date.now();
+      }
     }
   }
 
@@ -1284,6 +1344,7 @@ export class ForegroundGridBot {
       warnings: this._warnings,
       telegramConnections: this._connections.length,
       intervalSec: this._config.intervalSec,
+      lastNotifyOk: this._lastNotifyOk,
     };
 
     process.stdout.write("\x1B[2J\x1B[H");

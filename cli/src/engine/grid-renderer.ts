@@ -30,6 +30,7 @@ export interface DashboardData {
   warnings: string[];
   telegramConnections: number;
   intervalSec: number;
+  lastNotifyOk: number;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -221,10 +222,24 @@ export function renderDashboard(data: DashboardData): string {
   lines.push(
     padLine(`  ${chalk.dim("Uptime".padEnd(14))}${fmtUptime(uptime)}`, innerW),
   );
-  const telegramStr =
-    data.telegramConnections > 0
-      ? `${data.telegramConnections} connection${data.telegramConnections !== 1 ? "s" : ""}`
-      : chalk.yellow("None");
+  let telegramStr: string;
+  if (data.telegramConnections === 0) {
+    telegramStr = chalk.yellow("None");
+  } else {
+    const connLabel = `${data.telegramConnections} connection${data.telegramConnections !== 1 ? "s" : ""}`;
+    const staleSec = 5 * 60;
+    if (
+      data.lastNotifyOk > 0 &&
+      Date.now() - data.lastNotifyOk > staleSec * 1000
+    ) {
+      const ago = Math.floor((Date.now() - data.lastNotifyOk) / 60_000);
+      telegramStr = `${connLabel}  ${chalk.yellow(`\u26A0 last OK ${ago}m ago`)}`;
+    } else if (data.lastNotifyOk === 0 && data.tickCount > 2) {
+      telegramStr = `${connLabel}  ${chalk.yellow("\u26A0 no delivery yet")}`;
+    } else {
+      telegramStr = connLabel;
+    }
+  }
   lines.push(
     padLine(`  ${chalk.dim("Telegram".padEnd(14))}${telegramStr}`, innerW),
   );

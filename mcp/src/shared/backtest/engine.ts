@@ -69,12 +69,26 @@ export function createGrid(
   return levels;
 }
 
+function sumBaseHeld(levels: GridLevel[]): Decimal {
+  let total = new Decimal(0);
+  for (const lv of levels) {
+    total = total.plus(lv.baseHeld);
+  }
+  return total;
+}
+
+function fmtPnl(v: Decimal): string {
+  const sign = v.gte(0) ? "+" : "";
+  return `${sign}${v.toFixed(2)}`;
+}
+
 function runBuyPass(
   levels: GridLevel[],
   low: Decimal,
   quotePerLevel: Decimal,
   result: BacktestResult,
   quoteBalance: Decimal,
+  investment: Decimal,
 ): Decimal {
   for (const level of levels) {
     if (level.hasBuyOrder && low.lte(level.price)) {
@@ -89,8 +103,17 @@ function runBuyPass(
       quoteBalance = quoteBalance.minus(quotePerLevel);
       result.totalBuys += 1;
       result.totalTrades += 1;
+
+      const totalPnl = quoteBalance
+        .plus(sumBaseHeld(levels).times(level.price))
+        .minus(investment);
+      const roiPct = investment.isZero()
+        ? new Decimal(0)
+        : totalPnl.div(investment).times(100);
+
       result.tradeLog.push(
-        `BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel}`,
+        `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel} | ` +
+          `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
       );
     }
   }
@@ -103,6 +126,7 @@ function runSellPass(
   quotePerLevel: Decimal,
   result: BacktestResult,
   quoteBalance: Decimal,
+  investment: Decimal,
 ): Decimal {
   for (const level of levels) {
     if (level.hasPosition && level.index + 1 < levels.length) {
@@ -123,9 +147,18 @@ function runSellPass(
         result.totalSells += 1;
         result.totalTrades += 1;
         result.realizedPnl = result.realizedPnl.plus(profit);
+
+        const totalPnl = quoteBalance
+          .plus(sumBaseHeld(levels).times(sellLevel.price))
+          .minus(investment);
+        const roiPct = investment.isZero()
+          ? new Decimal(0)
+          : totalPnl.div(investment).times(100);
+
         result.tradeLog.push(
-          `SELL @ ${sellLevel.price} | qty ${baseToSell} | ` +
-            `+${quoteReceived} | profit=${profit.toFixed(2)}`,
+          `#${result.totalTrades}  SELL @ ${sellLevel.price} | qty ${baseToSell} | ` +
+            `+${quoteReceived} | profit=${profit.toFixed(2)} | ` +
+            `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
         );
       }
     }
@@ -142,6 +175,7 @@ function simulateCandle(
   quotePerLevel: Decimal,
   result: BacktestResult,
   quoteBalance: Decimal,
+  investment: Decimal,
 ): Decimal {
   const bearish = open.gt(close);
   if (bearish) {
@@ -151,16 +185,32 @@ function simulateCandle(
       quotePerLevel,
       result,
       quoteBalance,
+      investment,
     );
-    quoteBalance = runBuyPass(levels, low, quotePerLevel, result, quoteBalance);
+    quoteBalance = runBuyPass(
+      levels,
+      low,
+      quotePerLevel,
+      result,
+      quoteBalance,
+      investment,
+    );
   } else {
-    quoteBalance = runBuyPass(levels, low, quotePerLevel, result, quoteBalance);
+    quoteBalance = runBuyPass(
+      levels,
+      low,
+      quotePerLevel,
+      result,
+      quoteBalance,
+      investment,
+    );
     quoteBalance = runSellPass(
       levels,
       high,
       quotePerLevel,
       result,
       quoteBalance,
+      investment,
     );
   }
 
@@ -202,6 +252,7 @@ export function runBacktest(
       quotePerLevel,
       result,
       quoteBalance,
+      investment,
     );
 
     let totalBaseHeld = new Decimal(0);

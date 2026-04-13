@@ -4,9 +4,10 @@ import type { EvalResult } from "../shared/indicators/evaluators.js";
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const SEND_TIMEOUT = 10_000;
 
-interface TelegramResult {
+export interface TelegramResult {
   success: boolean;
   error?: string;
+  retryAfter?: number;
 }
 
 async function sendMessage(
@@ -24,7 +25,22 @@ async function sendMessage(
     });
     if (response.ok) return { success: true };
     const body = (await response.text()).slice(0, 200);
-    return { success: false, error: `HTTP ${response.status}: ${body}` };
+    let retryAfter: number | undefined;
+    if (response.status === 429) {
+      try {
+        const parsed = JSON.parse(body);
+        retryAfter =
+          parsed?.parameters?.retry_after ??
+          (Number(response.headers.get("retry-after")) || undefined);
+      } catch {
+        retryAfter = Number(response.headers.get("retry-after")) || undefined;
+      }
+    }
+    return {
+      success: false,
+      error: `HTTP ${response.status}: ${body}`,
+      retryAfter,
+    };
   } catch (err) {
     if (err instanceof DOMException && err.name === "TimeoutError") {
       return { success: false, error: "Request timed out" };
@@ -52,7 +68,10 @@ export async function sendWithRetries(
     if (result.success) return result;
     lastResult = result;
     if (attempt < maxRetries - 1) {
-      await new Promise((r) => setTimeout(r, 2 ** attempt * 1000));
+      const delay = result.retryAfter
+        ? result.retryAfter * 1000
+        : 2 ** attempt * 1000;
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   return lastResult;
