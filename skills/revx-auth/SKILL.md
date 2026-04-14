@@ -41,13 +41,15 @@ This will:
 1. Generate an Ed25519 keypair (private + public key)
 2. Display your public key — copy it
 3. Prompt you to register the public key at **exchange.revolut.com -> Profile -> API Keys**
-4. Prompt for the 64-character API key you receive after registration
+4. Create a new API key — tick the **"Allow usage via Revolut X MCP and CLI"** checkbox
+5. Prompt for the 64-character API key you receive after registration
 
 Or do it step-by-step:
 
 ```bash
 revx configure generate-keypair          # Creates Ed25519 keypair
 # Register public key at exchange.revolut.com -> Profile -> API Keys
+# Create API key — tick "Allow usage via Revolut X MCP and CLI"
 revx configure set --api-key <64-char-key>
 ```
 
