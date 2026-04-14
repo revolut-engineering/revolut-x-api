@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "RevolutX",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "display_name": "RevolutX",
   "description": "Check balances, view orders, analyze markets, and backtest trading strategies on RevolutX. All through natural language in Claude.",
   "author": {
