@@ -309,12 +309,35 @@ async function handleBacktest(
     );
     console.log(chalk.dim(`\u2560${h.repeat(w)}\u2563`));
     const lastN = result.tradeLog.slice(-10);
+    // eslint-disable-next-line no-control-regex
+    const stripAnsi = (s: string) => s.replace(/\u001B\[[0-9;]*m/g, "");
+    const padRow = (content: string) => {
+      const vis = stripAnsi(content).length;
+      const right = Math.max(0, w - vis);
+      return `${dimV}${content}${" ".repeat(right)}${dimV}`;
+    };
+    const indent = "      ";
+    const maxFieldWidth = w - indent.length;
     for (const trade of lastN) {
-      const content = `   ${chalk.gray(trade)}`;
-      // eslint-disable-next-line no-control-regex
-      const visible = content.replace(/\u001B\[[0-9;]*m/g, "").length;
-      const right = Math.max(0, w - visible);
-      console.log(`${dimV}${content}${" ".repeat(right)}${dimV}`);
+      let splitIdx = trade.indexOf(" | profit=");
+      if (splitIdx === -1) splitIdx = trade.indexOf(" | realized=");
+      if (splitIdx !== -1) {
+        console.log(padRow(`   ${chalk.gray(trade.slice(0, splitIdx))}`));
+        const fields = trade.slice(splitIdx + 3).split(" | ");
+        let line = "";
+        for (const field of fields) {
+          const next = line ? `${line} | ${field}` : field;
+          if (next.length > maxFieldWidth && line) {
+            console.log(padRow(`${indent}${chalk.gray(line)}`));
+            line = field;
+          } else {
+            line = next;
+          }
+        }
+        if (line) console.log(padRow(`${indent}${chalk.gray(line)}`));
+      } else {
+        console.log(padRow(`   ${chalk.gray(trade)}`));
+      }
     }
     console.log(`${dimV}${" ".repeat(w)}${dimV}`);
   }

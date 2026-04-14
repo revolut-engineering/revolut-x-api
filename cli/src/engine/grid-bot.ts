@@ -56,9 +56,11 @@ export class ForegroundGridBot {
   private _connections: TelegramConnection[] = [];
   private _boundaryAlerted = false;
   private _lastNotifyOk = 0;
+  private _cs: string;
 
   constructor(config: GridBotConfig) {
     this._config = config;
+    this._cs = getCurrSymbol(config.pair);
   }
 
   get connectionCount(): number {
@@ -212,7 +214,7 @@ export class ForegroundGridBot {
     const investment = new Decimal(this._state.config.investment);
     const netValue = investment.plus(totalPnl);
 
-    const cs = getCurrSymbol(this._state.pair);
+    const cs = this._cs;
     const fmtSigned = (v: Decimal) => {
       const sign = v.gte(0) ? "+" : "";
       return `${sign}${cs}${v.toFixed(2)}`;
@@ -322,7 +324,7 @@ export class ForegroundGridBot {
       const below = currentPrice.lt(lower);
       const direction = below ? "below" : "above";
       const boundary = below ? lower : upper;
-      const cs = getCurrSymbol(state.pair);
+      const cs = this._cs;
       this._warnings.push(
         `Price ${direction} grid range (${cs}${boundary.toFixed(2)})`,
       );
@@ -987,7 +989,7 @@ export class ForegroundGridBot {
             this._logTrade("buy", level.price, filledQty.toString(), order.id);
 
             const base = this._config.pair.split("-")[0] ?? "";
-            const cs = getCurrSymbol(this._config.pair);
+            const cs = this._cs;
             this._notify(
               `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base}`,
             );
@@ -1039,7 +1041,7 @@ export class ForegroundGridBot {
             );
 
             const base = this._config.pair.split("-")[0] ?? "";
-            const cs = getCurrSymbol(this._config.pair);
+            const cs = this._cs;
             this._notify(
               `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellPrice} | ` +
                 `${filledQty} ${base} | profit ${cs}${profit.toFixed(2)} | ` +
@@ -1150,7 +1152,7 @@ export class ForegroundGridBot {
         );
 
         const base = this._config.pair.split("-")[0] ?? "";
-        const cs = getCurrSymbol(this._config.pair);
+        const cs = this._cs;
         this._notify(
           `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base} [DRY RUN]`,
         );
@@ -1195,7 +1197,7 @@ export class ForegroundGridBot {
         );
 
         const base = this._config.pair.split("-")[0] ?? "";
-        const cs = getCurrSymbol(this._config.pair);
+        const cs = this._cs;
         this._notify(
           `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellPrice} | ` +
             `${filledQty} ${base} | profit ${cs}${profit.toFixed(2)} | ` +
