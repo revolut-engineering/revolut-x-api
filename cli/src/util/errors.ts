@@ -36,7 +36,7 @@ export function handleError(err: unknown): never {
     const SUGGESTIONS = [
       " ↳ Go to Revolut X → Profile → Add public key",
       "   Check your API scopes to ensure you have the correct permissions",
-      "   Ensure the 'CLI/MCP usage' flag is enabled",
+      "   Ensure the 'Allow usage via Revolut X MCP and CLI' checkbox is ticked on your API key",
     ];
 
     console.error(`\n${ERROR_PREFIX} ${chalk.white("Access Forbidden")}`);

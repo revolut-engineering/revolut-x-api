@@ -32,7 +32,7 @@ export async function handleApiError(
     const suggestions = [
       "• Go to Revolut X → Profile → Add public key",
       "• Check your API scopes to ensure you have the correct permissions",
-      "• Ensure the 'CLI/MCP usage' flag is enabled",
+      "• Ensure the 'Allow usage via Revolut X MCP and CLI' checkbox is ticked on your API key",
     ];
     return textResult(
       `Access Forbidden\n\nHow to fix this:\n${suggestions.join("\n")}`,

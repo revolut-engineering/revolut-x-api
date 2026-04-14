@@ -80,7 +80,10 @@ Examples:
       console.log(
         chalk.dim("  2. ") + "Go to Revolut X → Profile → Add public key",
       );
-      console.log(chalk.dim("  3. ") + "Create a new API key and copy it");
+      console.log(
+        chalk.dim("  3. ") +
+          "Create a new API key — tick 'Allow usage via Revolut X MCP and CLI'",
+      );
     } else {
       const existingKey = loadPrivateKey(privateKeyPath);
       const pubPem = getPublicKeyPem(existingKey);
@@ -94,6 +97,10 @@ Examples:
       );
       console.log(
         chalk.dim("  2. ") + "Go to Revolut X → Profile → Add public key",
+      );
+      console.log(
+        chalk.dim("  3. ") +
+          "Create a new API key — tick 'Allow usage via Revolut X MCP and CLI'",
       );
     }
 

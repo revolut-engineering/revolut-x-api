@@ -306,14 +306,14 @@ export function registerBacktestTools(server: McpServer): void {
           .describe('Total investment in quote currency (default "1000").'),
         resolution: z
           .string()
-          .default("1h")
+          .default("1m")
           .describe(
-            'Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w (default "1h").',
+            'Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 2d, 4d, 1w, 2w, 4w (default "1m").',
           ),
         days: z
           .number()
-          .default(30)
-          .describe("Days of historical data to fetch (default 30)."),
+          .default(3)
+          .describe("Days of historical data to fetch (default 3)."),
       },
       annotations: {
         title: "Run Grid Backtest",
@@ -402,11 +402,11 @@ export function registerBacktestTools(server: McpServer): void {
         resolution: z
           .string()
           .default("1m")
-          .describe('Candle interval (default "1h").'),
+          .describe('Candle interval (default "1m").'),
         days: z
           .number()
           .default(3)
-          .describe("Days of historical data to fetch (default 30)."),
+          .describe("Days of historical data to fetch (default 3)."),
         grid_levels_options: z
           .string()
           .default("3,5,8,10,15")

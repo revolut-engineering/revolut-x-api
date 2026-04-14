@@ -7,8 +7,8 @@ export const SETUP_GUIDE =
   "1. Run the 'generate_keypair' tool to create your authentication keys\n" +
   "2. Copy the public key that is returned\n" +
   "3. Go to Revolut X → Profile and add the public key\n" +
-  "4. Create a new API key and copy it\n" +
-  "5. Run the 'configure_api_key' tool with your API key\n" +
+  "4. Create a new API key — tick 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
+  "5. Copy the resulting API key and run the 'configure_api_key' tool with it\n" +
   "6. Run 'check_auth_status' to verify everything works";
 
 let _client: RevolutXClient | null = null;

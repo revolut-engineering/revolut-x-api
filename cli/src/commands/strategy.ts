@@ -601,7 +601,7 @@ Examples:
     )
     .option("--range <pct>", "Grid range as percentage, e.g. 10 for ±10%", "10")
     .option("--investment <amount>", "Capital in quote currency", "1000")
-    .option("--days <n>", "Days of historical data", "30")
+    .option("--days <n>", "Days of historical data", "3")
     .option(
       "--interval <res>",
       "Candle resolution (1m, 5m, 15m, 30m, 1h, 4h, 1d)",
@@ -615,7 +615,7 @@ Examples:
     .command("optimize <pair>")
     .description("Test multiple grid parameter combinations and rank by return")
     .option("--investment <amount>", "Capital in quote currency", "1000")
-    .option("--days <n>", "Days of historical data", "30")
+    .option("--days <n>", "Days of historical data", "3")
     .option("--interval <res>", "Candle resolution", "1m")
     .option(
       "--levels <csv>",
