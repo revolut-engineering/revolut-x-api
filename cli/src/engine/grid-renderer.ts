@@ -2,7 +2,7 @@ import { Decimal } from "decimal.js";
 import chalk from "chalk";
 import type { GridState } from "../db/grid-store.js";
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
+export const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: "$",
   USDT: "$",
   USDC: "$",
@@ -57,7 +57,7 @@ function truncateVisible(str: string, maxVisible: number): string {
   return str.slice(0, i) + "\x1B[0m";
 }
 
-function getCurrSymbol(pair: string): string {
+export function getCurrSymbol(pair: string): string {
   const quote = pair.split("-")[1] ?? "";
   return CURRENCY_SYMBOLS[quote] ?? "";
 }

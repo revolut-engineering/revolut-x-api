@@ -17,6 +17,7 @@ import {
   renderDashboard,
   renderShutdownSummary,
   renderReconciliationSummary,
+  getCurrSymbol,
   type DashboardData,
 } from "./grid-renderer.js";
 
@@ -211,9 +212,10 @@ export class ForegroundGridBot {
     const investment = new Decimal(this._state.config.investment);
     const netValue = investment.plus(totalPnl);
 
+    const cs = getCurrSymbol(this._state.pair);
     const fmtSigned = (v: Decimal) => {
       const sign = v.gte(0) ? "+" : "";
-      return `${sign}$${v.toFixed(2)}`;
+      return `${sign}${cs}${v.toFixed(2)}`;
     };
 
     await this._notifyAndWait(
@@ -222,7 +224,7 @@ export class ForegroundGridBot {
         `Realized P&L: ${fmtSigned(realizedPnl)}\n` +
         `Unrealized: ${fmtSigned(unrealized)}\n` +
         `Total P&L: ${fmtSigned(totalPnl)}\n` +
-        `Net Value: $${netValue.toFixed(2)}`,
+        `Net Value: ${cs}${netValue.toFixed(2)}`,
     );
   }
 
@@ -320,8 +322,9 @@ export class ForegroundGridBot {
       const below = currentPrice.lt(lower);
       const direction = below ? "below" : "above";
       const boundary = below ? lower : upper;
+      const cs = getCurrSymbol(state.pair);
       this._warnings.push(
-        `Price ${direction} grid range ($${boundary.toFixed(2)})`,
+        `Price ${direction} grid range (${cs}${boundary.toFixed(2)})`,
       );
       if (!this._boundaryAlerted) {
         this._boundaryAlerted = true;
@@ -329,8 +332,8 @@ export class ForegroundGridBot {
           ? "Buy orders may keep filling without matching sells — accumulating inventory."
           : "Price is above all grid levels — bot is idle with no active orders.";
         this._notify(
-          `Grid Bot ${state.pair}: Price exited grid range (${direction} $${boundary.toFixed(2)}). ` +
-            `Current: $${currentPrice.toFixed(2)}. ${risk}`,
+          `Grid Bot ${state.pair}: Price exited grid range (${direction} ${cs}${boundary.toFixed(2)}). ` +
+            `Current: ${cs}${currentPrice.toFixed(2)}. ${risk}`,
         );
       }
     } else {
@@ -984,8 +987,9 @@ export class ForegroundGridBot {
             this._logTrade("buy", level.price, filledQty.toString(), order.id);
 
             const base = this._config.pair.split("-")[0] ?? "";
+            const cs = getCurrSymbol(this._config.pair);
             this._notify(
-              `Grid Bot ${this._config.pair}: BUY filled @ $${level.price} | ${filledQty} ${base}`,
+              `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base}`,
             );
 
             // Place sell on the level above
@@ -1035,10 +1039,11 @@ export class ForegroundGridBot {
             );
 
             const base = this._config.pair.split("-")[0] ?? "";
+            const cs = getCurrSymbol(this._config.pair);
             this._notify(
-              `Grid Bot ${this._config.pair}: SELL filled @ $${sellPrice} | ` +
-                `${filledQty} ${base} | profit $${profit.toFixed(2)} | ` +
-                `total P&L: $${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
+              `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellPrice} | ` +
+                `${filledQty} ${base} | profit ${cs}${profit.toFixed(2)} | ` +
+                `total P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
             );
 
             // Clear position on buy level (one below) and place buy back
@@ -1145,8 +1150,9 @@ export class ForegroundGridBot {
         );
 
         const base = this._config.pair.split("-")[0] ?? "";
+        const cs = getCurrSymbol(this._config.pair);
         this._notify(
-          `Grid Bot ${this._config.pair}: BUY filled @ $${level.price} | ${filledQty} ${base} [DRY RUN]`,
+          `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base} [DRY RUN]`,
         );
 
         // Place sell on the level above
@@ -1189,10 +1195,11 @@ export class ForegroundGridBot {
         );
 
         const base = this._config.pair.split("-")[0] ?? "";
+        const cs = getCurrSymbol(this._config.pair);
         this._notify(
-          `Grid Bot ${this._config.pair}: SELL filled @ $${sellPrice} | ` +
-            `${filledQty} ${base} | profit $${profit.toFixed(2)} | ` +
-            `total P&L: $${new Decimal(state.stats.realizedPnl).toFixed(2)} [DRY RUN]`,
+          `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellPrice} | ` +
+            `${filledQty} ${base} | profit ${cs}${profit.toFixed(2)} | ` +
+            `total P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)} [DRY RUN]`,
         );
 
         // Place buy back on the buy level

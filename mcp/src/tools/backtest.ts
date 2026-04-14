@@ -17,6 +17,19 @@ import {
 } from "../shared/backtest/index.js";
 import { RESOLUTIONS_MAP } from "../shared/common.js";
 
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$",
+  USDT: "$",
+  USDC: "$",
+  EUR: "\u20AC",
+  GBP: "\u00A3",
+};
+
+function getCurrSymbol(symbol: string): string {
+  const quote = symbol.split("-")[1] ?? "";
+  return CURRENCY_SYMBOLS[quote] ?? "";
+}
+
 function parseDecimal(
   value: string,
   name: string,
@@ -144,6 +157,7 @@ function formatBacktestResult(
     .toDecimalPlaces(2);
 
   const [base, quote] = symbol.split("-");
+  const cs = getCurrSymbol(symbol);
 
   const priceLow = candles.reduce(
     (min, c) => Decimal.min(min, c.low),
@@ -162,25 +176,25 @@ function formatBacktestResult(
     `Grid Backtest Results for ${symbol}`,
     "=".repeat(50),
     `Data: ${candles.length} candles (${resolution} resolution, ${days} days)`,
-    `Price range: $${priceLow.toFixed(2)} - $${priceHigh.toFixed(2)}`,
-    `Start price: $${startPrice.toFixed(2)}`,
-    `Grid range: $${lower.toFixed(2)} - $${upper.toFixed(2)} (±${rangePct.times(100).toFixed(1)}%)`,
-    `Grid levels: ${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell) | ${quote}/level: $${quotePerLevel}`,
+    `Price range: ${cs}${priceLow.toFixed(2)} - ${cs}${priceHigh.toFixed(2)}`,
+    `Start price: ${cs}${startPrice.toFixed(2)}`,
+    `Grid range: ${cs}${lower.toFixed(2)} - ${cs}${upper.toFixed(2)} (±${rangePct.times(100).toFixed(1)}%)`,
+    `Grid levels: ${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell) | ${quote}/level: ${cs}${quotePerLevel}`,
     (() => {
       const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
       const profitPct = ratio.minus(1).times(100);
       const profitDollar = quotePerLevel.times(ratio.minus(1));
-      return `Profit/grid: $${profitDollar.toFixed(2)} (${profitPct.toFixed(2)}%)`;
+      return `Profit/grid: ${cs}${profitDollar.toFixed(2)} (${profitPct.toFixed(2)}%)`;
     })(),
     "",
     "Performance",
     "-".repeat(50),
     `Total trades: ${result.totalTrades} (${result.totalBuys} buys, ${result.totalSells} sells)`,
-    `Realized P&L: $${result.realizedPnl.toFixed(2)}`,
-    `Final ${quote}: $${result.finalQuote.toFixed(2)}`,
-    `Final ${base}: ${result.finalBase.toFixed(5)} (~$${baseValue.toFixed(2)})`,
-    `Portfolio Value: $${totalValue.toFixed(2)}`,
-    `Total P&L: $${netReturn.toFixed(2)}`,
+    `Realized P&L: ${cs}${result.realizedPnl.toFixed(2)}`,
+    `Final ${quote}: ${cs}${result.finalQuote.toFixed(2)}`,
+    `Final ${base}: ${result.finalBase.toFixed(5)} (~${cs}${baseValue.toFixed(2)})`,
+    `Portfolio Value: ${cs}${totalValue.toFixed(2)}`,
+    `Total P&L: ${cs}${netReturn.toFixed(2)}`,
     `ROI: ${returnPct.toFixed(2)}%`,
     `Max drawdown: ${result.maxDrawdown.times(100).toFixed(2)}%`,
     `Annualized return: ${annualizedPct.toFixed(2)}%`,
@@ -212,6 +226,7 @@ function formatOptimizationResults(
   }
 
   const show = Math.min(topN, results.length);
+  const cs = getCurrSymbol(symbol);
   const lines = [
     `Grid Optimization Results for ${symbol}`,
     "=".repeat(90),
@@ -229,12 +244,12 @@ function formatOptimizationResults(
       `${String(i + 1).padEnd(5)} ` +
         `${String(r.gridLevels / 2).padEnd(8)} ` +
         `${r.rangePct.times(100).toFixed(1)}%${"".padEnd(4)} ` +
-        `$${r.realizedPnl.toFixed(2).padStart(9)} ` +
-        `$${r.totalReturn.toFixed(2).padStart(9)} ` +
+        `${cs}${r.realizedPnl.toFixed(2).padStart(9)} ` +
+        `${cs}${r.totalReturn.toFixed(2).padStart(9)} ` +
         `${r.returnPct.toFixed(2).padStart(8)}% ` +
         `${String(r.totalTrades).padEnd(8)} ` +
         `${r.maxDrawdown.times(100).toFixed(2).padStart(7)}% ` +
-        `$${r.profitPerTrade.toFixed(2).padStart(7)}`,
+        `${cs}${r.profitPerTrade.toFixed(2).padStart(7)}`,
     );
   }
 
@@ -248,7 +263,8 @@ function formatOptimizationResults(
   );
   lines.push(
     `  Highest Total P&L:  ${bestReturn.gridLevels / 2} levels/side, ` +
-      `${bestReturn.rangePct.times(100).toFixed(1)}% range -> $${bestReturn.totalReturn.toFixed(2)}`,
+      `${bestReturn.rangePct.times(100).toFixed(1)}% range -> ` +
+      `Realized: ${cs}${bestReturn.realizedPnl.toFixed(2)} | Total: ${cs}${bestReturn.totalReturn.toFixed(2)}`,
   );
 
   const bestCalmar = results.reduce((best, r) =>

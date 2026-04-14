@@ -15,6 +15,7 @@ import {
   createGrid,
 } from "../shared/backtest/index.js";
 import { ForegroundGridBot, type GridBotConfig } from "../engine/grid-bot.js";
+import { getCurrSymbol } from "../engine/grid-renderer.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
@@ -233,13 +234,14 @@ async function handleBacktest(
     return `${dimV}${content}${" ".repeat(right)}${dimV}`;
   };
 
+  const cs = getCurrSymbol(pair);
   console.log(pad("Pair", chalk.white(pair)));
   console.log(pad("Candles", `${candles.length} (${opts.interval})`));
-  console.log(pad("Start Price", `$${startPrice.toFixed(2)}`));
+  console.log(pad("Start Price", `${cs}${startPrice.toFixed(2)}`));
   console.log(
     pad(
       "Grid Range",
-      `$${lower.toFixed(2)} \u2014 $${upper.toFixed(2)} (${chalk.yellow(`\u00B1${rangePct.times(100).toFixed(1)}%`)})`,
+      `${cs}${lower.toFixed(2)} \u2014 ${cs}${upper.toFixed(2)} (${chalk.yellow(`\u00B1${rangePct.times(100).toFixed(1)}%`)})`,
     ),
   );
   console.log(
@@ -248,14 +250,14 @@ async function handleBacktest(
       `${gridLevels / 2} per side (${chalk.green(`${buyLevels} buy`)}, ${chalk.red(`${gridLevels - buyLevels} sell`)})`,
     ),
   );
-  console.log(pad(`${quote} / Level`, `$${quotePerLevel}`));
+  console.log(pad(`${quote} / Level`, `${cs}${quotePerLevel}`));
   const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
   const profitPct = ratio.minus(1).times(100);
   const profitDollar = quotePerLevel.times(ratio.minus(1));
   console.log(
     pad(
       "Profit/Grid",
-      `${chalk.green(`$${profitDollar.toFixed(2)}`)} (${profitPct.toFixed(2)}%)`,
+      `${chalk.green(`${cs}${profitDollar.toFixed(2)}`)} (${profitPct.toFixed(2)}%)`,
     ),
   );
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
@@ -274,19 +276,19 @@ async function handleBacktest(
 
   const pnlColor = result.realizedPnl.gte(0) ? chalk.green : chalk.red;
   console.log(
-    pad("Realized P&L", pnlColor(`$${result.realizedPnl.toFixed(2)}`)),
+    pad("Realized P&L", pnlColor(`${cs}${result.realizedPnl.toFixed(2)}`)),
   );
-  console.log(pad(`Final ${quote}`, `$${result.finalQuote.toFixed(2)}`));
+  console.log(pad(`Final ${quote}`, `${cs}${result.finalQuote.toFixed(2)}`));
   console.log(
     pad(
       `Final ${base}`,
-      `${result.finalBase.toFixed(5)} (~$${baseValue.toFixed(2)})`,
+      `${result.finalBase.toFixed(5)} (~${cs}${baseValue.toFixed(2)})`,
     ),
   );
-  console.log(pad("Portfolio Value", `$${totalValue.toFixed(2)}`));
+  console.log(pad("Portfolio Value", `${cs}${totalValue.toFixed(2)}`));
 
   const returnColor = netReturn.gte(0) ? chalk.green : chalk.red;
-  console.log(pad("Total P&L", returnColor(`$${netReturn.toFixed(2)}`)));
+  console.log(pad("Total P&L", returnColor(`${cs}${netReturn.toFixed(2)}`)));
   console.log(pad("ROI", returnColor(`${returnPct.toFixed(2)}%`)));
   console.log(
     pad(
@@ -426,6 +428,7 @@ async function handleOptimize(
           rank: results.indexOf(r) + 1,
           gridLevels: r.gridLevels / 2,
           rangePct: r.rangePct.times(100).toNumber(),
+          realizedPnl: r.realizedPnl.toNumber(),
           totalReturn: r.totalReturn.toNumber(),
           returnPct: r.returnPct.toNumber(),
           annualizedReturnPct: parseFloat(annualized.toFixed(2)),
@@ -440,6 +443,7 @@ async function handleOptimize(
   }
 
   const show = results.slice(0, topN);
+  const cs = getCurrSymbol(pair);
 
   printSectionHeader(`Grid Optimization Results: ${pair}`);
   console.log(
@@ -451,25 +455,30 @@ async function handleOptimize(
   printTable(
     show.map((r, i) => {
       const isProfitable = r.totalReturn.gte(0);
+      const isRealizedPos = r.realizedPnl.gte(0);
       return {
         rank: i + 1,
         levels: r.gridLevels / 2,
         range: `${r.rangePct.times(100).toFixed(1)}%`,
+        realized: isRealizedPos
+          ? chalk.green(`${cs}${r.realizedPnl.toFixed(2)}`)
+          : chalk.red(`${cs}${r.realizedPnl.toFixed(2)}`),
         return_: isProfitable
-          ? chalk.green(`$${r.totalReturn.toFixed(2)}`)
-          : chalk.red(`$${r.totalReturn.toFixed(2)}`),
+          ? chalk.green(`${cs}${r.totalReturn.toFixed(2)}`)
+          : chalk.red(`${cs}${r.totalReturn.toFixed(2)}`),
         returnPct: isProfitable
           ? chalk.green(`${r.returnPct.toFixed(2)}%`)
           : chalk.red(`${r.returnPct.toFixed(2)}%`),
         trades: r.totalTrades,
         drawdown: chalk.red(`${r.maxDrawdown.times(100).toFixed(2)}%`),
-        perTrade: `$${r.profitPerTrade.toFixed(2)}`,
+        perTrade: `${cs}${r.profitPerTrade.toFixed(2)}`,
       };
     }),
     [
       { header: "#", accessor: (r) => String(r.rank), align: "right" },
       { header: "Levels", accessor: (r) => String(r.levels), align: "right" },
       { header: "Range", key: "range", align: "right" },
+      { header: "Realized", key: "realized", align: "right" },
       { header: "Total P&L", key: "return_", align: "right" },
       { header: "ROI", key: "returnPct", align: "right" },
       { header: "Trades", accessor: (r) => String(r.trades), align: "right" },
@@ -491,7 +500,7 @@ async function handleOptimize(
     printKeyValue([
       [
         "Best Total P&L",
-        `${chalk.white(bestReturn.gridLevels / 2)} levels/side, ${chalk.white(bestReturn.rangePct.times(100).toFixed(1) + "%")} range \u2192 ${chalk.green("$" + bestReturn.totalReturn.toFixed(2))}`,
+        `${chalk.white(bestReturn.gridLevels / 2)} levels/side, ${chalk.white(bestReturn.rangePct.times(100).toFixed(1) + "%")} range \u2192 Realized: ${chalk.green(cs + bestReturn.realizedPnl.toFixed(2))} | Total: ${chalk.green(cs + bestReturn.totalReturn.toFixed(2))}`,
       ],
       [
         "Best Risk-Adj",
