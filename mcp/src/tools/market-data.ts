@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Currency, CurrencyPair } from "api-k9x2a";
 import {
+  formatDate,
   formatDescription,
   handleApiError,
   LARGE_DATASET_HINT,
@@ -351,7 +352,7 @@ export function registerMarketDataTools(server: McpServer): void {
       lines.push("-".repeat(99));
 
       for (const c of candles) {
-        const readableStart = new Date(Number(c.start)).toISOString();
+        const readableStart = formatDate(Number(c.start));
 
         lines.push(
           `${readableStart.padEnd(24)} | ` +
@@ -465,13 +466,13 @@ export function registerMarketDataTools(server: McpServer): void {
             `${t.symbol.padStart(10)} | ` +
             `${t.price.padStart(14)} | ` +
             `${t.quantity.padStart(14)} | ` +
-            `${new Date(t.timestamp).toISOString()}`,
+            `${formatDate(t.timestamp)}`,
         );
       }
 
       lines.push("");
       lines.push(
-        `*** NOTE TO LLM: Results above are for the range ${new Date(parsedStartDate).toISOString()} to ${new Date(parsedEndDate).toISOString()}. Do NOT request additional data automatically — ask the user if they want to fetch a different date range first. ***`,
+        `*** NOTE TO LLM: Results above are for the range ${formatDate(parsedStartDate)} to ${formatDate(parsedEndDate)}. Do NOT request additional data automatically — ask the user if they want to fetch a different date range first. ***`,
       );
 
       return textResult(lines.join("\n"));

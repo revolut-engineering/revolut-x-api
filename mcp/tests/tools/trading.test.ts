@@ -331,7 +331,7 @@ describe("get_client_trades", () => {
     expect(text).toContain("95000");
     expect(text).toContain("0.001");
     expect(text).toContain("false");
-    expect(text).toContain("2023-11-14T");
+    expect(text).toContain("2023-11-14 22:13:20 UTC");
   });
 
   it("validates date formats", async () => {
@@ -605,7 +605,7 @@ describe("get_order_fills", () => {
     expect(text).toContain("95000");
     expect(text).toContain("0.001");
     expect(text).toContain("false");
-    expect(text).toContain("2023-11-14T");
+    expect(text).toContain("2023-11-14 22:13:20 UTC");
   });
 
   it("returns empty message when no fills", async () => {

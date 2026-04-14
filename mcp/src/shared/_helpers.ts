@@ -138,6 +138,15 @@ export function parseDateRange(
   return { parsedStartDate: resolvedStartDate, parsedEndDate: resolvedEndDate };
 }
 
+export function formatDate(value: number | string | Date): string {
+  const d = new Date(value);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`
+  );
+}
+
 export function formatDescription(
   baseDescription: string,
   instructions: string[] = [],

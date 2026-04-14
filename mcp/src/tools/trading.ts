@@ -8,6 +8,7 @@ import {
   paginateWithDynamicWindows,
 } from "api-k9x2a";
 import {
+  formatDate,
   textResult,
   validateSymbol,
   handleApiError,
@@ -141,7 +142,7 @@ export function registerTradingTools(server: McpServer): void {
             `  Remaining: ${o.leaves_quantity}\n` +
             `  Status: ${o.status}\n` +
             `  Time in force: ${o.time_in_force}\n` +
-            `  Created: ${o.created_date}\n`,
+            `  Created: ${formatDate(o.created_date)}\n`,
         );
       }
       return textResult(lines.join("\n"));
@@ -277,7 +278,7 @@ export function registerTradingTools(server: McpServer): void {
 
       if (!displayOrders.length) {
         return textResult(
-          `No historical orders found for ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}.`,
+          `No historical orders found for ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}.`,
         );
       }
 
@@ -300,13 +301,13 @@ export function registerTradingTools(server: McpServer): void {
             `  Remaining: ${o.leaves_quantity}\n` +
             `  Status: ${o.status}\n` +
             `  Time in force: ${o.time_in_force}\n` +
-            `  Created: ${o.created_date}\n`,
+            `  Created: ${formatDate(o.created_date)}\n`,
         );
       }
 
       lines.push("");
       lines.push(
-        `*** NOTE TO LLM: Complete results for ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}. ` +
+        `*** NOTE TO LLM: Complete results for ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}. ` +
           "This is the full dataset — do NOT call this tool again to paginate. " +
           "ALWAYS ask the user if they need a wider date range (earliest available: 2024-05-07). ***",
       );
@@ -413,7 +414,7 @@ export function registerTradingTools(server: McpServer): void {
 
       if (!displayTrades.length)
         return textResult(
-          `No trade history found for ${symbol} from ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}.`,
+          `No trade history found for ${symbol} from ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}.`,
         );
 
       const lines = [
@@ -432,13 +433,13 @@ export function registerTradingTools(server: McpServer): void {
             `${t.price.padStart(14)} | ` +
             `${t.quantity.padStart(14)} | ` +
             `${String(t.maker).padStart(5)} | ` +
-            `${new Date(t.timestamp).toISOString()}`,
+            `${formatDate(t.timestamp)}`,
         );
       }
 
       lines.push("");
       lines.push(
-        `*** NOTE TO LLM: Complete results for ${new Date(resolvedStartDate).toISOString()} to ${new Date(resolvedEndDate).toISOString()}. ` +
+        `*** NOTE TO LLM: Complete results for ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}. ` +
           "This is the full dataset — do NOT call this tool again to paginate. " +
           "ALWAYS ask the user if they need a wider date range (earliest available: 2024-05-07). ***",
       );
@@ -493,7 +494,7 @@ export function registerTradingTools(server: McpServer): void {
             `${t.price.padStart(14)} | ` +
             `${t.quantity.padStart(14)} | ` +
             `${String(t.maker).padStart(5)} | ` +
-            `${new Date(t.timestamp).toISOString()}`,
+            `${formatDate(t.timestamp)}`,
         );
       }
 
@@ -574,8 +575,8 @@ export function registerTradingTools(server: McpServer): void {
           `  Status: ${o.status}\n` +
           rejectLine +
           `  Time in force: ${o.time_in_force}\n` +
-          `  Created: ${o.created_date}\n` +
-          `  Updated: ${o.updated_date}\n`,
+          `  Created: ${formatDate(o.created_date)}\n` +
+          `  Updated: ${formatDate(o.updated_date)}\n`,
       );
     },
   );
