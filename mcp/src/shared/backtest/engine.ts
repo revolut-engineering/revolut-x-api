@@ -23,6 +23,7 @@ export interface OptimizationResult {
   gridLevels: number;
   rangePct: Decimal;
   investment: Decimal;
+  realizedPnl: Decimal;
   totalReturn: Decimal;
   returnPct: Decimal;
   totalTrades: number;
@@ -329,6 +330,7 @@ export function optimizeGridParams(
         gridLevels: levels,
         rangePct,
         investment,
+        realizedPnl: bt.realizedPnl,
         totalReturn,
         returnPct,
         totalTrades: bt.totalTrades,

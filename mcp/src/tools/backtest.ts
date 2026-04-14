@@ -179,8 +179,9 @@ function formatBacktestResult(
     `Realized P&L: $${result.realizedPnl.toFixed(2)}`,
     `Final ${quote}: $${result.finalQuote.toFixed(2)}`,
     `Final ${base}: ${result.finalBase.toFixed(5)} (~$${baseValue.toFixed(2)})`,
-    `Total portfolio: $${totalValue.toFixed(2)}`,
-    `Net return: $${netReturn.toFixed(2)} (${returnPct.toFixed(2)}%)`,
+    `Portfolio Value: $${totalValue.toFixed(2)}`,
+    `Total P&L: $${netReturn.toFixed(2)}`,
+    `ROI: ${returnPct.toFixed(2)}%`,
     `Max drawdown: ${result.maxDrawdown.times(100).toFixed(2)}%`,
     `Annualized return: ${annualizedPct.toFixed(2)}%`,
   ];
@@ -217,9 +218,9 @@ function formatOptimizationResults(
     `Data: ${candleCount} candles (${resolution} resolution, ${days} days)`,
     `Tested ${totalCombos} parameter combinations`,
     "",
-    `Top ${show} by Total Return:`,
-    `${"Rank".padEnd(5)} ${"Levels".padEnd(8)} ${"Range".padEnd(8)} ${"Return".padEnd(12)} ${"Return%".padEnd(10)} ${"Trades".padEnd(8)} ${"Drawdown".padEnd(10)} ${"$/Trade".padEnd(10)}`,
-    "-".repeat(90),
+    `Top ${show} by Total P&L:`,
+    `${"Rank".padEnd(5)} ${"Levels".padEnd(8)} ${"Range".padEnd(8)} ${"Realized".padEnd(12)} ${"Total P&L".padEnd(12)} ${"ROI".padEnd(10)} ${"Trades".padEnd(8)} ${"Drawdown".padEnd(10)} ${"$/Trade".padEnd(10)}`,
+    "-".repeat(100),
   ];
 
   for (let i = 0; i < show; i++) {
@@ -228,6 +229,7 @@ function formatOptimizationResults(
       `${String(i + 1).padEnd(5)} ` +
         `${String(r.gridLevels / 2).padEnd(8)} ` +
         `${r.rangePct.times(100).toFixed(1)}%${"".padEnd(4)} ` +
+        `$${r.realizedPnl.toFixed(2).padStart(9)} ` +
         `$${r.totalReturn.toFixed(2).padStart(9)} ` +
         `${r.returnPct.toFixed(2).padStart(8)}% ` +
         `${String(r.totalTrades).padEnd(8)} ` +
@@ -236,7 +238,7 @@ function formatOptimizationResults(
     );
   }
 
-  lines.push("=".repeat(90));
+  lines.push("=".repeat(100));
   lines.push("");
   lines.push("Best by Metric:");
   lines.push("-".repeat(50));
@@ -245,7 +247,7 @@ function formatOptimizationResults(
     r.totalReturn.gt(best.totalReturn) ? r : best,
   );
   lines.push(
-    `  Highest Return:  ${bestReturn.gridLevels / 2} levels/side, ` +
+    `  Highest Total P&L:  ${bestReturn.gridLevels / 2} levels/side, ` +
       `${bestReturn.rangePct.times(100).toFixed(1)}% range -> $${bestReturn.totalReturn.toFixed(2)}`,
   );
 

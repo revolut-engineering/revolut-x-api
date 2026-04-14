@@ -283,15 +283,11 @@ async function handleBacktest(
       `${result.finalBase.toFixed(5)} (~$${baseValue.toFixed(2)})`,
     ),
   );
-  console.log(pad("Total Value", `$${totalValue.toFixed(2)}`));
+  console.log(pad("Portfolio Value", `$${totalValue.toFixed(2)}`));
 
   const returnColor = netReturn.gte(0) ? chalk.green : chalk.red;
-  console.log(
-    pad(
-      "Net Return",
-      returnColor(`$${netReturn.toFixed(2)} (${returnPct.toFixed(2)}%)`),
-    ),
-  );
+  console.log(pad("Total P&L", returnColor(`$${netReturn.toFixed(2)}`)));
+  console.log(pad("ROI", returnColor(`${returnPct.toFixed(2)}%`)));
   console.log(
     pad(
       "Max Drawdown",
@@ -474,8 +470,8 @@ async function handleOptimize(
       { header: "#", accessor: (r) => String(r.rank), align: "right" },
       { header: "Levels", accessor: (r) => String(r.levels), align: "right" },
       { header: "Range", key: "range", align: "right" },
-      { header: "Return", key: "return_", align: "right" },
-      { header: "Return%", key: "returnPct", align: "right" },
+      { header: "Total P&L", key: "return_", align: "right" },
+      { header: "ROI", key: "returnPct", align: "right" },
       { header: "Trades", accessor: (r) => String(r.trades), align: "right" },
       { header: "Drawdown", key: "drawdown", align: "right" },
       { header: "$/Trade", key: "perTrade", align: "right" },
@@ -494,7 +490,7 @@ async function handleOptimize(
 
     printKeyValue([
       [
-        "Best Return",
+        "Best Total P&L",
         `${chalk.white(bestReturn.gridLevels / 2)} levels/side, ${chalk.white(bestReturn.rangePct.times(100).toFixed(1) + "%")} range \u2192 ${chalk.green("$" + bestReturn.totalReturn.toFixed(2))}`,
       ],
       [
