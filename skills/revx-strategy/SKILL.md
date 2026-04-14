@@ -32,7 +32,7 @@ revx strategy grid backtest BTC-USD --json
 | `--levels <n>` | 5 | Grid levels per side (2-25) |
 | `--range <pct>` | 10 | Grid range +/- % from mid price |
 | `--investment <amount>` | 1000 | Capital in quote currency |
-| `--days <n>` | 30 | Historical data period |
+| `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
@@ -55,7 +55,7 @@ revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 | `--ranges <csv>` | 3,5,7,10,12,15,20 | Range percentages to test |
 | `--top <n>` | 10 | Top results to display |
 | `--investment <amount>` | 1000 | Capital in quote currency |
-| `--days <n>` | 30 | Historical data period |
+| `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 
 Max 200 parameter combinations. **Not long-running** — completes and returns results.
@@ -110,7 +110,7 @@ Run a live grid bot with real-time dashboard:
 
 ```bash
 revx strategy grid run BTC-USD --investment 500
-revx strategy grid run BTC-USD --levels 10 --range 5 --investment 1000 --interval 30
+revx strategy grid run BTC-USD --levels 10 --range 5 --investment 1000 --interval 15
 revx strategy grid run BTC-USD --investment 500 --split
 revx strategy grid run BTC-USD --investment 100 --dry-run
 revx strategy grid run BTC-USD --investment 500 --reset
@@ -188,4 +188,4 @@ revx strategy grid run BTC-USD --investment 1000 --levels 10 --range 7
 | `revx-market` | Check prices and pair data before configuring a grid |
 | `revx-account` | Check balances and order status |
 | `revx-trading` | Manual order placement (grid bot places orders automatically) |
-| `revx-auth` | API key setup and passkey configuration |
+| `revx-auth` | API key setup and configuration |

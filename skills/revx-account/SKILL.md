@@ -38,7 +38,7 @@ revx order open --symbols BTC-USD,ETH-USD --side buy
 revx order open --order-states pending_new,new --order-types limit --limit 50
 ```
 
-**Filters:** `--symbols`, `--order-states` (pending_new, new, partially_filled), `--order-types` (limit, conditional, tpsl), `--side`, `--limit`, `--cursor` (pagination)
+**Filters:** `--symbols`, `--order-states` (pending_new, new, partially_filled), `--order-types` (limit, conditional, tpsl), `--side`, `--limit`
 
 ## Order History
 
@@ -48,7 +48,9 @@ revx order history --symbols BTC-USD --start-date 7d --end-date today
 revx order history --order-states filled,cancelled --limit 20
 ```
 
-**Filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced), `--order-types` (market, limit), `--start-date`, `--end-date`, `--limit`, `--cursor` (pagination)
+**Filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced), `--order-types` (market, limit), `--start-date`, `--end-date`, `--limit`
+
+**Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
 ## Order Details & Fills
 
@@ -64,11 +66,14 @@ revx order fills <order-id>            # All fills for an order
 ```bash
 revx trade private BTC-USD                                # My trade history
 revx trade private BTC-USD --start-date 7d --limit 100
+revx trade private BTC-USD --start-date 2025-04-01 --end-date 2025-04-14
 revx trade public BTC-USD                                 # Public trades
 revx trade public BTC-USD --start-date 7d --end-date today
 ```
 
-**Filters:** `--start-date`, `--end-date`, `--limit`, `--cursor` (pagination)
+**Filters:** `--start-date`, `--end-date`, `--limit`
+
+**Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
 Aliases: `revx trade history` = `private`, `revx trade all` = `public`.
 

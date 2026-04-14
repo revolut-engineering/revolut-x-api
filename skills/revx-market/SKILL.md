@@ -44,15 +44,19 @@ revx market tickers BTC-USD            # Single ticker (key-value display)
 ## Candles
 
 ```bash
-revx market candles BTC-USD                              # Default: 1h, last 100
+revx market candles BTC-USD                              # Default: 1h interval
 revx market candles BTC-USD --interval 5m                # 5-minute candles
 revx market candles BTC-USD --since 7d --until today     # Last 7 days
+revx market candles BTC-USD --since 2025-04-14           # Since specific ISO date
+revx market candles BTC-USD --since 5m --interval 1m     # Last 5 minutes, 1m candles
 revx market candles ETH-USD --interval 4h --since 30d
 ```
 
 **Intervals:** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `2d`, `4d`, `1w`, `2w`, `4w` (or raw minutes)
 
-**Time formats:** Relative (`7d`, `1w`, `4h`, `30m`, `today`, `yesterday`), ISO date, Unix epoch ms
+**Time formats:** Relative (`7d`, `1w`, `4h`, `30m`, `5m`, `today`, `yesterday`), ISO date (`2025-04-14`), Unix epoch ms
+
+**Default behavior:** When `--since` and `--until` are omitted, fetches the maximum available history for the given interval (up to 50,000 candles).
 
 ---
 
