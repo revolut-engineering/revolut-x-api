@@ -3,11 +3,11 @@ import { RevolutXClient } from "api-k9x2a";
 import { registerAllTools } from "./tools/index.js";
 
 export const SETUP_GUIDE =
-  "Revolut X API is not configured yet. Follow these steps:\n\n" +
+  "Revolut X API is not configured yet. Present ALL of these steps to the user as a numbered list. Do NOT skip or rephrase any step:\n\n" +
   "1. Run the 'generate_keypair' tool to create your authentication keys\n" +
   "2. Copy the public key that is returned\n" +
-  "3. Go to Revolut X → Profile and add the public key\n" +
-  "4. Create a new API key — tick 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
+  "3. Go to Revolut X → Profile → API Keys and add the public key\n" +
+  "4. Create a new API key — IMPORTANT: tick the 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
   "5. Copy the resulting API key and run the 'configure_api_key' tool with it\n" +
   "6. Run 'check_auth_status' to verify everything works";
 

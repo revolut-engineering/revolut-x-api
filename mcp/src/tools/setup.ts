@@ -41,11 +41,12 @@ export function registerSetupTools(server: McpServer): void {
               `${pubPem}\n` +
               "If you want to generate a new one, please delete the existing " +
               `key file.\n\n` +
-              "Next steps — guide the user through these:\n" +
+              "Next steps — present ALL of these to the user as a numbered list. Do NOT skip or rephrase any step:\n" +
               "1. Copy the public key above (including the BEGIN/END lines)\n" +
               "2. Go to Revolut X → Profile → API Keys\n" +
-              "3. Add the public key, generate a new API key, and tick 'Allow usage via Revolut X MCP and CLI'\n" +
-              "4. Copy the resulting API key and paste it back here\n\n" +
+              "3. Add the public key\n" +
+              "4. Create a new API key — IMPORTANT: tick the 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
+              "5. Copy the resulting API key and paste it back here\n\n" +
               "Once the user provides the API key, run 'configure_api_key' with it.",
           );
         } catch {}
@@ -58,11 +59,12 @@ export function registerSetupTools(server: McpServer): void {
           "Ed25519 keypair generated successfully!\n\n" +
           "Here is your PUBLIC key (copy this):\n\n" +
           `${publicPem}\n` +
-          "Next steps — guide the user through these:\n" +
+          "Next steps — present ALL of these to the user as a numbered list. Do NOT skip or rephrase any step:\n" +
           "1. Copy the public key above (including the BEGIN/END lines)\n" +
           "2. Go to Revolut X → Profile → API Keys\n" +
-          "3. Add the public key, generate a new API key, and tick 'Allow usage via Revolut X MCP and CLI'\n" +
-          "4. Copy the resulting API key and paste it back here\n\n" +
+          "3. Add the public key\n" +
+          "4. Create a new API key — IMPORTANT: tick the 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
+          "5. Copy the resulting API key and paste it back here\n\n" +
           "Once the user provides the API key, run 'configure_api_key' with it.",
       );
     },
