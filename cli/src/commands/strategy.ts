@@ -125,6 +125,7 @@ async function handleBacktest(
     investment: string;
     days: string;
     interval: string;
+    split?: boolean;
     json?: boolean;
     output?: string;
   },
@@ -166,7 +167,14 @@ async function handleBacktest(
   console.log(
     chalk.gray(`  ↳ Running backtest on ${candles.length} candles...\n`),
   );
-  const result = runBacktest(candles, gridLevels, rangePct, investment);
+  const useSplit = opts.split === true;
+  const result = runBacktest(
+    candles,
+    gridLevels,
+    rangePct,
+    investment,
+    useSplit,
+  );
 
   if (isJsonOutput(opts)) {
     const finalPrice = candles[candles.length - 1].close;
@@ -210,9 +218,13 @@ async function handleBacktest(
 
   const levels = createGrid(startPrice, gridLevels, rangePct);
   const buyLevels = levels.filter((lv) => lv.hasBuyOrder).length;
+  const sellLevels = useSplit
+    ? levels.filter((lv) => lv.price.gt(startPrice)).length
+    : 0;
+  const totalCapitalLevels = useSplit ? buyLevels + sellLevels : buyLevels;
   const [base, quote] = pair.split("-");
   const quotePerLevel = investment
-    .div(Math.max(buyLevels, 1))
+    .div(Math.max(totalCapitalLevels, 1))
     .toDecimalPlaces(2);
 
   const w = 56;
@@ -360,6 +372,7 @@ async function handleOptimize(
     levels: string;
     ranges: string;
     top: string;
+    split?: boolean;
     json?: boolean;
     output?: string;
   },
@@ -434,12 +447,14 @@ async function handleOptimize(
       `  ↳ Testing ${totalCombos} parameter combinations on ${candles.length} candles...\n`,
     ),
   );
+  const useSplit = opts.split === true;
   const results = optimizeGridParams(
     candles,
     levelsList,
     rangesList,
     investment,
     days,
+    useSplit,
   );
 
   if (isJsonOutput(opts)) {
@@ -635,6 +650,7 @@ Examples:
       "Candle resolution (1m, 5m, 15m, 30m, 1h, 4h, 1d)",
       "1m",
     )
+    .option("--split", "Market-buy base for sell levels at start")
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleBacktest);
@@ -656,6 +672,7 @@ Examples:
       "3,5,7,10,12,15,20",
     )
     .option("--top <n>", "Number of top results to show", "10")
+    .option("--split", "Market-buy base for sell levels at start")
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleOptimize);
