@@ -168,7 +168,13 @@ async function handleBacktest(
     chalk.gray(`  ↳ Running backtest on ${candles.length} candles...\n`),
   );
   const useSplit = opts.split === true;
-  const result = runBacktest(candles, gridLevels, rangePct, investment, useSplit);
+  const result = runBacktest(
+    candles,
+    gridLevels,
+    rangePct,
+    investment,
+    useSplit,
+  );
 
   if (isJsonOutput(opts)) {
     const finalPrice = candles[candles.length - 1].close;

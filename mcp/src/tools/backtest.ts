@@ -397,7 +397,13 @@ export function registerBacktestTools(server: McpServer): void {
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
 
-      const result = runBacktest(candles, totalLevels, rangeDec, investDec!, split_investment);
+      const result = runBacktest(
+        candles,
+        totalLevels,
+        rangeDec,
+        investDec!,
+        split_investment,
+      );
 
       return textResult(
         formatBacktestResult(
