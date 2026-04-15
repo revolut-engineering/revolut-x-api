@@ -104,6 +104,7 @@ function runBuyPass(
       quoteBalance = quoteBalance.minus(quotePerLevel);
       result.totalBuys += 1;
       result.totalTrades += 1;
+      result.realizedPnl = result.realizedPnl.minus(quotePerLevel);
 
       const totalPnl = quoteBalance
         .plus(sumBaseHeld(levels).times(level.price))
@@ -147,7 +148,7 @@ function runSellPass(
         quoteBalance = quoteBalance.plus(quoteReceived);
         result.totalSells += 1;
         result.totalTrades += 1;
-        result.realizedPnl = result.realizedPnl.plus(profit);
+        result.realizedPnl = result.realizedPnl.plus(quoteReceived);
 
         const totalPnl = quoteBalance
           .plus(sumBaseHeld(levels).times(sellLevel.price))
@@ -223,6 +224,7 @@ export function runBacktest(
   gridLevels: number,
   rangePct: Decimal,
   investment: Decimal,
+  split = false,
 ): BacktestResult {
   if (candles.length === 0) {
     return createEmptyResult();
@@ -231,17 +233,61 @@ export function runBacktest(
   const startPrice = candles[0].open;
   const levels = createGrid(startPrice, gridLevels, rangePct);
 
-  let buyLevels = 0;
+  let buyLevelCount = 0;
   for (const lv of levels) {
-    if (lv.hasBuyOrder) buyLevels++;
+    if (lv.hasBuyOrder) buyLevelCount++;
   }
+
+  const sellLevelIndices: number[] = [];
+  if (split) {
+    for (const lv of levels) {
+      if (lv.price.gt(startPrice)) {
+        sellLevelIndices.push(lv.index);
+      }
+    }
+  }
+
+  const totalCapitalLevels = split
+    ? buyLevelCount + sellLevelIndices.length
+    : buyLevelCount;
+
   const quotePerLevel = investment
-    .div(Math.max(buyLevels, 1))
+    .div(Math.max(totalCapitalLevels, 1))
     .toDecimalPlaces(2, Decimal.ROUND_DOWN);
 
   const result = createEmptyResult();
   let quoteBalance = investment;
   let peakValue = investment;
+
+  if (split && sellLevelIndices.length > 0) {
+    const basePerLevel = quotePerLevel
+      .div(startPrice)
+      .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+
+    for (const sellIdx of sellLevelIndices) {
+      const buyLevel = levels[sellIdx - 1];
+      if (buyLevel) {
+        buyLevel.hasPosition = true;
+        buyLevel.hasBuyOrder = false;
+        buyLevel.baseHeld = basePerLevel;
+      }
+    }
+
+    const splitCost = quotePerLevel.times(sellLevelIndices.length);
+    quoteBalance = quoteBalance.minus(splitCost);
+    result.totalBuys += sellLevelIndices.length;
+    result.totalTrades += sellLevelIndices.length;
+    result.realizedPnl = result.realizedPnl.minus(splitCost);
+
+    const totalPnl = quoteBalance
+      .plus(sumBaseHeld(levels).times(startPrice))
+      .minus(investment);
+
+    result.tradeLog.push(
+      `SPLIT: Market buy ${sellLevelIndices.length} positions @ ${startPrice} | ` +
+        `-${splitCost.toFixed(2)} | realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)}`,
+    );
+  }
 
   for (const candle of candles) {
     quoteBalance = simulateCandle(
@@ -285,6 +331,7 @@ export function optimizeGridParams(
   rangePctRange?: Decimal[],
   investment: Decimal = new Decimal(1000),
   days: number = 30,
+  split = false,
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
@@ -310,7 +357,7 @@ export function optimizeGridParams(
 
   for (const levels of gridLevelsRange) {
     for (const rangePct of rangePctRange) {
-      const bt = runBacktest(candles, levels, rangePct, investment);
+      const bt = runBacktest(candles, levels, rangePct, investment, split);
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
       const totalReturn = totalValue.minus(investment);

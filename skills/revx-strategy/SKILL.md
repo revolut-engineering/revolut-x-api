@@ -24,6 +24,7 @@ Test a grid strategy on historical data:
 revx strategy grid backtest BTC-USD
 revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
 revx strategy grid backtest ETH-USD --days 60 --interval 4h
+revx strategy grid backtest BTC-USD --split
 revx strategy grid backtest BTC-USD --json
 ```
 
@@ -34,6 +35,7 @@ revx strategy grid backtest BTC-USD --json
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
+| `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
 
@@ -47,6 +49,7 @@ Test multiple parameter combinations, ranked by return:
 revx strategy grid optimize BTC-USD
 revx strategy grid optimize BTC-USD --investment 5000 --days 60
 revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
+revx strategy grid optimize BTC-USD --split
 ```
 
 | Flag | Default | Description |
@@ -57,6 +60,7 @@ revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
+| `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
 
 Max 200 parameter combinations. **Not long-running** — completes and returns results.
 
@@ -121,7 +125,7 @@ revx strategy grid run BTC-USD --investment 500 --reset
 | `--investment <amount>` | **required** | Capital in quote currency |
 | `--levels <n>` | 5 | Grid levels per side (2-25) |
 | `--range <pct>` | 5 | Grid range +/- % from mid |
-| `--split` | off | Market-buy 50% base at start |
+| `--split` | off | Split investment across buy and sell levels (market-buy base for levels above current price) |
 | `--interval <sec>` | 10 | Polling interval in seconds |
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
@@ -162,6 +166,18 @@ Response to user:
 
 ---
 
+## P&L Metrics
+
+**Realized P&L** = total sell trade amounts − total buy trade amounts for the period. Reflects net cash flow from all trading activity including the initial split buy (if `--split` is used).
+
+**Total P&L** = (final quote balance + final base × final price) − initial investment. The mark-to-market portfolio value change. No assets are force-sold at the end.
+
+**Without `--split`:** only buy levels (below start price) are funded. In uptrending markets all grid cycles may complete, making Realized and Total P&L equal.
+
+**With `--split`:** investment is divided across all levels. Levels above start price get positions via a simulated market buy at start price. This creates Realized/Total P&L divergence and allows profiting from both up and down moves within the grid.
+
+---
+
 ## Common Workflow: Backtest Then Run
 
 ```bash
@@ -177,6 +193,8 @@ revx strategy grid run BTC-USD --investment 1000 --levels 10 --range 7 --dry-run
 # 4. Go live
 revx strategy grid run BTC-USD --investment 1000 --levels 10 --range 7
 ```
+
+Use `--split` consistently across all steps if you want to test and run with split investment.
 
 ---
 

@@ -138,6 +138,7 @@ function formatBacktestResult(
   rangePct: Decimal,
   investment: Decimal,
   days: number,
+  split = false,
 ): string {
   const startPrice = candles[0].open;
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
@@ -152,8 +153,12 @@ function formatBacktestResult(
 
   const levels = createGrid(startPrice, gridLevels, rangePct);
   const buyLevels = levels.filter((lv) => lv.hasBuyOrder).length;
+  const sellLevels = split
+    ? levels.filter((lv) => lv.price.gt(startPrice)).length
+    : 0;
+  const totalCapitalLevels = split ? buyLevels + sellLevels : buyLevels;
   const quotePerLevel = investment
-    .div(Math.max(buyLevels, 1))
+    .div(Math.max(totalCapitalLevels, 1))
     .toDecimalPlaces(2);
 
   const [base, quote] = symbol.split("-");
@@ -332,6 +337,12 @@ export function registerBacktestTools(server: McpServer): void {
           .number()
           .default(3)
           .describe("Days of historical data to fetch (default 3)."),
+        split_investment: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Split investment across buy and sell levels. Market-buys base for sell levels above the starting price at grid creation.",
+          ),
       },
       annotations: {
         title: "Run Grid Backtest",
@@ -347,6 +358,7 @@ export function registerBacktestTools(server: McpServer): void {
       investment,
       resolution,
       days,
+      split_investment,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -385,7 +397,7 @@ export function registerBacktestTools(server: McpServer): void {
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
 
-      const result = runBacktest(candles, totalLevels, rangeDec, investDec!);
+      const result = runBacktest(candles, totalLevels, rangeDec, investDec!, split_investment);
 
       return textResult(
         formatBacktestResult(
@@ -397,6 +409,7 @@ export function registerBacktestTools(server: McpServer): void {
           rangeDec,
           investDec!,
           actualDays,
+          split_investment,
         ) + llmNotice,
       );
     },
@@ -439,6 +452,12 @@ export function registerBacktestTools(server: McpServer): void {
           .number()
           .default(10)
           .describe("Number of top results to show (default 10, max 50)."),
+        split_investment: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Split investment across buy and sell levels. Market-buys base for sell levels above the starting price at grid creation.",
+          ),
       },
       annotations: {
         title: "Optimize Grid Parameters",
@@ -455,6 +474,7 @@ export function registerBacktestTools(server: McpServer): void {
       grid_levels_options,
       range_pct_options,
       top_n,
+      split_investment,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -533,6 +553,7 @@ export function registerBacktestTools(server: McpServer): void {
         rangesList,
         investDec!,
         actualDays,
+        split_investment,
       );
 
       return textResult(
