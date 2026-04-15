@@ -1,6 +1,6 @@
 {
   "name": "revolut-x",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "Explains AI assistants how to use the Revolut X CLI (revx) for crypto trading, market data, monitoring, and grid bot strategies",
   "author": {
     "name": "Revolut X",
