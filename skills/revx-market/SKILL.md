@@ -10,7 +10,7 @@ description: >
 
 > Query currencies, trading pairs, live prices, historical candles, and order book depth.
 
-Ensure `revx` is installed, up to date (`npm update -g cli-k9x2a`), and configured — see `revx-auth` skill.
+Ensure `revx` is installed and configured — see `revx-auth` skill.
 
 All commands support `--json` or `--output json` for machine-readable output.
 

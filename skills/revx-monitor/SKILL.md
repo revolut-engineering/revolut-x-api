@@ -11,7 +11,7 @@ description: >
 
 > Live price and technical indicator alerts. Runs as a continuous polling process.
 
-Ensure `revx` is installed, up to date (`npm update -g cli-k9x2a`), and configured — see `revx-auth` skill.
+Ensure `revx` is installed and configured — see `revx-auth` skill.
 
 Symbols use `BASE-QUOTE` format with a dash: `BTC-USD`, `ETH-EUR`, `SOL-USD`.
 

@@ -27,14 +27,6 @@ After install, `revx` is available as a global command:
 revx --version                # Should print the version
 ```
 
-## Update
-
-At the beginning of each session, update to the latest version:
-
-```bash
-npm update -g cli-k9x2a
-```
-
 ---
 
 ## Getting Started
