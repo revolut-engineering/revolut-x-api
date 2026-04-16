@@ -140,6 +140,8 @@ export function registerSetupTools(server: McpServer): void {
         "To install the CLI, run:\n\n" +
           "  npm install -g cli-k9x2a\n\n" +
           "This installs the 'revx' command globally. The API client is bundled inside — no separate install needed.\n\n" +
+          "To update to the latest version (run at the start of each session):\n\n" +
+          "  npm update -g cli-k9x2a\n\n" +
           "After installation, run 'revx configure' to set up your API key and keypair.",
       );
     },
