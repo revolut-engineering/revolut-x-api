@@ -309,7 +309,6 @@ export function registerBacktestTools(server: McpServer): void {
         "Simulates a grid strategy: places buy orders at geometrically spaced price levels " +
         "below the starting price, sells at the next level above. " +
         "If the requested date range contains more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp. " +
-
         "IMPORTANT: Before running, always confirm these key parameters with the user: " +
         "symbol (required), investment amount, grid_levels, range_pct, and split_investment. " +
         "These affect capital at risk and strategy behavior — never assume them silently. " +
@@ -436,7 +435,6 @@ export function registerBacktestTools(server: McpServer): void {
         "Runs grid backtest for every combination of grid levels and range percentages, " +
         "then ranks by total return. If the requested date range contains more than 50,000 candles, " +
         "it defaults to testing against the last 50,000 candles from the current timestamp. " +
-
         "IMPORTANT: Before running, always confirm these key parameters with the user: " +
         "symbol (required), investment amount, and split_investment. " +
         "These affect capital at risk and strategy behavior — never assume them silently. " +

@@ -19,7 +19,7 @@ vi.mock("../../src/util/client.js", () => ({
 }));
 
 vi.mock("api-k9x2a", async (importOriginal) => {
-  const actual = (await importOriginal()) as any;
+  const actual = (await importOriginal()) as Record<string, unknown>;
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}
   class AuthenticationError extends RevolutXError {}
