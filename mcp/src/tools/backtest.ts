@@ -308,7 +308,13 @@ export function registerBacktestTools(server: McpServer): void {
         "Run a grid trading backtest on historical candle data from Revolut X. " +
         "Simulates a grid strategy: places buy orders at geometrically spaced price levels " +
         "below the starting price, sells at the next level above. " +
-        "If the requested date range contains more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp.",
+        "If the requested date range contains more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp. " +
+
+        "IMPORTANT: Before running, always confirm these key parameters with the user: " +
+        "symbol (required), investment amount, grid_levels, range_pct, and split_investment. " +
+        "These affect capital at risk and strategy behavior — never assume them silently. " +
+        "Other parameters (days, resolution) can use defaults unless the user specifies otherwise. " +
+        "For split_investment: true is best for ranging/sideways markets, false for trending markets.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD".'),
         grid_levels: z
@@ -341,7 +347,7 @@ export function registerBacktestTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe(
-            "Split investment across buy and sell levels. Market-buys base for sell levels above the starting price at grid creation.",
+            "Split investment across buy and sell levels. When true, market-buys base for sell levels above the starting price — best for ranging/sideways markets. When false (default), all capital funds buy levels only — best for trending markets.",
           ),
       },
       annotations: {
@@ -429,7 +435,13 @@ export function registerBacktestTools(server: McpServer): void {
         "Test multiple grid parameter combinations and return ranked results. " +
         "Runs grid backtest for every combination of grid levels and range percentages, " +
         "then ranks by total return. If the requested date range contains more than 50,000 candles, " +
-        "it defaults to testing against the last 50,000 candles from the current timestamp.",
+        "it defaults to testing against the last 50,000 candles from the current timestamp. " +
+
+        "IMPORTANT: Before running, always confirm these key parameters with the user: " +
+        "symbol (required), investment amount, and split_investment. " +
+        "These affect capital at risk and strategy behavior — never assume them silently. " +
+        "Other parameters (grid_levels_options, range_pct_options, days, resolution, top_n) can use defaults unless the user specifies otherwise. " +
+        "For split_investment: true is best for ranging/sideways markets, false for trending markets.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD".'),
         investment: z
@@ -462,7 +474,7 @@ export function registerBacktestTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe(
-            "Split investment across buy and sell levels. Market-buys base for sell levels above the starting price at grid creation.",
+            "Split investment across buy and sell levels. When true, market-buys base for sell levels above the starting price — best for ranging/sideways markets. When false (default), all capital funds buy levels only — best for trending markets.",
           ),
       },
       annotations: {

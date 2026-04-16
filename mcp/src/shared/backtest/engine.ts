@@ -104,7 +104,6 @@ function runBuyPass(
       quoteBalance = quoteBalance.minus(quotePerLevel);
       result.totalBuys += 1;
       result.totalTrades += 1;
-      result.realizedPnl = result.realizedPnl.minus(quotePerLevel);
 
       const totalPnl = quoteBalance
         .plus(sumBaseHeld(levels).times(level.price))
@@ -148,7 +147,7 @@ function runSellPass(
         quoteBalance = quoteBalance.plus(quoteReceived);
         result.totalSells += 1;
         result.totalTrades += 1;
-        result.realizedPnl = result.realizedPnl.plus(quoteReceived);
+        result.realizedPnl = result.realizedPnl.plus(profit);
 
         const totalPnl = quoteBalance
           .plus(sumBaseHeld(levels).times(sellLevel.price))
@@ -275,17 +274,9 @@ export function runBacktest(
 
     const splitCost = quotePerLevel.times(sellLevelIndices.length);
     quoteBalance = quoteBalance.minus(splitCost);
-    result.totalBuys += sellLevelIndices.length;
-    result.totalTrades += sellLevelIndices.length;
-    result.realizedPnl = result.realizedPnl.minus(splitCost);
-
-    const totalPnl = quoteBalance
-      .plus(sumBaseHeld(levels).times(startPrice))
-      .minus(investment);
 
     result.tradeLog.push(
-      `SPLIT: Market buy ${sellLevelIndices.length} positions @ ${startPrice} | ` +
-        `-${splitCost.toFixed(2)} | realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)}`,
+      `SPLIT: Market buy ${sellLevelIndices.length} positions @ ${startPrice} | -${splitCost.toFixed(2)}`,
     );
   }
 

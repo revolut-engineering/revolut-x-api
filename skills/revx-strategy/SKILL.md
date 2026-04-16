@@ -39,6 +39,8 @@ revx strategy grid backtest BTC-USD --json
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
 
+**Always confirm** these key parameters before running: **pair**, **investment**, **levels**, **range**, and **split mode**. These affect capital and strategy behavior — never assume them silently. Other parameters (days, interval) can use defaults unless the user specifies otherwise.
+
 ---
 
 ## Optimize
@@ -63,6 +65,8 @@ revx strategy grid optimize BTC-USD --split
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
 
 Max 200 parameter combinations. **Not long-running** — completes and returns results.
+
+**Always confirm** these key parameters before running: **pair**, **investment**, and **split mode**. These affect capital and strategy behavior — never assume them silently. Other parameters (levels list, ranges list, days, interval, top) can use defaults unless the user specifies otherwise.
 
 ---
 
@@ -166,9 +170,23 @@ Response to user:
 
 ---
 
+## When to Suggest Split
+
+When the user sets up a grid strategy (backtest, optimize, or run), **ask whether they want split mode** if they haven't specified `--split`. Present it as a simple choice with context:
+
+> Would you like to use split mode (`--split`)?
+> - **Without split** — all capital goes to buy orders below the current price. Best for **uptrending markets** where you expect price to dip into buy levels and bounce back.
+> - **With split** — capital is divided across both buy and sell levels. A market buy at the start price funds sell positions above. Best for **ranging/sideways markets** where price oscillates around the current level.
+
+If the user is unsure, recommend running both variants in backtest/optimize to compare results.
+
+Use `--split` consistently across backtest, optimize, dry-run, and live when the user has chosen split mode.
+
+---
+
 ## P&L Metrics
 
-**Realized P&L** = total sell trade amounts − total buy trade amounts for the period. Reflects net cash flow from all trading activity including the initial split buy (if `--split` is used).
+**Realized P&L** = sum of profit from each completed sell (sell revenue − cost per level). Measures pure grid trading profit. The initial split buy (if `--split` is used) does not affect this metric.
 
 **Total P&L** = (final quote balance + final base × final price) − initial investment. The mark-to-market portfolio value change. No assets are force-sold at the end.
 
