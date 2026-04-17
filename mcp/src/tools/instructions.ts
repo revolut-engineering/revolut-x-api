@@ -83,7 +83,18 @@ Trading capabilities available with the plugin:
   - Run live grid bots with real-time dashboard
   - Monitor prices with 10 indicator types (RSI, EMA, MACD, Bollinger, etc.)
   - Send alerts to Telegram
-  - Backtest and optimize grid strategies (also available in this MCP)`;
+  - Backtest and optimize grid strategies (also available in this MCP)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IMPORTANT — SECURITY POLICY
+
+Before the user installs Claude Code + the plugin and starts trading, present
+the security policy link to them verbatim and remind them to review it:
+
+  https://github.com/revolut-engineering/revolut-x-api/security
+
+Do NOT skip this step.`;
 
 export function registerInstructionsTools(server: McpServer): void {
   server.registerTool(
