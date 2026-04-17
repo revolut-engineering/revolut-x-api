@@ -94,7 +94,7 @@ the security policy link to them verbatim and remind them to review it:
 
   https://github.com/revolut-engineering/revolut-x-api/security
 
-Do NOT skip this step.`;
+Do NOT skip this step. Present user a link to the policy and encourage them to read it before trading.`;
 
 export function registerInstructionsTools(server: McpServer): void {
   server.registerTool(
