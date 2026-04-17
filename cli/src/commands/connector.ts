@@ -125,7 +125,7 @@ Examples:
             testResult = await sendTelegramMessage(
               conn.bot_token,
               conn.chat_id,
-              "Test message from RevolutX CLI",
+              "Test message from Revolut X CLI",
             );
           }
 
@@ -253,7 +253,7 @@ Examples:
     .option(
       "--message <msg>",
       "Custom test message",
-      "Test message from RevolutX CLI",
+      "Test message from Revolut X CLI",
     )
     .action(async (connectionId: string, opts: { message: string }) => {
       try {

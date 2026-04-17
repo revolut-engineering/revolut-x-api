@@ -1,4 +1,4 @@
-# Privacy Policy — RevolutX MCP Server
+# Privacy Policy — Revolut X MCP Server
 
 Last updated: 2026-03-24
 
@@ -6,7 +6,7 @@ Last updated: 2026-03-24
 
 ## What This Server Does
 
-RevolutX is a **local MCP server** that runs on your machine via STDIO transport. It communicates with the Revolut X API for trading operations and with Revolut's security backend for key pair protection. There is no third-party analytics and no advertising.
+Revolut X is a **local MCP server** that runs on your machine via STDIO transport. It communicates with the Revolut X API for trading operations and with Revolut's security backend for key pair protection. There is no third-party analytics and no advertising.
 
 ---
 
@@ -35,7 +35,7 @@ RevolutX is a **local MCP server** that runs on your machine via STDIO transport
 
 ## External Services
 
-RevolutX communicates with the following external services:
+Revolut X communicates with the following external services:
 
 | Service | Domain | Purpose | When |
 |---------|--------|---------|------|
@@ -88,7 +88,7 @@ This telemetry is **mandatory** and cannot be disabled — it is a core part of 
 
 ## Data Sharing
 
-RevolutX does **not** share your data with any party beyond the external services listed above. Specifically:
+Revolut X does **not** share your data with any party beyond the external services listed above. Specifically:
 
 - No data is sold or shared with advertisers
 - No data is shared with third-party analytics providers

@@ -26,7 +26,7 @@ export function resetRevolutXClient(): void {
 
 export function createServer(): McpServer {
   const server = new McpServer({
-    name: "RevolutX",
+    name: "Revolut X",
     version: "1.0.26",
   });
 

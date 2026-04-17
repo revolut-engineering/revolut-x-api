@@ -89,14 +89,14 @@ export function registerInstructionsTools(server: McpServer): void {
   server.registerTool(
     "get_instructions",
     {
-      title: "Get RevolutX MCP Instructions",
+      title: "Get Revolut X MCP Instructions",
       description:
         "CALL THIS FIRST. Returns mandatory usage rules and tool overview for this MCP. " +
         "RULE 1: Never assume any tool exists — verify via get_instructions before referencing any tool name. " +
         "RULE 2: All tools are read-only. No tool places, modifies, or cancels orders. " +
         "For trading actions, call get_trading_setup.",
       annotations: {
-        title: "Get RevolutX MCP Instructions",
+        title: "Get Revolut X MCP Instructions",
         readOnlyHint: true,
         destructiveHint: false,
         openWorldHint: false,

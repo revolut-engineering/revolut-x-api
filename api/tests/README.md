@@ -1,6 +1,6 @@
 # API Tests
 
-Comprehensive test suite for the RevolutX API client following Node.js best practices.
+Comprehensive test suite for the Revolut X API client following Node.js best practices.
 
 ## Structure
 

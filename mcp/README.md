@@ -1,4 +1,4 @@
-# RevolutX MCP Server
+# Revolut X MCP Server
 
 MCP (Model Context Protocol) server for the [Revolut X](https://exchange.revolut.com/) crypto exchange. Use natural language in Claude Desktop, Cursor, or any MCP-compatible client to query market data, check balances, view orders, and run grid strategy backtests.
 
@@ -31,7 +31,7 @@ cd mcp && npm ci && npm run build
 
 **Option B: Claude Desktop (Anthropic directory)**
 
-Search for **RevolutX** in the MCP directory and click Install.
+Search for **Revolut X** in the MCP directory and click Install.
 
 **Option C: Manual — Claude Desktop**
 
