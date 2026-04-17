@@ -322,7 +322,7 @@ The server is self-contained: it calls the Revolut X REST API directly and does 
 
 ### Responsible disclosure
 
-If you discover a security vulnerability, please report it via [GitHub Issues](https://github.com/revolut-engineering/revolut-x-api/issues) with the **security** label, or contact the maintainers directly. Do not disclose vulnerabilities publicly before a fix is available.
+If you discover a security vulnerability, **do not open a public issue**. See [SECURITY.md](SECURITY.md) for the private reporting channels and disclosure process.
 
 ---
 

@@ -18,15 +18,15 @@ jobs:
     name: Install Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         id: modules-cache
         with:
           path: node_modules
@@ -44,19 +44,19 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         id: api-dist-cache
         with:
           path: api/dist
@@ -70,19 +70,19 @@ jobs:
     needs: [install, build-api]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -100,14 +100,14 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
@@ -124,19 +124,19 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -154,19 +154,19 @@ jobs:
       run:
         working-directory: cli
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -184,19 +184,19 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -204,7 +204,7 @@ jobs:
 
       - run: npm pack
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: api-k9x2a
           path: api/api-k9x2a-*.tgz
@@ -214,19 +214,19 @@ jobs:
     needs: test-cli
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -238,7 +238,7 @@ jobs:
       - name: Pack tarball
         run: cd cli && npm pack
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cli-k9x2a
           path: cli/cli-k9x2a-*.tgz
@@ -251,19 +251,19 @@ jobs:
       run:
         working-directory: mcp
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: api/dist
           key: api-dist-${{ runner.os }}-${{ hashFiles('api/package.json', 'api/tsconfig.json', 'api/src/**') }}
@@ -272,7 +272,7 @@ jobs:
       - name: Build MCPB archive
         run: bash scripts/build-mcpb.sh
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: revolutx-mcp-mcpb
           path: mcp/dist/revolutx-mcp.mcpb
@@ -282,14 +282,14 @@ jobs:
     needs: [pack-api, pack-cli, pack-mcp]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: 22
           package-manager-cache: false
 
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
           key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
@@ -300,7 +300,7 @@ jobs:
           npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace cli-k9x2a --output-file sbom-cli.json
           npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace revolutx-mcp --output-file sbom-mcp.json
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sbom
           path: sbom-*.json
