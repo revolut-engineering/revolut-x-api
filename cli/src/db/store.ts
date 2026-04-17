@@ -1,7 +1,14 @@
-import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { getConfigDir, ensureConfigDir } from "api-k9x2a";
+import { platform } from "node:os";
+import { getConfigDir, ensureConfigDir, setPermissions } from "api-k9x2a";
 
 export interface TelegramConnection {
   id: string;
@@ -24,9 +31,20 @@ function filePath(filename: string): string {
   return join(getConfigDir(), filename);
 }
 
+function healPermissions(path: string): void {
+  if (platform() === "win32") return;
+  try {
+    const mode = statSync(path).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      setPermissions(path, 0o600);
+    }
+  } catch {}
+}
+
 function loadArray<T>(filename: string): T[] {
   const path = filePath(filename);
   if (!existsSync(path)) return [];
+  healPermissions(path);
   try {
     const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
     return Array.isArray(data) ? (data as T[]) : [];
@@ -39,8 +57,12 @@ function saveArray<T>(filename: string, data: T[]): void {
   ensureConfigDir();
   const path = filePath(filename);
   const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
+  writeFileSync(tmp, JSON.stringify(data, null, 2), {
+    mode: 0o600,
+    encoding: "utf-8",
+  });
   renameSync(tmp, path);
+  setPermissions(path, 0o600);
 }
 
 const TELEGRAM_FILE = "telegram.json";

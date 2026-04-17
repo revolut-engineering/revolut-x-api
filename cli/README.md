@@ -350,6 +350,9 @@ Override with the `REVOLUTX_CONFIG_DIR` environment variable.
 | `config.json` | API key |
 | `private.pem` | Ed25519 private key |
 | `public.pem` | Ed25519 public key (register with Revolut X) |
+| `telegram.json` | Telegram notification bot tokens |
+
+Credential files are written with owner-only permissions (`0o600`). The CLI refuses to load `private.pem` or `config.json` if their permissions are looser than that — if you hit an "insecure permissions" error, run `chmod 600 ~/.config/revolut-x/<file>`.
 
 ---
 

@@ -5,6 +5,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { assertSecurePermissions } from "../config/settings.js";
 
 export function generateKeypair(
   privateKeyPath: string,
@@ -22,6 +23,7 @@ export function generateKeypair(
 }
 
 export function loadPrivateKey(path: string): KeyObject {
+  assertSecurePermissions(path, "private key");
   const pem = readFileSync(path, "utf-8");
   const key = createPrivateKey(pem);
   if (key.asymmetricKeyType !== "ed25519") {

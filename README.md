@@ -298,6 +298,7 @@ The MCP server and CLI handle cryptographic keys that authorize real trades on y
 ### Private key protection
 
 - Keep your Ed25519 private key file (`private.pem`) readable only by your user account. On macOS/Linux the installer sets `chmod 600` automatically — verify with `ls -l ~/.config/revolut-x/private.pem`.
+- The CLI and SDK refuse to load credential files (`private.pem`, `config.json`) if their permissions are looser than `0o600`. If you see an "insecure permissions" error, run `chmod 600 ~/.config/revolut-x/private.pem` (and similarly for `config.json`).
 - Never share, commit, or copy your private key to another machine. If compromised, rotate it immediately in your Revolut X account under Profile > API Keys.
 - Consider encrypting the config directory with your OS disk encryption (FileVault, BitLocker, LUKS).
 

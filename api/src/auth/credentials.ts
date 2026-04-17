@@ -1,7 +1,11 @@
 import { existsSync } from "node:fs";
 import type { KeyObject } from "node:crypto";
 import { loadPrivateKey } from "./keypair.js";
-import { loadConfig, getPrivateKeyFile } from "../config/settings.js";
+import {
+  loadConfig,
+  getPrivateKeyFile,
+  assertSecurePermissions,
+} from "../config/settings.js";
 
 export interface Credentials {
   apiKey: string;
@@ -17,6 +21,8 @@ export function loadCredentials(): Credentials | null {
     keyPath = getPrivateKeyFile();
   }
   if (!existsSync(keyPath)) return null;
+
+  assertSecurePermissions(keyPath, "private key");
 
   try {
     const privateKey = loadPrivateKey(keyPath);

@@ -4,6 +4,7 @@ import {
   readFileSync,
   writeFileSync,
   chmodSync,
+  statSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
@@ -24,11 +25,24 @@ function defaultConfigDir(): string {
   return join(homedir(), ".config", "revolut-x");
 }
 
-function setPermissions(path: string, mode: number): void {
+export function setPermissions(path: string, mode: number): void {
   if (platform() === "win32") return;
   try {
     chmodSync(path, mode);
   } catch {}
+}
+
+export function assertSecurePermissions(path: string, label: string): void {
+  if (platform() === "win32") return;
+  if (!existsSync(path)) return;
+  const mode = statSync(path).mode & 0o777;
+  if ((mode & 0o077) !== 0) {
+    throw new Error(
+      `Refusing to load ${label} at ${path}: insecure permissions ` +
+        `(0o${mode.toString(8).padStart(3, "0")}). ` +
+        `Fix with: chmod 600 ${path}`,
+    );
+  }
 }
 
 export function getConfigDir(): string {
@@ -59,6 +73,7 @@ export function loadConfig(): RevolutXConfig {
   if (!existsSync(configFile)) {
     return {};
   }
+  assertSecurePermissions(configFile, "config file");
   try {
     return JSON.parse(readFileSync(configFile, "utf-8")) as RevolutXConfig;
   } catch {

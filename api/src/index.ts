@@ -20,6 +20,8 @@ export {
   loadConfig,
   saveConfig,
   isConfigured,
+  setPermissions,
+  assertSecurePermissions,
   type RevolutXConfig,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_RETRIES,
