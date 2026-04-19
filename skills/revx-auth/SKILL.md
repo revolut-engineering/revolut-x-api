@@ -10,6 +10,8 @@ description: >
 
 > Install the CLI, generate API keys, and configure write-operation security.
 
+> **Auto-resolve target.** When invoked from another `revx-*` skill due to an auth error, do not bounce the user back to manual setup. Diagnose the failure against the [Error Reference](#error-reference) below, run the fix yourself (e.g. `chmod 600 ~/.config/revolut-x/private.pem`, `revx configure generate-keypair`, `revx configure set --api-key <key>`), then return to the calling skill and retry the original command. Only ask the user for inputs that only they can provide: the 64-character API key string, confirmation that they have registered the public key in their Revolut X profile, the keypair passphrase, or approval to overwrite an existing keypair.
+
 ## Prerequisites
 
 - **Node.js >= 20** (check with `node -v`)
