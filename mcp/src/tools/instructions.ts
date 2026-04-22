@@ -92,7 +92,7 @@ IMPORTANT — SECURITY POLICY
 Before the user installs Claude Code + the plugin and starts trading, present
 the security policy link to them verbatim and remind them to review it:
 
-  https://github.com/revolut-engineering/revolut-x-api/security
+  https://github.com/revolut-engineering/revolut-x-api/blob/master/SECURITY.md
 
 Do NOT skip this step. Present user a link to the policy and encourage them to read it before trading.`;
 
