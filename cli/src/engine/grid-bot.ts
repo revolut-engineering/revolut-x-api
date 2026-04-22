@@ -1,7 +1,8 @@
 import { Decimal } from "decimal.js";
 import { randomUUID } from "node:crypto";
-import { RevolutXClient } from "api-k9x2a";
+import { RevolutXClient, InsecureKeyPermissionsError } from "api-k9x2a";
 import type { CurrencyPair } from "api-k9x2a";
+import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
 import {
   saveGridState,
@@ -82,7 +83,10 @@ export class ForegroundGridBot {
   async run(): Promise<void> {
     this._running = true;
     this._startTime = Date.now();
-    this._client = new RevolutXClient({ isAgent: true });
+    this._client = new RevolutXClient({
+      isAgent: true,
+      enforceKeyPermissions: true,
+    });
     this._connections = loadConnections().filter((c) => c.enabled);
 
     if (!this._client.isAuthenticated) {
@@ -302,6 +306,7 @@ export class ForegroundGridBot {
       const entry = balances.find((b) => b.currency === quoteCurrency);
       return entry ? new Decimal(entry.available) : new Decimal(0);
     } catch (err) {
+      rethrowIfInsecureKey(err);
       console.log(
         chalk.yellow(
           `  Warning: Could not check balance: ${err instanceof Error ? err.message : String(err)}`,
@@ -696,7 +701,8 @@ export class ForegroundGridBot {
             } else {
               ordersKept++;
             }
-          } catch {
+          } catch (err) {
+            rethrowIfInsecureKey(err);
             level.buyOrderId = null;
             ordersDead++;
           }
@@ -750,7 +756,8 @@ export class ForegroundGridBot {
             } else {
               ordersKept++;
             }
-          } catch {
+          } catch (err) {
+            rethrowIfInsecureKey(err);
             level.sellOrderId = null;
             ordersDead++;
           }
@@ -916,6 +923,21 @@ export class ForegroundGridBot {
         await this._tick();
         this._lastError = null;
       } catch (err) {
+        if (err instanceof InsecureKeyPermissionsError) {
+          console.log(
+            chalk.red(
+              `\n  Halting grid bot: credential file permissions are unsafe.\n  ${err.message}`,
+            ),
+          );
+          console.log(
+            chalk.yellow(
+              "  Open exchange orders were NOT cancelled (signing is no longer safe).\n" +
+                "  Fix the key permissions, then cancel manually with: revx order cancel --all",
+            ),
+          );
+          this.stop();
+          throw err;
+        }
         this._lastError = err instanceof Error ? err.message : String(err);
       }
 
@@ -1004,6 +1026,7 @@ export class ForegroundGridBot {
             await this._replaceGridBuy(level);
           }
         } catch (err) {
+          rethrowIfInsecureKey(err);
           this._warnings.push(
             `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
           );
@@ -1061,6 +1084,7 @@ export class ForegroundGridBot {
                   );
                   buyLevel.buyOrderId = orderId;
                 } catch (err) {
+                  rethrowIfInsecureKey(err);
                   this._warnings.push(
                     `Re-buy #${buyLevel.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
                   );
@@ -1078,6 +1102,7 @@ export class ForegroundGridBot {
             }
           }
         } catch (err) {
+          rethrowIfInsecureKey(err);
           this._warnings.push(
             `Check sell #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
           );
@@ -1250,6 +1275,7 @@ export class ForegroundGridBot {
       });
       sellLevel.sellOrderId = resp.data.venue_order_id;
     } catch (err) {
+      rethrowIfInsecureKey(err);
       this._warnings.push(
         `Sell @${sellLevel.price}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1263,6 +1289,7 @@ export class ForegroundGridBot {
       const orderId = await this._placeBuyOrder(level, quotePerLevel);
       level.buyOrderId = orderId;
     } catch (err) {
+      rethrowIfInsecureKey(err);
       this._warnings.push(
         `Buy @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
       );

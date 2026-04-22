@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
+import { InsecureKeyPermissionsError } from "../http/errors.js";
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RETRIES = 3;
@@ -32,15 +33,53 @@ export function setPermissions(path: string, mode: number): void {
   } catch {}
 }
 
+function redactHome(path: string): string {
+  const home = homedir();
+  if (home && (path === home || path.startsWith(home + "/"))) {
+    return "~" + path.slice(home.length);
+  }
+  return path;
+}
+
 export function assertSecurePermissions(path: string, label: string): void {
   if (platform() === "win32") return;
   if (!existsSync(path)) return;
   const mode = statSync(path).mode & 0o777;
   if ((mode & 0o077) !== 0) {
-    throw new Error(
-      `Refusing to load ${label} at ${path}: insecure permissions ` +
+    const display = redactHome(path);
+    throw new InsecureKeyPermissionsError(
+      `Refusing to load ${label} at ${display}: insecure permissions ` +
         `(0o${mode.toString(8).padStart(3, "0")}). ` +
-        `Fix with: chmod 600 ${path}`,
+        `Fix with: chmod 600 ${display}`,
+      path,
+    );
+  }
+}
+
+export function assertKeyStillSecure(path: string, label: string): void {
+  if (platform() === "win32") return;
+  const display = redactHome(path);
+  let mode: number;
+  try {
+    mode = statSync(path).mode & 0o777;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const reason =
+      code === "ENOENT"
+        ? "file is missing"
+        : `cannot stat file (${code ?? "unknown error"})`;
+    throw new InsecureKeyPermissionsError(
+      `Refusing to sign with ${label} at ${display}: ${reason}. ` +
+        `Restore the file with secure permissions and restart the process.`,
+      path,
+    );
+  }
+  if ((mode & 0o077) !== 0) {
+    throw new InsecureKeyPermissionsError(
+      `Refusing to sign with ${label} at ${display}: insecure permissions ` +
+        `(0o${mode.toString(8).padStart(3, "0")}). ` +
+        `Fix with: chmod 600 ${display}`,
+      path,
     );
   }
 }

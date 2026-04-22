@@ -22,6 +22,7 @@ export {
   isConfigured,
   setPermissions,
   assertSecurePermissions,
+  assertKeyStillSecure,
   type RevolutXConfig,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_RETRIES,
@@ -39,6 +40,7 @@ export {
   ServerError,
   NetworkError,
   AuthNotConfiguredError,
+  InsecureKeyPermissionsError,
 } from "./http/index.js";
 
 export {

@@ -11,4 +11,5 @@ export {
   ServerError,
   NetworkError,
   AuthNotConfiguredError,
+  InsecureKeyPermissionsError,
 } from "./errors.js";

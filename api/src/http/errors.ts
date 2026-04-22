@@ -80,6 +80,16 @@ export class AuthNotConfiguredError extends RevolutXError {
   }
 }
 
+export class InsecureKeyPermissionsError extends RevolutXError {
+  readonly path?: string;
+
+  constructor(message: string, path?: string, options?: ErrorOptions) {
+    super(message, undefined, options);
+    this.name = "InsecureKeyPermissionsError";
+    this.path = path;
+  }
+}
+
 export class ValidationError extends RevolutXError {
   constructor(
     message: string,

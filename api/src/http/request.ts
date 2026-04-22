@@ -1,5 +1,6 @@
 import type { KeyObject } from "node:crypto";
 import { buildAuthHeaders } from "../auth/signer.js";
+import { assertKeyStillSecure } from "../config/settings.js";
 import type { Logger } from "../logging/logger.js";
 import {
   RevolutXError,
@@ -10,12 +11,15 @@ import {
   NotFoundError,
   ConflictError,
   ServerError,
+  InsecureKeyPermissionsError,
 } from "./errors.js";
 
 export interface RequestOptions {
   baseUrl: string;
   apiKey?: string;
   privateKey?: KeyObject;
+  privateKeyPath?: string;
+  enforceKeyPermissions?: boolean;
   timeout: number;
   maxRetries: number;
   isAgent: boolean;
@@ -32,6 +36,34 @@ function buildQueryString(params: Record<string, unknown>): string {
   return entries
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join("&");
+}
+
+function applyAuthHeaders(
+  options: RequestOptions,
+  headers: Record<string, string>,
+  method: string,
+  fullPath: string,
+  queryString: string,
+  bodyString: string,
+): void {
+  if (!options.apiKey || !options.privateKey) return;
+  if (options.enforceKeyPermissions) {
+    if (!options.privateKeyPath) {
+      throw new InsecureKeyPermissionsError(
+        "enforceKeyPermissions is set but no privateKeyPath is available",
+      );
+    }
+    assertKeyStillSecure(options.privateKeyPath, "private key");
+  }
+  const authHeaders = buildAuthHeaders(
+    options.apiKey,
+    options.privateKey,
+    method,
+    fullPath,
+    queryString,
+    bodyString,
+  );
+  Object.assign(headers, authHeaders);
 }
 
 async function raiseForStatus(response: Response): Promise<void> {
@@ -94,17 +126,7 @@ export async function makeRequest(
     headers["X-GENERATED-BY"] = "AGENT";
   }
 
-  if (options.apiKey && options.privateKey) {
-    const authHeaders = buildAuthHeaders(
-      options.apiKey,
-      options.privateKey,
-      method,
-      fullPath,
-      queryString,
-      bodyString,
-    );
-    Object.assign(headers, authHeaders);
-  }
+  applyAuthHeaders(options, headers, method, fullPath, queryString, bodyString);
 
   let lastError: Error | undefined;
 
@@ -119,17 +141,14 @@ export async function makeRequest(
       });
       await new Promise((r) => setTimeout(r, delayMs));
 
-      if (options.apiKey && options.privateKey) {
-        const authHeaders = buildAuthHeaders(
-          options.apiKey,
-          options.privateKey,
-          method,
-          fullPath,
-          queryString,
-          bodyString,
-        );
-        Object.assign(headers, authHeaders);
-      }
+      applyAuthHeaders(
+        options,
+        headers,
+        method,
+        fullPath,
+        queryString,
+        bodyString,
+      );
     }
 
     try {

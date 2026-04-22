@@ -25,11 +25,15 @@ vi.mock("api-k9x2a", async () => {
   class ServerError extends Error {
     name = "ServerError";
   }
+  class InsecureKeyPermissionsError extends Error {
+    name = "InsecureKeyPermissionsError";
+  }
   return {
     AuthNotConfiguredError,
     ForbiddenError,
     RateLimitError,
     ServerError,
+    InsecureKeyPermissionsError,
   };
 });
 

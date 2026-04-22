@@ -128,6 +128,7 @@ describe("setup tools", () => {
     vi.mocked(api.loadCredentials).mockReturnValue({
       apiKey: "x",
       privateKey: {} as KeyObject,
+      privateKeyPath: "/tmp/private.pem",
     });
 
     const client = await createClient();

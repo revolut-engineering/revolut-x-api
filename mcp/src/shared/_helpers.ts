@@ -23,11 +23,27 @@ export async function handleApiError(
 ): Promise<ReturnType<typeof textResult> | null> {
   const {
     AuthNotConfiguredError,
+    InsecureKeyPermissionsError,
     RateLimitError,
     ServerError,
     ForbiddenError,
   } = await import("api-k9x2a");
   if (error instanceof AuthNotConfiguredError) return textResult(setupGuide);
+  if (error instanceof InsecureKeyPermissionsError) {
+    const steps = [
+      "1. Go to Revolut X → Profile → API Keys and DELETE the current API key (the private key file may have been exposed while permissions were loose).",
+      "2. Run the 'generate_keypair' tool to create a fresh Ed25519 keypair.",
+      "3. Add the new public key to Revolut X and create a new API key — tick the 'Allow usage via Revolut X MCP and CLI' checkbox.",
+      "4. Run 'configure_api_key' with the new key.",
+      "5. Run 'check_auth_status' to verify.",
+    ];
+    return textResult(
+      "Credential file permissions are unsafe — refusing to sign with this key.\n\n" +
+        `${error.message}\n\n` +
+        "Because the file was readable beyond the owner (or missing entirely), assume the private key may have leaked. Treat the key as compromised:\n\n" +
+        `${steps.join("\n")}`,
+    );
+  }
   if (error instanceof ForbiddenError) {
     const suggestions = [
       "• Go to Revolut X → Profile → Add public key",

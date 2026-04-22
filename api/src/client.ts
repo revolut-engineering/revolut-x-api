@@ -1,7 +1,11 @@
 import type { KeyObject } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { makeRequest, type RequestOptions } from "./http/index.js";
-import { AuthNotConfiguredError, ValidationError } from "./http/errors.js";
+import {
+  AuthNotConfiguredError,
+  InsecureKeyPermissionsError,
+  ValidationError,
+} from "./http/errors.js";
 import { loadPrivateKey } from "./auth/keypair.js";
 import { loadCredentials } from "./auth/index.js";
 import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
@@ -67,6 +71,7 @@ export interface RevolutXClientOptions {
   autoLoadCredentials?: boolean;
   isAgent?: boolean;
   logger?: LogCallback;
+  enforceKeyPermissions?: boolean;
 }
 
 export class RevolutXClient {
@@ -76,6 +81,7 @@ export class RevolutXClient {
   constructor(options: RevolutXClientOptions = {}) {
     let apiKey = options.apiKey;
     let privateKey = options.privateKey;
+    let privateKeyPath = options.privateKeyPath;
 
     if (options.privateKeyPath && !privateKey) {
       privateKey = loadPrivateKey(options.privateKeyPath);
@@ -86,7 +92,14 @@ export class RevolutXClient {
       if (credentials) {
         apiKey = credentials.apiKey;
         privateKey = credentials.privateKey;
+        privateKeyPath = credentials.privateKeyPath;
       }
+    }
+
+    if (options.enforceKeyPermissions && privateKey && !privateKeyPath) {
+      throw new InsecureKeyPermissionsError(
+        "enforceKeyPermissions requires a private key loaded from a file path",
+      );
     }
 
     this.logger = new Logger(options.logger);
@@ -97,6 +110,8 @@ export class RevolutXClient {
         (process.env.REVOLUTX_API_URL || "https://revx.revolut.com"),
       apiKey,
       privateKey,
+      privateKeyPath,
+      enforceKeyPermissions: options.enforceKeyPermissions === true,
       timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
       maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
       logger: this.logger,

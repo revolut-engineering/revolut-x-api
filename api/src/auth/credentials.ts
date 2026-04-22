@@ -10,6 +10,7 @@ import {
 export interface Credentials {
   apiKey: string;
   privateKey: KeyObject;
+  privateKeyPath?: string;
 }
 
 export function loadCredentials(): Credentials | null {
@@ -26,7 +27,7 @@ export function loadCredentials(): Credentials | null {
 
   try {
     const privateKey = loadPrivateKey(keyPath);
-    return { apiKey: config.api_key, privateKey };
+    return { apiKey: config.api_key, privateKey, privateKeyPath: keyPath };
   } catch {
     return null;
   }

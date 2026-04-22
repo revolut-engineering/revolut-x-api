@@ -14,9 +14,12 @@ describe("getRevolutXClient", () => {
     mockRevolutXClient.mockClear();
   });
 
-  it("creates client with isAgent: true", () => {
+  it("creates client with isAgent and enforceKeyPermissions", () => {
     getRevolutXClient();
-    expect(mockRevolutXClient).toHaveBeenCalledWith({ isAgent: true });
+    expect(mockRevolutXClient).toHaveBeenCalledWith({
+      isAgent: true,
+      enforceKeyPermissions: true,
+    });
   });
 
   it("returns the same instance on subsequent calls", () => {

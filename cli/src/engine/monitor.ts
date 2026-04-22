@@ -1,6 +1,7 @@
 import { Decimal } from "decimal.js";
-import { RevolutXClient } from "api-k9x2a";
+import { RevolutXClient, InsecureKeyPermissionsError } from "api-k9x2a";
 import type { Ticker, Candle } from "api-k9x2a";
+import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
 import {
   evaluateAlert,
@@ -88,7 +89,10 @@ export class ForegroundMonitor {
 
   async run(): Promise<void> {
     this._running = true;
-    this._client = new RevolutXClient({ isAgent: true });
+    this._client = new RevolutXClient({
+      isAgent: true,
+      enforceKeyPermissions: true,
+    });
     if (!this._client.isAuthenticated) {
       throw new Error(
         "API credentials not configured. Run 'revx configure' first.",
@@ -105,9 +109,19 @@ export class ForegroundMonitor {
         const result = await this._runTick();
         this._printTick(result);
       } catch (err) {
+        if (err instanceof InsecureKeyPermissionsError) {
+          console.log(
+            chalk.red(
+              `\n  Halting monitor: credential file permissions are unsafe.\n  ${err.message}`,
+            ),
+          );
+          this.stop();
+          throw err;
+        }
         const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
+        const message = err instanceof Error ? err.message : String(err);
         console.log(
-          `  ${chalk.dim(time)}  ${chalk.red("\u2717")} ${chalk.yellow(err instanceof Error ? err.message : String(err))}`,
+          `  ${chalk.dim(time)}  ${chalk.red("\u2717")} ${chalk.yellow(message)}`,
         );
       }
 
@@ -138,6 +152,7 @@ export class ForegroundMonitor {
     try {
       tickerResponse = await client.getTickers({ symbols: [pair] });
     } catch (err) {
+      rethrowIfInsecureKey(err);
       result.error = `Failed to fetch ticker: ${err instanceof Error ? err.message : String(err)}`;
       return result;
     }
@@ -165,6 +180,7 @@ export class ForegroundMonitor {
           const candles = ForegroundMonitor.parseCandles(resp.data);
           this._candleCache.put(pair, candles);
         } catch (err) {
+          rethrowIfInsecureKey(err);
           result.error = `Failed to fetch candles: ${err instanceof Error ? err.message : String(err)}`;
           return result;
         }
@@ -180,6 +196,7 @@ export class ForegroundMonitor {
           asks: resp.data.asks as unknown as Record<string, unknown>[],
         };
       } catch (err) {
+        rethrowIfInsecureKey(err);
         result.error = `Failed to fetch order book: ${err instanceof Error ? err.message : String(err)}`;
         return result;
       }
