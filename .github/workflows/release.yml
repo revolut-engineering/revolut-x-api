@@ -107,8 +107,8 @@ jobs:
           TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$TAG_NAME" \
-            "api/revolut-x-api-${VERSION}.tgz" \
-            "cli/revolut-x-cli-${VERSION}.tgz" \
+            "api/revolut-revolut-x-api-${VERSION}.tgz" \
+            "cli/revolut-revolut-x-cli-${VERSION}.tgz" \
             "mcp/dist/revolutx-mcp.mcpb" \
             --clobber
 
