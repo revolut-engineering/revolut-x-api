@@ -206,8 +206,8 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: @revolut/revolut-x-api
-          path: api/@revolut/revolut-x-api-*.tgz
+          name: "@revolut/revolut-x-api"
+          path: api/revolut-x-api-*.tgz
 
   pack-cli:
     name: Pack CLI
@@ -240,8 +240,8 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: @revolut/revolut-x-cli
-          path: cli/@revolut/revolut-x-cli-*.tgz
+          name: "@revolut/revolut-x-cli"
+          path: cli/revolut-x-cli-*.tgz
 
   pack-mcp:
     name: Pack MCP
@@ -296,8 +296,8 @@ jobs:
 
       - name: Generate SBOMs
         run: |
-          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace @revolut/revolut-x-api --output-file sbom-api.json
-          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace @revolut/revolut-x-cli --output-file sbom-cli.json
+          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace '@revolut/revolut-x-api' --output-file sbom-api.json
+          npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace '@revolut/revolut-x-cli' --output-file sbom-cli.json
           npx @cyclonedx/cyclonedx-npm --package-lock-only --workspace revolutx-mcp --output-file sbom-mcp.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
