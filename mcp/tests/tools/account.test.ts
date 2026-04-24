@@ -12,7 +12,7 @@ vi.mock("../../src/server.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
 
-vi.mock("api-k9x2a", async () => {
+vi.mock("@revolut/revolut-x-api", async () => {
   class AuthNotConfiguredError extends Error {
     name = "AuthNotConfiguredError";
   }
@@ -89,7 +89,7 @@ describe("account tools", () => {
   });
 
   it("get_balances returns setup guide on auth error", async () => {
-    const { AuthNotConfiguredError } = await import("api-k9x2a");
+    const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
     mockGetBalances.mockRejectedValue(
       new AuthNotConfiguredError("not configured"),
     );
@@ -104,7 +104,7 @@ describe("account tools", () => {
   });
 
   it("get_balances returns help message on forbidden error", async () => {
-    const { ForbiddenError } = await import("api-k9x2a");
+    const { ForbiddenError } = await import("@revolut/revolut-x-api");
     mockGetBalances.mockRejectedValue(new ForbiddenError("access denied"));
 
     const client = await createClient();

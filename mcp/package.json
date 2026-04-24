@@ -23,7 +23,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "decimal.js": "^10.6.0",
-    "api-k9x2a": "^1.0.0",
+    "@revolut/revolut-x-api": "^1.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

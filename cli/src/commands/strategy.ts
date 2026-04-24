@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { Decimal } from "decimal.js";
 import chalk from "chalk";
-import type { Candle } from "api-k9x2a";
+import type { Candle } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import {
   isJsonOutput,

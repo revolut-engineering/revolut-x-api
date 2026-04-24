@@ -18,7 +18,7 @@ vi.mock("../../src/server.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   class AuthNotConfiguredError extends Error {
     name = "AuthNotConfiguredError";
@@ -92,7 +92,7 @@ describe("market data tools", () => {
   });
 
   it("get_currencies returns setup guide on auth error", async () => {
-    const { AuthNotConfiguredError } = await import("api-k9x2a");
+    const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
     mockClient.getCurrencies.mockRejectedValue(
       new AuthNotConfiguredError("no auth"),
     );

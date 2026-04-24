@@ -20,7 +20,7 @@ description: >
 ## Install
 
 ```bash
-npm install -g cli-k9x2a && npm link cli-k9x2a
+npm install -g @revolut/revolut-x-cli && npm link @revolut/revolut-x-cli
 ```
 
 After install, `revx` is available as a global command:

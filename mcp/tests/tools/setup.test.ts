@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerSetupTools } from "../../src/tools/setup.js";
 
-vi.mock("api-k9x2a", () => ({
+vi.mock("@revolut/revolut-x-api", () => ({
   ensureConfigDir: vi.fn(),
   getPrivateKeyFile: vi.fn(() => "/fake/path/private.pem"),
   getPublicKeyFile: vi.fn(() => "/fake/path/public.pem"),
@@ -123,7 +123,7 @@ describe("setup tools", () => {
   });
 
   it("check_auth_status returns success when configured and working", async () => {
-    const api = await import("api-k9x2a");
+    const api = await import("@revolut/revolut-x-api");
     vi.mocked(api.isConfigured).mockReturnValue(true);
     vi.mocked(api.loadCredentials).mockReturnValue({
       apiKey: "x",

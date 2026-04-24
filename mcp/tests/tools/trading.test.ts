@@ -17,7 +17,7 @@ vi.mock("../../src/server.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   class AuthNotConfiguredError extends Error {
     name = "AuthNotConfiguredError";
@@ -146,7 +146,7 @@ describe("trading read-only tools", () => {
   });
 
   it("get_historical_orders returns setup guide on auth error", async () => {
-    const { AuthNotConfiguredError } = await import("api-k9x2a");
+    const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
     mockClient.getHistoricalOrders.mockRejectedValue(
       new AuthNotConfiguredError(),
     );
@@ -563,7 +563,7 @@ describe("get_order_by_id", () => {
   });
 
   it("returns auth error as setup guide", async () => {
-    const { AuthNotConfiguredError } = await import("api-k9x2a");
+    const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
     mockClient.getOrder.mockRejectedValue(new AuthNotConfiguredError());
     const client = await createClient();
     const result = await client.callTool({

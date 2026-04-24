@@ -1,6 +1,9 @@
 import { Decimal } from "decimal.js";
-import { RevolutXClient, InsecureKeyPermissionsError } from "api-k9x2a";
-import type { Ticker, Candle } from "api-k9x2a";
+import {
+  RevolutXClient,
+  InsecureKeyPermissionsError,
+} from "@revolut/revolut-x-api";
+import type { Ticker, Candle } from "@revolut/revolut-x-api";
 import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
 import {

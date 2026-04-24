@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Currency, CurrencyPair } from "api-k9x2a";
+import type { Currency, CurrencyPair } from "@revolut/revolut-x-api";
 import {
   formatDate,
   formatDescription,
@@ -16,7 +16,7 @@ import {
   PAGINATED_DATA_MAX_LIMIT,
   TRADES_API_LIMIT,
   paginateWithDynamicWindows,
-} from "api-k9x2a";
+} from "@revolut/revolut-x-api";
 import { RESOLUTIONS_MAP } from "../shared/common.js";
 
 export function registerMarketDataTools(server: McpServer): void {

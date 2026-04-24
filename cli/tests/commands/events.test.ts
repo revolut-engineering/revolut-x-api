@@ -8,7 +8,7 @@ vi.mock("../../src/db/store.js", () => ({
   loadEvents: (...args: unknown[]) => mockLoadEvents(...args),
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,

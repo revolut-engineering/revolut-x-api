@@ -25,7 +25,7 @@ export function registerSetupTools(server: McpServer): void {
         generateKeypair,
         loadPrivateKey,
         getPublicKeyPem,
-      } = await import("api-k9x2a");
+      } = await import("@revolut/revolut-x-api");
 
       ensureConfigDir();
 
@@ -90,7 +90,7 @@ export function registerSetupTools(server: McpServer): void {
     },
     async ({ api_key }) => {
       const { getPrivateKeyFile, loadConfig, saveConfig } =
-        await import("api-k9x2a");
+        await import("@revolut/revolut-x-api");
 
       const cleaned = api_key.trim();
       if (!/^[A-Za-z0-9]{64}$/.test(cleaned)) {
@@ -138,7 +138,7 @@ export function registerSetupTools(server: McpServer): void {
     async () => {
       return textResult(
         "To install the CLI, run:\n\n" +
-          "  npm install -g cli-k9x2a\n\n" +
+          "  npm install -g @revolut/revolut-x-cli\n\n" +
           "This installs the 'revx' command globally. The API client is bundled inside — no separate install needed.\n\n" +
           "After installation, run 'revx configure' to set up your API key and keypair.",
       );
@@ -159,7 +159,8 @@ export function registerSetupTools(server: McpServer): void {
       },
     },
     async () => {
-      const { isConfigured, loadCredentials } = await import("api-k9x2a");
+      const { isConfigured, loadCredentials } =
+        await import("@revolut/revolut-x-api");
       const { SETUP_GUIDE } = await import("../server.js");
 
       if (!isConfigured()) {

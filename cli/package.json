@@ -1,5 +1,5 @@
 {
-  "name": "cli-k9x2a",
+  "name": "@revolut/revolut-x-cli",
   "version": "1.0.32",
   "description": "Command-line interface for crypto exchange trading",
   "keywords": [
@@ -43,7 +43,7 @@
     "cli-table3": "^0.6.5",
     "commander": "^13.0.0",
     "decimal.js": "^10.6.0",
-    "api-k9x2a": "^1.0.0"
+    "@revolut/revolut-x-api": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

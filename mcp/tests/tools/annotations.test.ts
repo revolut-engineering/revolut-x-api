@@ -9,7 +9,7 @@ vi.mock("../../src/server.js", () => ({
   SETUP_GUIDE: "Setup guide",
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,

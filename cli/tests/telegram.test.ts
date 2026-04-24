@@ -11,7 +11,7 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,

@@ -12,7 +12,7 @@ vi.mock("../../src/util/client.js", () => ({
   })),
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,

@@ -2,7 +2,7 @@
 
 Typed HTTP client for the [Revolut X Public Trading API](https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api) REST API. Zero runtime dependencies — uses only Node.js built-ins (`crypto`, `fetch`).
 
-[![npm](https://img.shields.io/npm/v/revolutx-api)](https://www.npmjs.com/package/api-k9x2a)
+[![npm](https://img.shields.io/npm/v/revolutx-api)](https://www.npmjs.com/package/@revolut/revolut-x-api)
 [![Release](https://img.shields.io/github/v/release/revolut-engineering/revolut-x-api?label=release&color=brightgreen)](https://github.com/revolut-engineering/revolut-x-api/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

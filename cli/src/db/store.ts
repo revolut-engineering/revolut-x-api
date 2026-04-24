@@ -8,7 +8,11 @@ import {
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
-import { getConfigDir, ensureConfigDir, setPermissions } from "api-k9x2a";
+import {
+  getConfigDir,
+  ensureConfigDir,
+  setPermissions,
+} from "@revolut/revolut-x-api";
 
 export interface TelegramConnection {
   id: string;

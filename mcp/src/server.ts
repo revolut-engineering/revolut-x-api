@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { RevolutXClient } from "api-k9x2a";
+import { RevolutXClient } from "@revolut/revolut-x-api";
 import { registerAllTools } from "./tools/index.js";
 
 export const SETUP_GUIDE =

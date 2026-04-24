@@ -107,8 +107,8 @@ jobs:
           TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$TAG_NAME" \
-            "api/api-k9x2a-${VERSION}.tgz" \
-            "cli/cli-k9x2a-${VERSION}.tgz" \
+            "api/@revolut/revolut-x-api-${VERSION}.tgz" \
+            "cli/@revolut/revolut-x-cli-${VERSION}.tgz" \
             "mcp/dist/revolutx-mcp.mcpb" \
             --clobber
 
@@ -116,8 +116,8 @@ jobs:
         run: |
           cd api
           npm publish --provenance --access public 2>&1 || {
-            if npm view api-k9x2a@"$VERSION" version >/dev/null 2>&1; then
-              echo "api-k9x2a@$VERSION already published, skipping"
+            if npm view @revolut/revolut-x-api@"$VERSION" version >/dev/null 2>&1; then
+              echo "@revolut/revolut-x-api@$VERSION already published, skipping"
             else
               exit 1
             fi
@@ -127,8 +127,8 @@ jobs:
         run: |
           cd cli
           npm publish --provenance --access public 2>&1 || {
-            if npm view cli-k9x2a@"$VERSION" version >/dev/null 2>&1; then
-              echo "cli-k9x2a@$VERSION already published, skipping"
+            if npm view @revolut/revolut-x-cli@"$VERSION" version >/dev/null 2>&1; then
+              echo "@revolut/revolut-x-cli@$VERSION already published, skipping"
             else
               exit 1
             fi

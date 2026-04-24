@@ -7,7 +7,7 @@ import {
   NotFoundError,
   NetworkError,
   ForbiddenError,
-} from "api-k9x2a";
+} from "@revolut/revolut-x-api";
 import chalk from "chalk";
 
 const ERROR_PREFIX = chalk.red.bold("✖ Error:");

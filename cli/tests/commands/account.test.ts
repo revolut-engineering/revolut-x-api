@@ -8,7 +8,7 @@ vi.mock("../../src/util/client.js", () => ({
   getClient: vi.fn(() => ({ getBalances: mockGetBalances })),
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}

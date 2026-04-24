@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import type { AccountBalance } from "api-k9x2a";
+import type { AccountBalance } from "@revolut/revolut-x-api";
 import chalk from "chalk";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";

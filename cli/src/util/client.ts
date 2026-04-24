@@ -1,4 +1,4 @@
-import { RevolutXClient } from "api-k9x2a";
+import { RevolutXClient } from "@revolut/revolut-x-api";
 
 let cachedClient: RevolutXClient | undefined;
 

@@ -6,7 +6,7 @@ import {
   PAGINATED_DATA_MAX_LIMIT,
   TRADES_API_LIMIT,
   paginateWithDynamicWindows,
-} from "api-k9x2a";
+} from "@revolut/revolut-x-api";
 import {
   formatDate,
   textResult,

@@ -16,7 +16,7 @@ vi.mock("../../src/db/store.js", () => ({
   deleteConnection: (id: unknown) => mockDeleteConnection(id),
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}

@@ -199,7 +199,7 @@ OWASP LLM08 (*Excessive Agency*) is the dominant risk when combining this projec
 ## 6. Installation integrity
 
 - **Install from trusted sources only**:
-  - npm: `api-k9x2a`, `cli-k9x2a` (published from this repository's `release.yml` workflow).
+  - npm: `@revolut/revolut-x-api`, `@revolut/revolut-x-cli` (published from this repository's `release.yml` workflow).
   - MCP: the `revolutx-mcp.mcpb` artifact attached to each GitHub Release, **or** a local build from a signed commit.
   - Do not install forks or rewrapped packages without reviewing their diff against this repository.
 - **Pin dependencies.** `npm ci` against the committed `package-lock.json` gives you a reproducible install.

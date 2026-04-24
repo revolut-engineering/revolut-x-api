@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Decimal } from "decimal.js";
-import type { Ticker, Candle } from "api-k9x2a";
+import type { Ticker, Candle } from "@revolut/revolut-x-api";
 
 const mockGetTickers = vi.fn();
 const mockGetCandles = vi.fn();
 const mockGetOrderBook = vi.fn();
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -312,7 +312,7 @@ async function runSingleTick(mon: ForegroundMonitor): Promise<TickResult> {
   };
 
   if (!internals._client) {
-    const { RevolutXClient } = await import("api-k9x2a");
+    const { RevolutXClient } = await import("@revolut/revolut-x-api");
     internals._client = new RevolutXClient();
   }
 

@@ -25,7 +25,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, existsSync: mockExistsSync };
 });
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,

@@ -12,7 +12,7 @@ import {
   getPublicKeyPem,
   getPrivateKeyFile,
   getPublicKeyFile,
-} from "api-k9x2a";
+} from "@revolut/revolut-x-api";
 import {
   printKeyValue,
   printSuccess,

@@ -1,7 +1,7 @@
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Candle } from "api-k9x2a";
+import type { Candle } from "@revolut/revolut-x-api";
 import {
   textResult,
   validateSymbol,

@@ -27,7 +27,7 @@ vi.mock("../../src/util/parse.js", () => ({
   parsePositiveInt: vi.fn((val) => Number(val)),
 }));
 
-vi.mock("api-k9x2a", async (importOriginal) => {
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   const actual = await importOriginal();
   class RevolutXError extends Error {}
   class AuthNotConfiguredError extends RevolutXError {}

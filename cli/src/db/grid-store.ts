@@ -6,7 +6,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
-import { getConfigDir, ensureConfigDir } from "api-k9x2a";
+import { getConfigDir, ensureConfigDir } from "@revolut/revolut-x-api";
 
 export interface GridLevelState {
   index: number;

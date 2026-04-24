@@ -27,7 +27,7 @@ export async function handleApiError(
     RateLimitError,
     ServerError,
     ForbiddenError,
-  } = await import("api-k9x2a");
+  } = await import("@revolut/revolut-x-api");
   if (error instanceof AuthNotConfiguredError) return textResult(setupGuide);
   if (error instanceof InsecureKeyPermissionsError) {
     const steps = [

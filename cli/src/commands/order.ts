@@ -4,7 +4,7 @@ import {
   type Order,
   paginateWithDynamicWindows,
   HISTORICAL_ORDERS_API_LIMIT,
-} from "api-k9x2a";
+} from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
 import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
