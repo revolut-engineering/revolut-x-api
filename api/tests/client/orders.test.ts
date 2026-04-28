@@ -348,6 +348,51 @@ describe("Orders", () => {
         orderTypes: ["limit"],
       });
     });
+
+    it("handles partially_filled by querying cancelled orders and remapping correctly", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/historical")
+        .query({ order_states: "cancelled" })
+        .reply(200, {
+          data: [
+            { ...mockOrder, status: "cancelled", filled_quantity: "0.5" },
+            { ...mockOrder, status: "cancelled", filled_quantity: "0" },
+          ],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getHistoricalOrders({
+        orderStates: ["partially_filled"],
+      });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].status).toBe("partially_filled");
+      expect(result.data[0].filled_quantity).toBe("0.5");
+    });
+
+    it("combines partially_filled with other states in the requested query", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/historical")
+        .query({ order_states: "filled,cancelled" })
+        .reply(200, {
+          data: [
+            { ...mockOrder, status: "filled", filled_quantity: "1.0" },
+            { ...mockOrder, status: "cancelled", filled_quantity: "0.5" },
+          ],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getHistoricalOrders({
+        orderStates: ["filled", "partially_filled"],
+      });
+
+      expect(result.data).toHaveLength(2);
+      const statuses = result.data.map((o) => o.status);
+      expect(statuses).toContain("filled");
+      expect(statuses).toContain("partially_filled");
+    });
   });
 
   describe("getOrder", () => {

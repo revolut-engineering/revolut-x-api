@@ -340,6 +340,21 @@ describe("order open", () => {
     );
   });
 
+  it("formats partially_filled open orders correctly", async () => {
+    mockGetActiveOrders.mockResolvedValue({
+      data: [
+        {
+          ...sampleOrder,
+          status: "partially_filled",
+          filled_quantity: "0.0005",
+        },
+      ],
+    });
+    await program.parseAsync(["node", "revx", "order", "open"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("partially_filled");
+  });
+
   it("shows empty message when no open orders", async () => {
     mockGetActiveOrders.mockResolvedValue({ data: [] });
     await program.parseAsync(["node", "revx", "order", "open"]);
@@ -411,16 +426,16 @@ describe("order history", () => {
     );
   });
 
-  it("passes advanced filter options and date ranges to API", async () => {
+  it("passes advanced filter options including partially_filled, types, and date ranges to API", async () => {
     await program.parseAsync([
       "node",
       "revx",
       "order",
       "history",
       "--order-states",
-      "filled,cancelled",
+      "filled,cancelled,partially_filled",
       "--order-types",
-      "market",
+      "market,limit",
       "--start-date",
       "1715000000000",
       "--end-date",
@@ -428,8 +443,8 @@ describe("order history", () => {
     ]);
     expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderStates: ["filled", "cancelled"],
-        orderTypes: ["market"],
+        orderStates: ["filled", "cancelled", "partially_filled"],
+        orderTypes: ["market", "limit"],
         startDate: expect.any(Number),
       }),
     );
@@ -446,6 +461,22 @@ describe("order history", () => {
     ]);
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("Period: Since");
+  });
+
+  it("formats partially_filled historical orders correctly", async () => {
+    mockGetHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          ...sampleOrder,
+          status: "partially_filled",
+          filled_quantity: "0.0005",
+        },
+      ],
+    });
+    await program.parseAsync(["node", "revx", "order", "history"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("partially_filled");
+    expect(output).toContain("0.0005");
   });
 
   it("shows empty message when no history found", async () => {

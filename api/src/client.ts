@@ -290,19 +290,61 @@ export class RevolutXClient {
     this.requireAuth();
     const params: Record<string, unknown> = {};
     if (opts?.symbols?.length) params.symbols = opts.symbols.join(",");
-    if (opts?.orderStates?.length)
-      params.order_states = opts.orderStates.join(",");
+
+    let requestedStates: string[] = [];
+    if (opts?.orderStates?.length) {
+      requestedStates = [...opts.orderStates] as string[];
+      let queryStates = [...requestedStates];
+
+      const wantsPartiallyFilled = queryStates.includes("partially_filled");
+      const wantsCancelled =
+        queryStates.includes("canceled") || queryStates.includes("cancelled");
+
+      if (wantsPartiallyFilled) {
+        queryStates = queryStates.filter((s) => s !== "partially_filled");
+        if (!wantsCancelled) {
+          queryStates.push("cancelled");
+        }
+      }
+
+      if (queryStates.length > 0) {
+        params.order_states = queryStates.join(",");
+      }
+    }
+
     if (opts?.orderTypes?.length)
       params.order_types = opts.orderTypes.join(",");
     if (opts?.startDate !== undefined) params.start_date = opts.startDate;
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
     if (opts?.cursor) params.cursor = opts.cursor;
     if (opts?.limit !== undefined) params.limit = opts.limit;
-    return this.request<PaginatedResponse<Order>>(
+
+    const response = await this.request<PaginatedResponse<Order>>(
       "GET",
       "/orders/historical",
       params,
     );
+
+    const processedData = response.data.map((order) => {
+      const statusStr = String(order.status);
+      const isCancelled = statusStr === "canceled" || statusStr === "cancelled";
+      const filledQty = Number(order.filled_quantity || 0);
+
+      if (isCancelled && filledQty > 0) {
+        return { ...order, status: "partially_filled" as never };
+      }
+      return order;
+    });
+
+    if (requestedStates.length > 0) {
+      response.data = processedData.filter((order) =>
+        requestedStates.includes(String(order.status)),
+      );
+    } else {
+      response.data = processedData;
+    }
+
+    return response;
   }
 
   async getOrder(venueOrderId: string): Promise<DataResponse<Order>> {

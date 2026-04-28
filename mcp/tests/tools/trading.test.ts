@@ -200,6 +200,50 @@ describe("trading read-only tools", () => {
     );
   });
 
+  it("get_historical_orders passes order states filter including partially_filled", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {
+        order_states: ["partially_filled", "replaced"],
+      },
+    });
+
+    expect(getText(result)).toContain("No historical orders found");
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderStates: ["partially_filled", "replaced"],
+      }),
+    );
+  });
+
+  it("get_historical_orders passes order types filter", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {
+        order_types: ["limit", "market"],
+      },
+    });
+
+    expect(getText(result)).toContain("No historical orders found");
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderTypes: ["limit", "market"],
+      }),
+    );
+  });
+
   it("get_historical_orders fetches all pages automatically", async () => {
     const orderA = {
       id: "hist-page1",
