@@ -48,7 +48,7 @@ revx order history --symbols BTC-USD --start-date 7d --end-date today
 revx order history --order-states filled,cancelled --limit 20
 ```
 
-**Filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced), `--order-types` (market, limit), `--start-date`, `--end-date`, `--limit`
+**Filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced, partially_filled), `--order-types` (market, limit), `--start-date`, `--end-date`, `--limit`
 
 **Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
