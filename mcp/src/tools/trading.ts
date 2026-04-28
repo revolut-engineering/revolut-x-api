@@ -4,15 +4,15 @@ import {
   ACTIVE_ORDERS_API_LIMIT,
   HISTORICAL_ORDERS_API_LIMIT,
   PAGINATED_DATA_MAX_LIMIT,
-  TRADES_API_LIMIT,
   paginateWithDynamicWindows,
+  TRADES_API_LIMIT,
 } from "@revolut/revolut-x-api";
 import {
   formatDate,
-  textResult,
-  validateSymbol,
   handleApiError,
   parseDateRange,
+  textResult,
+  validateSymbol,
 } from "../shared/_helpers.js";
 
 function formatTrigger(
@@ -172,10 +172,18 @@ export function registerTradingTools(server: McpServer): void {
             'Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"]. Omit to get orders for all pairs.',
           ),
         order_states: z
-          .array(z.enum(["filled", "cancelled", "rejected", "replaced"]))
+          .array(
+            z.enum([
+              "filled",
+              "cancelled",
+              "rejected",
+              "replaced",
+              "partially_filled",
+            ]),
+          )
           .optional()
           .describe(
-            'Filter by order state: "filled", "cancelled", "rejected", "replaced".',
+            'Filter by order state: "filled", "cancelled", "rejected", "replaced", "partially_filled".',
           ),
         order_types: z
           .array(z.enum(["market", "limit"]))

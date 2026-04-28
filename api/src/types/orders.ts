@@ -13,7 +13,8 @@ export type HistoricalOrderState =
   | "filled"
   | "cancelled"
   | "rejected"
-  | "replaced";
+  | "replaced"
+  | "partially_filled";
 export type ActiveOrderType = "limit" | "conditional" | "tpsl";
 export type HistoricalOrderType = "market" | "limit";
 export type TimeInForce = "gtc" | "ioc" | "fok";

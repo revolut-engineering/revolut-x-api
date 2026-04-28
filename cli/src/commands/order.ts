@@ -325,7 +325,7 @@ Examples:
     )
     .option(
       "--order-states <states>",
-      "Filter by states (comma-separated: filled,cancelled,rejected,replaced)",
+      "Filter by states (comma-separated: filled,cancelled,rejected,replaced,partially_filled)",
     )
     .option(
       "--order-types <types>",
