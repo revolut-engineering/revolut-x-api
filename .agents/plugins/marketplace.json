@@ -1,0 +1,20 @@
+{
+  "name": "revolut-x-plugins",
+  "interface": {
+    "displayName": "Revolut X Plugins"
+  },
+  "plugins": [
+    {
+      "name": "revolut-x",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Finance"
+    }
+  ]
+}
