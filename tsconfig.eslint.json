@@ -13,7 +13,12 @@
     "cli/src/**/*.ts",
     "cli/tests/**/*.ts",
     "mcp/src/**/*.ts",
-    "mcp/tests/**/*.ts"
+    "mcp/tests/**/*.ts",
+    "integration-tests/src/**/*.ts",
+    "integration-tests/tests/**/*.ts",
+    "integration-tests/evals/**/*.ts",
+    "integration-tests/vitest.config.ts",
+    "integration-tests/vitest.unit.config.ts"
   ],
   "exclude": ["node_modules", "**/node_modules", "**/dist"]
 }

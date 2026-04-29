@@ -6,6 +6,9 @@ dist/
 # Test & coverage
 coverage/
 
+# Eval reports
+integration-tests/reports/
+
 # SQLite databases (runtime)
 *.db
 *.db-wal
