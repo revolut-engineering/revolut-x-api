@@ -606,6 +606,37 @@ describe("get_order_by_id", () => {
     expect(text).toContain("80000");
   });
 
+  it("includes total_fee and fee_currency when present", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-fee",
+        client_order_id: "co-fee",
+        symbol: "BTC-USD",
+        side: "buy",
+        type: "market",
+        price: "0",
+        quantity: "0.1",
+        filled_quantity: "0.1",
+        leaves_quantity: "0",
+        status: "filled",
+        time_in_force: "ioc",
+        execution_instructions: [],
+        average_fill_price: "90000",
+        total_fee: "1.50",
+        fee_currency: "USD",
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-fee" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Total fee: 1.50 USD");
+  });
+
   it("returns auth error as setup guide", async () => {
     const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
     mockClient.getOrder.mockRejectedValue(new AuthNotConfiguredError());

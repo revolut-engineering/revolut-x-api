@@ -24,6 +24,7 @@ export interface GridTradeEntry {
   price: string;
   quantity: string;
   profit?: string;
+  fee?: string;
   orderId: string;
 }
 
@@ -51,6 +52,7 @@ export interface GridState {
     totalBuys: number;
     totalSells: number;
     realizedPnl: string;
+    totalFees: string;
   };
   tradeLog: GridTradeEntry[];
 }
@@ -91,6 +93,9 @@ export function loadGridState(pair: string): GridState | null {
       ) {
         state.quotePerLevel = (data as Record<string, unknown>)
           .usdPerLevel as string;
+      }
+      if (state.stats && state.stats.totalFees == null) {
+        state.stats.totalFees = "0";
       }
       return state;
     }
