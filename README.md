@@ -265,7 +265,30 @@ Files:
 
 ## Install CLI Skill as a plugin
 
-### Claude Code
+Skills under [`skills/`](skills/) (`revx-auth`, `revx-market`, `revx-account`, `revx-trading`, `revx-monitor`, `revx-telegram`, `revx-strategy`) teach an AI assistant how to use the `revx` CLI. They use the standard `SKILL.md` format.
+
+### Universal install (50+ AI assistants)
+
+Use the [`skills` CLI](https://github.com/vercel-labs/skills) from Vercel Labs to install into any supported assistant:
+
+```bash
+# List of all available skills
+npx skills add revolut-engineering/revolut-x-api --list
+
+# Install all skills globally for your active assistant (interactive)
+npx skills add revolut-engineering/revolut-x-api -g
+
+# Install all skills to a specific assistant
+npx skills add revolut-engineering/revolut-x-api -g -a cursor
+```
+
+Supported targets include Claude Code, OpenClaw, Cursor, Cline, Continue, Gemini CLI, OpenCode, Warp, Augment, Amp, Replit, Antigravity, Devin, Droid, and more.
+
+Browse the skills on [skills.sh/revolut-engineering/revolut-x-api](https://skills.sh/revolut-engineering/revolut-x-api).
+
+### Native install paths
+
+#### Claude Code (plugin marketplace)
 
 Add this repo as a marketplace, then install the plugin:
 
@@ -281,13 +304,21 @@ git clone https://github.com/revolut-engineering/revolut-x-api.git
 claude --plugin-dir ./revolut-x-api
 ```
 
-This installs skills that teach Claude how to use the `revx` CLI.
-
-### Gemini CLI
+#### Gemini CLI (extension)
 
 ```bash
 gemini extensions install https://github.com/revolut-engineering/revolut-x-api
 ```
+
+The extension installs the `skills/` folder, which Gemini CLI auto-discovers.
+
+#### OpenAI Codex (plugin marketplace)
+
+```bash
+codex plugin marketplace add revolut-engineering/revolut-x-api
+```
+
+After adding the marketplace, open the in-app `/plugins` browser and install **revolut-x**. See [Codex plugins docs](https://developers.openai.com/codex/plugins) and [CLI reference](https://developers.openai.com/codex/cli/reference).
 
 ---
 
