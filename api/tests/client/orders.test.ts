@@ -423,6 +423,34 @@ describe("Orders", () => {
         time_in_force: "gtc",
       });
     });
+
+    it("includes total_fee and fee_currency when present", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-789")
+        .reply(200, {
+          data: { ...mockOrder, total_fee: "2.50", fee_currency: "USD" },
+        });
+
+      const result = await client.getOrder("order-789");
+
+      expect(result.data.total_fee).toBe("2.50");
+      expect(result.data.fee_currency).toBe("USD");
+    });
+
+    it("includes filled_amount when present", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-789")
+        .reply(200, {
+          data: { ...mockOrder, amount: "100", filled_amount: "95" },
+        });
+
+      const result = await client.getOrder("order-789");
+
+      expect(result.data.amount).toBe("100");
+      expect(result.data.filled_amount).toBe("95");
+    });
   });
 
   describe("cancelOrder", () => {

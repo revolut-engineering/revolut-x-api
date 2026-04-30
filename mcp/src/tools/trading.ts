@@ -138,7 +138,9 @@ export function registerTradingTools(server: McpServer): void {
             takeProfitLine +
             stopLossLine +
             `  Quantity: ${o.quantity}\n` +
+            (o.amount ? `  Amount: ${o.amount}\n` : "") +
             `  Filled: ${o.filled_quantity}\n` +
+            (o.filled_amount ? `  Filled amount: ${o.filled_amount}\n` : "") +
             `  Remaining: ${o.leaves_quantity}\n` +
             `  Status: ${o.status}\n` +
             `  Time in force: ${o.time_in_force}\n` +
@@ -305,7 +307,9 @@ export function registerTradingTools(server: McpServer): void {
             priceLine +
             avgFillLine +
             `  Quantity: ${o.quantity}\n` +
+            (o.amount ? `  Amount: ${o.amount}\n` : "") +
             `  Filled: ${o.filled_quantity}\n` +
+            (o.filled_amount ? `  Filled amount: ${o.filled_amount}\n` : "") +
             `  Remaining: ${o.leaves_quantity}\n` +
             `  Status: ${o.status}\n` +
             `  Time in force: ${o.time_in_force}\n` +
@@ -557,6 +561,9 @@ export function registerTradingTools(server: McpServer): void {
       const avgFillLine = o.average_fill_price
         ? `  Avg fill price: ${o.average_fill_price}\n`
         : "";
+      const totalFeeLine = o.total_fee
+        ? `  Total fee: ${o.total_fee}${o.fee_currency ? ` ${o.fee_currency}` : ""}\n`
+        : "";
       const rejectLine = o.reject_reason
         ? `  Reject reason: ${o.reject_reason}\n`
         : "";
@@ -577,9 +584,12 @@ export function registerTradingTools(server: McpServer): void {
           takeProfitLine +
           stopLossLine +
           `  Quantity: ${o.quantity}\n` +
+          (o.amount ? `  Amount: ${o.amount}\n` : "") +
           `  Filled: ${o.filled_quantity}\n` +
+          (o.filled_amount ? `  Filled amount: ${o.filled_amount}\n` : "") +
           `  Remaining: ${o.leaves_quantity}\n` +
           avgFillLine +
+          totalFeeLine +
           `  Status: ${o.status}\n` +
           rejectLine +
           `  Time in force: ${o.time_in_force}\n` +

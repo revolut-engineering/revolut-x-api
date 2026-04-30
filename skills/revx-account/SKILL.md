@@ -59,6 +59,10 @@ revx order get <order-id>              # Full order details
 revx order fills <order-id>            # All fills for an order
 ```
 
+Optional fields in order details output (shown only when present):
+- `amount` / `filled_amount` — quote-currency size and how much of it has been filled
+- `total_fee` / `fee_currency` — total fee charged and the currency it was paid in
+
 ---
 
 ## Trades

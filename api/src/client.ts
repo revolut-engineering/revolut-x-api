@@ -13,10 +13,11 @@ import { type LogCallback, Logger } from "./logging/logger.js";
 import { placeOrderSchema } from "./validation/schemas.js";
 import type { AccountBalance } from "./types/account.js";
 import type { CurrencyMap, CurrencyPairMap } from "./types/config.js";
-import type {
+import {
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
   Order,
+  OrderDetails,
   OrderPlacementResult,
   PlaceOrderParams,
 } from "./types/orders.js";
@@ -347,9 +348,12 @@ export class RevolutXClient {
     return response;
   }
 
-  async getOrder(venueOrderId: string): Promise<DataResponse<Order>> {
+  async getOrder(venueOrderId: string): Promise<DataResponse<OrderDetails>> {
     this.requireAuth();
-    return this.request<DataResponse<Order>>("GET", `/orders/${venueOrderId}`);
+    return this.request<DataResponse<OrderDetails>>(
+      "GET",
+      `/orders/${venueOrderId}`,
+    );
   }
 
   async cancelOrder(venueOrderId: string): Promise<void> {

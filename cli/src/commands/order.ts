@@ -72,7 +72,12 @@ const COMMON_ORDER_COLUMNS: ColumnDef<Order>[] = [
   },
   { header: "Type", key: "type" },
   { header: "Qty", key: "quantity", align: "right" },
-  { header: "Filled", key: "filled_quantity", align: "right" },
+  { header: "Filled Qty", key: "filled_quantity", align: "right" },
+  {
+    header: "Filled Amt",
+    accessor: (o) => o.filled_amount ?? chalk.dim("—"),
+    align: "right",
+  },
   {
     header: "Price",
     accessor: (o) => o.price ?? chalk.dim("—"),
@@ -445,11 +450,23 @@ Examples:
               ],
               ["Type", o.type],
               ["Quantity", o.quantity],
-              ["Filled", o.filled_quantity],
+              ...(o.amount ? [["Amount", o.amount] as [string, string]] : []),
+              ["Filled Qty", o.filled_quantity],
+              ...(o.filled_amount
+                ? [["Filled Amt", o.filled_amount] as [string, string]]
+                : []),
               ["Remaining", o.leaves_quantity],
               ["Price", o.price ?? chalk.dim("—")],
               ...(o.average_fill_price
                 ? [["Avg Fill Price", o.average_fill_price] as [string, string]]
+                : []),
+              ...(o.total_fee
+                ? [
+                    [
+                      "Total Fee",
+                      `${o.total_fee}${o.fee_currency ? ` ${o.fee_currency}` : ""}`,
+                    ] as [string, string],
+                  ]
                 : []),
               ["Status", o.status],
               ...(o.reject_reason
