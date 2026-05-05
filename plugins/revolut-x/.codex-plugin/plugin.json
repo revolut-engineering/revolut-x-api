@@ -35,7 +35,7 @@
     "screenshots": [],
     "websiteURL": "https://exchange.revolut.com",
     "privacyPolicyURL": "https://github.com/revolut-engineering/revolut-x-api/blob/master/PRIVACY.md",
-    "termsOfServiceURL": "https://github.com/revolut-engineering/revolut-x-api/blob/master/LICENSE",
+    "termsOfServiceURL": "https://www.revolut.com/legal/crypto-exchange-terms/",
     "composerIcon": "./assets/icon.png",
     "logo": "./assets/icon.png"
   }
