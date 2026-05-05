@@ -588,6 +588,26 @@ describe("order get", () => {
     const parsed = JSON.parse(output);
     expect(parsed.data.id).toBe("order-123");
   });
+
+  it("displays total_fee and fee_currency when present", async () => {
+    mockGetOrder.mockResolvedValue({
+      data: { ...sampleOrder, total_fee: "0.95", fee_currency: "USD" },
+    });
+    await program.parseAsync(["node", "revx", "order", "get", "order-123"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("0.95");
+    expect(output).toContain("USD");
+  });
+
+  it("displays amount and filled_amount when present", async () => {
+    mockGetOrder.mockResolvedValue({
+      data: { ...sampleOrder, amount: "100", filled_amount: "95" },
+    });
+    await program.parseAsync(["node", "revx", "order", "get", "order-123"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("100");
+    expect(output).toContain("95");
+  });
 });
 
 describe("order cancel", () => {

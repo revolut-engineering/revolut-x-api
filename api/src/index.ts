@@ -86,6 +86,7 @@ export type {
   TriggerDirection,
   OrderTrigger,
   Order,
+  OrderDetails,
   OrderPlacementResult,
   LimitOrderConfig,
   MarketOrderConfig,

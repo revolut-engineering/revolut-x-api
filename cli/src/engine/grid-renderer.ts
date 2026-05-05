@@ -429,6 +429,13 @@ export function renderDashboard(data: DashboardData): string {
       innerW,
     ),
   );
+  const totalFees = new Decimal(state.stats.totalFees ?? "0");
+  lines.push(
+    padLine(
+      `  ${chalk.dim("Fees Paid".padEnd(16))}${chalk.dim(`${cs}${totalFees.toFixed(2)}`)}`,
+      innerW,
+    ),
+  );
   lines.push(
     padLine(
       `  ${chalk.dim("Unrealized".padEnd(16))}${fmtPnl(unrealized.toFixed(2), cs)}`,
@@ -547,6 +554,9 @@ export function renderShutdownSummary(
   );
   lines.push(
     `  ${chalk.dim("Realized P&L".padEnd(18))}${fmtPnl(state.stats.realizedPnl, cs)}`,
+  );
+  lines.push(
+    `  ${chalk.dim("Fees Paid".padEnd(18))}${chalk.dim(`${cs}${new Decimal(state.stats.totalFees ?? "0").toFixed(2)}`)}`,
   );
   lines.push(
     `  ${chalk.dim(`${base} Held`.padEnd(18))}${totalBaseHeld.toFixed(8)}`,

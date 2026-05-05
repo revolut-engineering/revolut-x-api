@@ -414,6 +414,13 @@ Retrieve a specific order by its venue order ID.
 
 **Response (200):** `{ data: Order }` -- note: `data` is a **single object**, not an array.
 
+In addition to all `Order` fields, the response may include these optional fields (shown only when present):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| total_fee | string | Total fee charged for the order |
+| fee_currency | string | Currency in which the fee was paid |
+
 **Example response (limit order):**
 ```json
 {
@@ -820,10 +827,11 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 | symbol | string | yes | Trading pair (slash format, e.g., `BTC/USD`) |
 | side | string | yes | `"buy"` or `"sell"` |
 | type | string | yes | `"market"` \| `"limit"` \| `"conditional"` \| `"tpsl"` |
-| quantity | string | yes | Order quantity in base currency. For sell orders, this is the initial locked balance |
-| filled_quantity | string | yes | How much has been executed |
-| leaves_quantity | string | yes | How much remains to be executed |
-| amount | string | no | Order amount in quote currency. For buy orders, this is the initial locked balance |
+| quantity | string | yes | Order quantity in base currency. For sell orders, this is the exact initial locked balance to be sold. For buy orders, this is the estimated total quantity to be received upon completion (exact amount depends on final execution prices). |
+| filled_quantity | string | yes | Exact quantity executed so far, in base currency. For buy orders: total base currency received (gross, before fees). For sell orders: total base currency spent. |
+| leaves_quantity | string | yes | Remaining quantity not yet executed, in base currency. Represents the portion of `quantity` still waiting to be filled, or the portion that was cancelled. |
+| amount | string | no | Order size in quote currency (shown only when present) |
+| filled_amount | string | no | Quote-currency amount filled so far (shown only when present) |
 | price | string | yes | Worst acceptable price for the order |
 | average_fill_price | string | no | Quantity-weighted average execution price |
 | status | string | yes | `"pending_new"` \| `"new"` \| `"partially_filled"` \| `"filled"` \| `"cancelled"` \| `"rejected"` \| `"replaced"` |

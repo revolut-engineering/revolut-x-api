@@ -39,10 +39,38 @@ export interface Order {
   type: OrderType;
   quantity: string;
   filled_quantity: string;
+  filled_amount?: string;
   leaves_quantity: string;
   amount?: string;
   price: string;
   average_fill_price?: string;
+  status: OrderStatus;
+  reject_reason?: string;
+  time_in_force: TimeInForce;
+  execution_instructions: ExecutionInstruction[];
+  conditional?: OrderTrigger;
+  take_profit?: OrderTrigger;
+  stop_loss?: OrderTrigger;
+  created_date: number;
+  updated_date: number;
+}
+
+export interface OrderDetails {
+  id: string;
+  previous_order_id?: string;
+  client_order_id: string;
+  symbol: string;
+  side: OrderSide;
+  type: OrderType;
+  quantity: string;
+  filled_quantity: string;
+  filled_amount?: string;
+  leaves_quantity: string;
+  amount?: string;
+  price: string;
+  average_fill_price?: string;
+  total_fee?: string;
+  fee_currency?: string;
   status: OrderStatus;
   reject_reason?: string;
   time_in_force: TimeInForce;
