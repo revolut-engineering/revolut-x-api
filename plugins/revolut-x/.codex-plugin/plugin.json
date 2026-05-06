@@ -1,7 +1,7 @@
 {
   "name": "revolut-x",
-  "version": "1.0.35",
-  "description": "Revolut X CLI skills — auth, market, account, trading, monitoring, and grid trading via the revx CLI.",
+  "version": "1.0.36",
+  "description": "Revolut X CLI skills only — auth, market, account, trading, monitoring, Telegram, and grid trading via the revx CLI.",
   "author": {
     "name": "Revolut X",
     "url": "https://exchange.revolut.com"
@@ -9,22 +9,33 @@
   "homepage": "https://github.com/revolut-engineering/revolut-x-api",
   "repository": "https://github.com/revolut-engineering/revolut-x-api",
   "license": "MIT",
-  "keywords": ["revolut", "crypto", "exchange", "trading", "cli", "market-data", "grid-bot"],
-  "skills": "./skills/",
+  "keywords": [
+    "revolut",
+    "crypto",
+    "exchange",
+    "trading",
+    "cli",
+    "market-data",
+    "grid-bot"
+  ],
+  "skills": "../../skills/",
   "interface": {
     "displayName": "Revolut X",
     "developerName": "Revolut X",
     "shortDescription": "Crypto trading, market data, monitoring, and grid bots via the revx CLI",
     "longDescription": "Revolut X for Codex provides skills that teach the assistant to use the revx CLI for the Revolut X crypto exchange — auth setup, market data, account queries, order placement, live monitoring, and grid trading strategies.",
     "category": "Finance",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "Help me check my Revolut X balances or place a trade using the revx CLI"
     ],
     "screenshots": [],
     "websiteURL": "https://exchange.revolut.com",
     "privacyPolicyURL": "https://github.com/revolut-engineering/revolut-x-api/blob/master/PRIVACY.md",
-    "termsOfServiceURL": "https://github.com/revolut-engineering/revolut-x-api/blob/master/LICENSE",
+    "termsOfServiceURL": "https://www.revolut.com/legal/crypto-exchange-terms/",
     "composerIcon": "./assets/icon.png",
     "logo": "./assets/icon.png"
   }

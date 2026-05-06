@@ -8,7 +8,7 @@
       "name": "revolut-x",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./plugins/revolut-x"
       },
       "policy": {
         "installation": "AVAILABLE",

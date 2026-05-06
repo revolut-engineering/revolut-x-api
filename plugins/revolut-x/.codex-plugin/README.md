@@ -2,6 +2,8 @@
 
 OpenAI Codex plugin for [Revolut X](https://exchange.revolut.com/) — a crypto exchange. Adds 7 skills that teach Codex to use the `revx` CLI for auth setup, market data, account queries, order placement, live monitoring, and grid trading.
 
+This Codex plugin exposes skills only. It does not include MCP servers, hooks, scripts, apps, or executable plugin components.
+
 ## What's included
 
 Seven skills covering the full Revolut X CLI surface:
@@ -32,7 +34,7 @@ The first time Codex needs an authenticated endpoint, the **revx-auth** skill wa
 
 ## Source of truth
 
-The skills are authored in [`revolut-engineering/revolut-x-api`](https://github.com/revolut-engineering/revolut-x-api) (under `skills/` at the repo root) and mirrored here. File issues about skill content on that repo.
+The skills are authored in [`revolut-engineering/revolut-x-api`](https://github.com/revolut-engineering/revolut-x-api) under `skills/` at the repo root. File issues about skill content on that repo.
 
 ## License
 
