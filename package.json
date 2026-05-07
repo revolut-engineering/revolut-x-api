@@ -15,7 +15,9 @@
     "lint": "eslint api/src api/tests cli/src cli/tests mcp/src mcp/tests integration-tests/src integration-tests/tests integration-tests/evals",
     "lint:fix": "eslint api/src api/tests cli/src cli/tests mcp/src mcp/tests integration-tests/src integration-tests/tests integration-tests/evals --fix",
     "format": "prettier --write \"**/*.ts\"",
-    "format:check": "prettier --check \"**/*.ts\""
+    "format:check": "prettier --check \"**/*.ts\"",
+    "sync-skills": "bash scripts/sync-skills.sh",
+    "sync-skills:check": "bash scripts/sync-skills.sh check"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

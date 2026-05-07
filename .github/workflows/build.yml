@@ -92,6 +92,8 @@ jobs:
 
       - run: npm run lint
 
+      - run: npm run sync-skills:check
+
   test-api:
     name: Test API
     needs: install
