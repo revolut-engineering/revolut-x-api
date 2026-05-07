@@ -314,11 +314,25 @@ The extension installs the `skills/` folder, which Gemini CLI auto-discovers.
 
 #### OpenAI Codex (plugin marketplace)
 
+Register this repo as a marketplace:
+
 ```bash
 codex plugin marketplace add revolut-engineering/revolut-x-api
 ```
 
-After adding the marketplace, open the in-app `/plugins` browser and install **revolut-x**. See [Codex plugins docs](https://developers.openai.com/codex/plugins) and [CLI reference](https://developers.openai.com/codex/cli/reference).
+Then launch Codex (`codex`), run `/plugins` in the TUI, find **revolut-x**, and enable it. The 7 `revx-*` skills become available immediately and activate when you use a matching trigger phrase (e.g. *"check my Revolut X balances"*, *"place a market order"*, *"backtest a grid strategy"*).
+
+See [Codex plugins docs](https://developers.openai.com/codex/plugins) and [CLI reference](https://developers.openai.com/codex/cli/reference).
+
+##### Troubleshooting
+
+If skills don't appear after enabling **revolut-x**, the local Codex cache may be holding a stale snapshot from an earlier install at the same version. Wipe the cache and re-add:
+
+```bash
+codex plugin marketplace remove revolut-x-plugins
+rm -rf ~/.codex/plugins/cache/revolut-x-plugins
+codex plugin marketplace add revolut-engineering/revolut-x-api
+```
 
 ---
 
