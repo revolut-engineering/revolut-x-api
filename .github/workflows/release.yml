@@ -48,6 +48,7 @@ jobs:
             const files = [
               'mcp/packaging/mcpb/manifest.json',
               '.claude-plugin/plugin.json',
+              '.cursor-plugin/plugin.json',
               'gemini-extension.json',
               'plugins/revolut-x/.codex-plugin/plugin.json',
             ];
@@ -148,6 +149,7 @@ jobs:
             mcp/packaging/mcpb/manifest.json \
             .claude-plugin/plugin.json \
             .claude-plugin/marketplace.json \
+            .cursor-plugin/plugin.json \
             gemini-extension.json \
             plugins/revolut-x/.codex-plugin/plugin.json \
             package-lock.json
