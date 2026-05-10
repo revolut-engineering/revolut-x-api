@@ -1,0 +1,20 @@
+{
+  "id": "revolut-x",
+  "name": "Revolut X",
+  "description": "Revolut X is a low-fees crypto exchange by Revolut. Skills for crypto trading, market data, monitoring, and grid bot strategies on the Revolut X exchange.",
+  "version": "1.0.38",
+  "skills": [
+    "skills/revx-account",
+    "skills/revx-auth",
+    "skills/revx-market",
+    "skills/revx-monitor",
+    "skills/revx-strategy",
+    "skills/revx-telegram",
+    "skills/revx-trading"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
