@@ -126,6 +126,9 @@ async function handleBacktest(
     days: string;
     interval: string;
     split?: boolean;
+    trailingUp?: boolean;
+    stopLoss?: string;
+    stopLossAction?: string;
     json?: boolean;
     output?: string;
   },
@@ -168,12 +171,18 @@ async function handleBacktest(
     chalk.gray(`  ↳ Running backtest on ${candles.length} candles...\n`),
   );
   const useSplit = opts.split === true;
+  const useTrailingUp = opts.trailingUp === true;
+  const stopLossPct = opts.stopLoss ? parseFloat(opts.stopLoss) : 0;
+  const stopLossAction = (opts.stopLossAction as "sell" | "keep") || "keep";
   const result = runBacktest(
     candles,
     gridLevels,
     rangePct,
     investment,
     useSplit,
+    useTrailingUp,
+    stopLossPct,
+    stopLossAction,
   );
 
   if (isJsonOutput(opts)) {
@@ -312,6 +321,15 @@ async function handleBacktest(
     (Math.pow(1 + returnPct.toNumber() / 100, 365 / days) - 1) * 100;
   const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
   console.log(pad("Annualized", annColor(`${annualizedPct.toFixed(2)}%`)));
+  if (useTrailingUp) {
+    console.log(pad("Trailing Up", chalk.cyan(`${result.trailingUpShifts} shifts`)));
+  }
+  if (stopLossPct > 0) {
+    const slLabel = result.stopLossTriggered
+      ? chalk.red("triggered")
+      : chalk.green("not triggered");
+    console.log(pad(`Stop-Loss (${stopLossPct}%)`, slLabel));
+  }
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
 
   if (result.tradeLog.length > 0) {
@@ -373,6 +391,9 @@ async function handleOptimize(
     ranges: string;
     top: string;
     split?: boolean;
+    trailingUp?: boolean;
+    stopLoss?: string;
+    stopLossAction?: string;
     json?: boolean;
     output?: string;
   },
@@ -448,6 +469,9 @@ async function handleOptimize(
     ),
   );
   const useSplit = opts.split === true;
+  const useTrailingUp = opts.trailingUp === true;
+  const stopLossPct = opts.stopLoss ? parseFloat(opts.stopLoss) : 0;
+  const stopLossAction = (opts.stopLossAction as "sell" | "keep") || "keep";
   const results = optimizeGridParams(
     candles,
     levelsList,
@@ -455,6 +479,9 @@ async function handleOptimize(
     investment,
     days,
     useSplit,
+    useTrailingUp,
+    stopLossPct,
+    stopLossAction,
   );
 
   if (isJsonOutput(opts)) {
@@ -562,6 +589,9 @@ async function handleRun(
     interval: string;
     dryRun?: boolean;
     reset?: boolean;
+    trailingUp?: boolean;
+    stopLoss?: string;
+    stopLossAction?: string;
   },
 ): Promise<void> {
   pair = validatePair(pair);
@@ -586,6 +616,9 @@ async function handleRun(
     intervalSec,
     dryRun: opts.dryRun === true,
     reset: opts.reset === true,
+    trailingUp: opts.trailingUp === true,
+    stopLoss: opts.stopLoss ? parseFloat(opts.stopLoss) : undefined,
+    stopLossAction: (opts.stopLossAction as "sell" | "keep") || undefined,
   };
 
   const bot = new ForegroundGridBot(config);
@@ -651,6 +684,12 @@ Examples:
       "1m",
     )
     .option("--split", "Market-buy base for sell levels at start")
+    .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
+    .option("--stop-loss <pct>", "Stop simulation when price drops this % below lower boundary")
+    .option(
+      "--stop-loss-action <action>",
+      "What to do with held base on stop-loss: sell or keep (default: keep)",
+    )
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleBacktest);
@@ -673,6 +712,12 @@ Examples:
     )
     .option("--top <n>", "Number of top results to show", "10")
     .option("--split", "Market-buy base for sell levels at start")
+    .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
+    .option("--stop-loss <pct>", "Stop simulation when price drops this % below lower boundary")
+    .option(
+      "--stop-loss-action <action>",
+      "What to do with held base on stop-loss: sell or keep (default: keep)",
+    )
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleOptimize);
@@ -694,5 +739,17 @@ Examples:
     .option("--interval <sec>", "Polling interval in seconds", "10")
     .option("--dry-run", "Simulate without placing real orders")
     .option("--reset", "Discard saved state and start a fresh grid")
+    .option(
+      "--trailing-up",
+      "Rebuild grid around current price when upper boundary is breached",
+    )
+    .option(
+      "--stop-loss <pct>",
+      "Stop bot when price drops this % below the lower grid boundary",
+    )
+    .option(
+      "--stop-loss-action <action>",
+      "What to do with held base asset on stop-loss: sell (market) or keep (default: keep)",
+    )
     .action(handleRun);
 }

@@ -17,6 +17,8 @@ interface BacktestResult {
   finalQuote: Decimal;
   maxDrawdown: Decimal;
   tradeLog: string[];
+  trailingUpShifts: number;
+  stopLossTriggered: boolean;
 }
 
 interface OptimizationResult {
@@ -42,6 +44,8 @@ function createEmptyResult(): BacktestResult {
     finalQuote: new Decimal(0),
     maxDrawdown: new Decimal(0),
     tradeLog: [],
+    trailingUpShifts: 0,
+    stopLossTriggered: false,
   };
 }
 
@@ -224,6 +228,9 @@ export function runBacktest(
   rangePct: Decimal,
   investment: Decimal,
   split = false,
+  trailingUp = false,
+  stopLoss = 0,
+  stopLossAction: "sell" | "keep" = "keep",
 ): BacktestResult {
   if (candles.length === 0) {
     return createEmptyResult();
@@ -250,7 +257,7 @@ export function runBacktest(
     ? buyLevelCount + sellLevelIndices.length
     : buyLevelCount;
 
-  const quotePerLevel = investment
+  let quotePerLevel = investment
     .div(Math.max(totalCapitalLevels, 1))
     .toDecimalPlaces(2, Decimal.ROUND_DOWN);
 
@@ -281,6 +288,36 @@ export function runBacktest(
   }
 
   for (const candle of candles) {
+    // Stop-loss check: did the candle's low breach the threshold?
+    if (stopLoss > 0) {
+      const slPrice = levels[0].price.times(1 - stopLoss / 100);
+      if (candle.low.lte(slPrice)) {
+        if (stopLossAction === "sell") {
+          for (const level of levels) {
+            if (level.hasPosition && level.baseHeld.gt(0)) {
+              const quoteReceived = level.baseHeld
+                .times(slPrice)
+                .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+              const profit = quoteReceived.minus(quotePerLevel);
+              quoteBalance = quoteBalance.plus(quoteReceived);
+              result.realizedPnl = result.realizedPnl.plus(profit);
+              result.totalSells++;
+              result.totalTrades++;
+              level.hasPosition = false;
+              level.baseHeld = new Decimal(0);
+              level.hasBuyOrder = true;
+              result.tradeLog.push(
+                `#${result.totalTrades}  STOP-LOSS SELL @ ${slPrice.toFixed(2)} | qty ${level.baseHeld} | ` +
+                  `${quoteReceived.toFixed(2)} | profit=${profit.toFixed(2)}`,
+              );
+            }
+          }
+        }
+        result.stopLossTriggered = true;
+        break;
+      }
+    }
+
     quoteBalance = simulateCandle(
       levels,
       candle.open,
@@ -292,6 +329,54 @@ export function runBacktest(
       quoteBalance,
       investment,
     );
+
+    // Trailing up check: did the candle's high breach the upper boundary + one step?
+    if (trailingUp) {
+      const upper = levels[levels.length - 1].price;
+      const lower = levels[0].price;
+      const ratio = upper
+        .div(lower)
+        .pow(new Decimal(1).div(levels.length - 1));
+      if (candle.high.gt(upper.times(ratio))) {
+        const rebuildPrice = candle.close;
+
+        // Sell all held positions at the rebuild price
+        for (const level of levels) {
+          if (level.hasPosition && level.baseHeld.gt(0)) {
+            const quoteReceived = level.baseHeld
+              .times(rebuildPrice)
+              .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+            const profit = quoteReceived.minus(quotePerLevel);
+            quoteBalance = quoteBalance.plus(quoteReceived);
+            result.realizedPnl = result.realizedPnl.plus(profit);
+            result.totalSells++;
+            result.totalTrades++;
+            result.tradeLog.push(
+              `#${result.totalTrades}  TRAILING-UP SELL @ ${rebuildPrice.toFixed(2)} | ` +
+                `profit=${profit.toFixed(2)}`,
+            );
+            level.hasPosition = false;
+            level.baseHeld = new Decimal(0);
+          }
+        }
+
+        // Rebuild grid around the close price
+        const newLevels = createGrid(rebuildPrice, levels.length, rangePct);
+        levels.length = 0;
+        levels.push(...newLevels);
+
+        // Recalculate quotePerLevel from available quote balance
+        const newBuyCount = levels.filter((l) => l.hasBuyOrder).length;
+        quotePerLevel = quoteBalance
+          .div(Math.max(newBuyCount, 1))
+          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+
+        result.trailingUpShifts++;
+        result.tradeLog.push(
+          `TRAILING UP: Grid rebuilt around ${rebuildPrice.toFixed(2)} (shift #${result.trailingUpShifts})`,
+        );
+      }
+    }
 
     let totalBaseHeld = new Decimal(0);
     for (const lv of levels) {
@@ -323,6 +408,9 @@ export function optimizeGridParams(
   investment: Decimal = new Decimal(1000),
   days: number = 30,
   split = false,
+  trailingUp = false,
+  stopLoss = 0,
+  stopLossAction: "sell" | "keep" = "keep",
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
@@ -348,7 +436,7 @@ export function optimizeGridParams(
 
   for (const levels of gridLevelsRange) {
     for (const rangePct of rangePctRange) {
-      const bt = runBacktest(candles, levels, rangePct, investment, split);
+      const bt = runBacktest(candles, levels, rangePct, investment, split, trailingUp, stopLoss, stopLossAction);
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
       const totalReturn = totalValue.minus(investment);
