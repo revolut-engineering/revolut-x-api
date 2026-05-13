@@ -34,6 +34,9 @@ export interface GridBotConfig {
   intervalSec: number;
   dryRun: boolean;
   reset: boolean;
+  trailingUp: boolean;
+  stopLoss?: number;
+  stopLossAction?: "sell" | "keep";
 }
 
 const FILLED_STATUSES = new Set(["filled"]);
@@ -59,6 +62,7 @@ export class ForegroundGridBot {
   private _pairInfo: CurrencyPair | null = null;
   private _connections: TelegramConnection[] = [];
   private _boundaryAlerted = false;
+  private _shouldRebuildUp = false;
   private _lastNotifyOk = 0;
   private _cs: string;
 
@@ -323,16 +327,24 @@ export class ForegroundGridBot {
     const state = this._state;
     if (!state) return;
 
-    const gridPrice = new Decimal(state.gridPrice);
-    const rangePct = new Decimal(state.config.rangePct);
-    const lower = gridPrice.times(new Decimal(1).minus(rangePct));
-    const upper = gridPrice.times(new Decimal(1).plus(rangePct));
+    const levels = state.levels;
+    const lower = new Decimal(levels[0].price);
+    const upper = new Decimal(levels[levels.length - 1].price);
+    const ratio = upper
+      .div(lower)
+      .pow(new Decimal(1).div(levels.length - 1));
+    const cs = this._cs;
+
+    if (this._config.trailingUp && currentPrice.gt(upper.times(ratio))) {
+      this._shouldRebuildUp = true;
+      this._boundaryAlerted = false;
+      return;
+    }
 
     if (currentPrice.lt(lower) || currentPrice.gt(upper)) {
       const below = currentPrice.lt(lower);
       const direction = below ? "below" : "above";
       const boundary = below ? lower : upper;
-      const cs = this._cs;
       this._warnings.push(
         `Price ${direction} grid range (${cs}${boundary.toFixed(2)})`,
       );
@@ -349,6 +361,184 @@ export class ForegroundGridBot {
     } else {
       this._boundaryAlerted = false;
     }
+  }
+
+  private async _rebuildGridUp(currentPrice: Decimal): Promise<void> {
+    const state = this._state!;
+    const client = this._client;
+    const cs = this._cs;
+
+    if (!this._config.dryRun && client) {
+      const cancels: Promise<void>[] = [];
+      for (const level of state.levels) {
+        if (level.buyOrderId) {
+          cancels.push(
+            client
+              .cancelOrder(level.buyOrderId)
+              .catch((err) => rethrowIfInsecureKey(err)),
+          );
+        }
+        if (level.sellOrderId) {
+          cancels.push(
+            client
+              .cancelOrder(level.sellOrderId)
+              .catch((err) => rethrowIfInsecureKey(err)),
+          );
+        }
+      }
+      await Promise.all(cancels);
+    }
+
+    for (const level of state.levels) {
+      level.buyOrderId = null;
+      level.sellOrderId = null;
+      level.hasPosition = false;
+      level.baseHeld = "0";
+      level.fillCost = "0";
+    }
+
+    const rangePct = new Decimal(this._config.rangePct);
+    const lower = currentPrice.times(new Decimal(1).minus(rangePct));
+    const upper = currentPrice.times(new Decimal(1).plus(rangePct));
+    const ratio = upper
+      .div(lower)
+      .pow(new Decimal(1).div(state.levels.length - 1));
+    const quoteStep = this._getQuoteStep();
+
+    for (let i = 0; i < state.levels.length; i++) {
+      state.levels[i].price = lower
+        .times(ratio.pow(i))
+        .toDecimalPlaces(quoteStep.decimalPlaces(), Decimal.ROUND_DOWN)
+        .toString();
+      state.levels[i].index = i;
+    }
+
+    state.gridPrice = currentPrice.toString();
+
+    for (const level of state.levels) {
+      if (new Decimal(level.price).lt(currentPrice)) {
+        try {
+          const orderId = await this._placeBuyOrder(
+            level,
+            new Decimal(state.quotePerLevel),
+          );
+          level.buyOrderId = orderId;
+          await sleep(ORDER_DELAY_MS);
+        } catch (err) {
+          rethrowIfInsecureKey(err);
+          this._warnings.push(
+            `Rebuild buy @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+
+    state.shiftCount = (state.shiftCount ?? 0) + 1;
+    saveGridState(state);
+
+    this._notify(
+      `Grid Bot ${state.pair}: trailing up — grid rebuilt around ${cs}${currentPrice.toFixed(2)} ` +
+        `(shift #${state.shiftCount})`,
+    );
+  }
+
+  private async _triggerStopLoss(currentPrice: Decimal): Promise<void> {
+    const state = this._state!;
+    const client = this._client;
+    const cs = this._cs;
+    const action = this._config.stopLossAction ?? "keep";
+
+    if (!this._config.dryRun && client) {
+      const cancels: Promise<void>[] = [];
+      for (const level of state.levels) {
+        if (level.buyOrderId) {
+          cancels.push(
+            client
+              .cancelOrder(level.buyOrderId)
+              .catch((err) => rethrowIfInsecureKey(err)),
+          );
+        }
+        if (level.sellOrderId) {
+          cancels.push(
+            client
+              .cancelOrder(level.sellOrderId)
+              .catch((err) => rethrowIfInsecureKey(err)),
+          );
+        }
+      }
+      await Promise.all(cancels);
+    }
+
+    for (const level of state.levels) {
+      level.buyOrderId = null;
+      level.sellOrderId = null;
+    }
+
+    if (action === "sell") {
+      const baseStep = this._getBaseStep();
+      const totalBase = state.levels
+        .filter((l) => l.hasPosition && new Decimal(l.baseHeld).gt(0))
+        .reduce((sum, l) => sum.plus(l.baseHeld), new Decimal(0))
+        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+
+      if (totalBase.gt(0)) {
+        if (!this._config.dryRun && client) {
+          try {
+            const resp = await client.placeOrder({
+              symbol: this._config.pair,
+              side: "sell",
+              market: { baseSize: totalBase.toString() },
+            });
+            await this._awaitOrderFill(resp.data.venue_order_id);
+          } catch (err) {
+            rethrowIfInsecureKey(err);
+            this._warnings.push(
+              `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        const costBasis = state.levels
+          .filter((l) => l.hasPosition)
+          .reduce(
+            (sum, l) =>
+              sum.plus(
+                l.fillCost && l.fillCost !== "0"
+                  ? l.fillCost
+                  : state.quotePerLevel,
+              ),
+            new Decimal(0),
+          );
+        const revenue = totalBase.times(currentPrice);
+        const pnl = revenue.minus(costBasis);
+        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+          .plus(pnl)
+          .toString();
+        state.stats.totalSells++;
+        this._logTrade(
+          "sell",
+          currentPrice.toString(),
+          totalBase.toString(),
+          "stop-loss",
+          pnl.toFixed(2),
+        );
+      }
+
+      for (const level of state.levels) {
+        level.hasPosition = false;
+        level.baseHeld = "0";
+        level.fillCost = "0";
+      }
+    }
+
+    const actionLabel = action === "sell" ? "liquidated (market sell)" : "kept on balance";
+    this._notify(
+      `Grid Bot ${state.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
+        `Base asset: ${actionLabel}. Realized P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
+    );
+
+    saveGridState(state);
+    this.stop();
   }
 
   private async _awaitOrderFill(
@@ -576,8 +766,12 @@ export class ForegroundGridBot {
         splitInvestment: config.splitInvestment,
         intervalSec: config.intervalSec,
         dryRun: config.dryRun,
+        trailingUp: config.trailingUp,
+        stopLoss: config.stopLoss,
+        stopLossAction: config.stopLossAction,
       },
       splitExecuted,
+      shiftCount: 0,
       gridPrice: currentPrice.toString(),
       quotePrecision: quoteStep.toString(),
       basePrecision: baseStep.toString(),
@@ -1052,11 +1246,32 @@ export class ForegroundGridBot {
     this._previousPrice = this._currentPrice;
     this._currentPrice = currentPrice;
 
+    if (this._config.stopLoss && this._config.stopLoss > 0) {
+      const stopLossPrice = new Decimal(state.levels[0].price).times(
+        1 - this._config.stopLoss / 100,
+      );
+      if (currentPrice.lte(stopLossPrice)) {
+        await this._triggerStopLoss(currentPrice);
+        return;
+      }
+    }
+
     this._checkBoundary(currentPrice);
 
     if (this._config.dryRun) {
       await this._dryRunTick(currentPrice);
       this._tickCount++;
+      if (this._shouldRebuildUp) {
+        this._shouldRebuildUp = false;
+        const hasOpenPositions = state.levels.some((l) => l.hasPosition);
+        if (hasOpenPositions) {
+          this._warnings.push(
+            "Trailing up deferred: open positions present, will retry next tick",
+          );
+        } else {
+          await this._rebuildGridUp(currentPrice);
+        }
+      }
       return;
     }
 
@@ -1254,6 +1469,18 @@ export class ForegroundGridBot {
 
     saveGridState(state);
     this._tickCount++;
+
+    if (this._shouldRebuildUp) {
+      this._shouldRebuildUp = false;
+      const hasOpenPositions = state.levels.some((l) => l.hasPosition);
+      if (hasOpenPositions) {
+        this._warnings.push(
+          "Trailing up deferred: open positions present, will retry next tick",
+        );
+      } else {
+        await this._rebuildGridUp(currentPrice);
+      }
+    }
   }
 
   // --------------- dry run ---------------

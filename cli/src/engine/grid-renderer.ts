@@ -188,6 +188,18 @@ export function renderDashboard(data: DashboardData): string {
       innerW,
     ),
   );
+  if (state.config.stopLoss && state.config.stopLoss > 0) {
+    const slPrice = new Decimal(state.levels[0].price).times(
+      1 - state.config.stopLoss / 100,
+    );
+    const slAction = state.config.stopLossAction ?? "keep";
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Stop-Loss".padEnd(14))}${chalk.red(fmtPrice(slPrice, cs))}  ${chalk.dim(`(−${state.config.stopLoss}% · ${slAction})`)}`,
+        innerW,
+      ),
+    );
+  }
   lines.push(
     padLine(
       `  ${chalk.dim("Levels".padEnd(14))}${state.config.levels / 2} per side`,
@@ -215,6 +227,14 @@ export function renderDashboard(data: DashboardData): string {
     lines.push(
       padLine(
         `  ${chalk.dim("Profit/Grid".padEnd(14))}${fmtPrice(profitDollar, cs)} (${profitPct.toFixed(2)}%)`,
+        innerW,
+      ),
+    );
+  }
+  if (state.config.trailingUp) {
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Shifts".padEnd(14))}${state.shiftCount ?? 0}↑`,
         innerW,
       ),
     );
