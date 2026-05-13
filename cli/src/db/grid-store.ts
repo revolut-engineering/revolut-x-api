@@ -43,7 +43,6 @@ export interface GridState {
     dryRun: boolean;
     trailingUp?: boolean;
     stopLoss?: number;
-    stopLossAction?: "sell" | "keep";
   };
   splitExecuted: boolean;
   shiftCount?: number;
