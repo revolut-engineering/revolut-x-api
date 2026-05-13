@@ -194,7 +194,7 @@ const active = await client.getActiveOrders({
 // Historical orders
 const history = await client.getHistoricalOrders({
   symbols: ["BTC-USD"],
-  orderStates: ["filled", "cancelled"],                 // "filled" | "cancelled" | "rejected" | "replaced"
+  orderStates: ["filled", "cancelled", "partially_filled"], // "filled" | "cancelled" | "rejected" | "replaced" | "partially_filled"
   orderTypes: ["market", "limit"],                      // "market" | "limit"
   startDate: 1700000000000,
   endDate: 1700086400000,
