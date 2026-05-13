@@ -41,8 +41,12 @@ export interface GridState {
     splitInvestment: boolean;
     intervalSec: number;
     dryRun: boolean;
+    trailingUp?: boolean;
+    stopLoss?: number;
+    stopLossAction?: "sell" | "keep";
   };
   splitExecuted: boolean;
+  shiftCount?: number;
   gridPrice: string;
   quotePrecision: string;
   basePrecision: string;
