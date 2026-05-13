@@ -143,7 +143,7 @@ revx order open                         # Active orders (alias: active)
   --limit 50                            # Max results
 revx order history                      # Historical orders
   --symbols BTC-USD,ETH-USD             # Filter by pairs
-  --order-states filled,cancelled       # States: filled cancelled rejected replaced
+  --order-states filled,cancelled       # States: filled cancelled rejected replaced partially_filled
   --order-types market,limit            # Types: market limit
   --start-date 7d                       # Start (relative: 7d 1w today; ISO; epoch ms)
   --end-date today                      # End

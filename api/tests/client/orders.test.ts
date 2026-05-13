@@ -451,6 +451,46 @@ describe("Orders", () => {
       expect(result.data.amount).toBe("100");
       expect(result.data.filled_amount).toBe("95");
     });
+
+    it("remaps cancelled order with partial fill to partially_filled", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-cancelled-partial")
+        .reply(200, {
+          data: { ...mockOrder, status: "cancelled", filled_quantity: "0.5" },
+        });
+
+      const result = await client.getOrder("order-cancelled-partial");
+
+      expect(result.data.status).toBe("partially_filled");
+      expect(result.data.filled_quantity).toBe("0.5");
+    });
+
+    it("remaps canceled (US spelling) order with partial fill to partially_filled", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-canceled-partial")
+        .reply(200, {
+          data: { ...mockOrder, status: "canceled", filled_quantity: "0.5" },
+        });
+
+      const result = await client.getOrder("order-canceled-partial");
+
+      expect(result.data.status).toBe("partially_filled");
+    });
+
+    it("keeps cancelled status when order has zero fills", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-cancelled-empty")
+        .reply(200, {
+          data: { ...mockOrder, status: "cancelled", filled_quantity: "0" },
+        });
+
+      const result = await client.getOrder("order-cancelled-empty");
+
+      expect(result.data.status).toBe("cancelled");
+    });
   });
 
   describe("cancelOrder", () => {

@@ -350,10 +350,21 @@ export class RevolutXClient {
 
   async getOrder(venueOrderId: string): Promise<DataResponse<OrderDetails>> {
     this.requireAuth();
-    return this.request<DataResponse<OrderDetails>>(
+    const response = await this.request<DataResponse<OrderDetails>>(
       "GET",
       `/orders/${venueOrderId}`,
     );
+
+    const order = response.data;
+    const statusStr = String(order.status);
+    const isCancelled = statusStr === "canceled" || statusStr === "cancelled";
+    const filledQty = Number(order.filled_quantity || 0);
+
+    if (isCancelled && filledQty > 0) {
+      response.data = { ...order, status: "partially_filled" as never };
+    }
+
+    return response;
   }
 
   async cancelOrder(venueOrderId: string): Promise<void> {
