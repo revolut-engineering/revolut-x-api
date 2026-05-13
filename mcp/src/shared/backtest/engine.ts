@@ -230,7 +230,6 @@ export function runBacktest(
   split = false,
   trailingUp = false,
   stopLoss = 0,
-  stopLossAction: "sell" | "keep" = "keep",
 ): BacktestResult {
   if (candles.length === 0) {
     return createEmptyResult();
@@ -291,21 +290,23 @@ export function runBacktest(
     if (stopLoss > 0) {
       const slPrice = levels[0].price.times(1 - stopLoss / 100);
       if (candle.low.lte(slPrice)) {
-        if (stopLossAction === "sell") {
-          for (const level of levels) {
-            if (level.hasPosition && level.baseHeld.gt(0)) {
-              const quoteReceived = level.baseHeld
-                .times(slPrice)
-                .toDecimalPlaces(2, Decimal.ROUND_DOWN);
-              const profit = quoteReceived.minus(quotePerLevel);
-              quoteBalance = quoteBalance.plus(quoteReceived);
-              result.realizedPnl = result.realizedPnl.plus(profit);
-              result.totalSells++;
-              result.totalTrades++;
-              level.hasPosition = false;
-              level.baseHeld = new Decimal(0);
-              level.hasBuyOrder = true;
-            }
+        for (const level of levels) {
+          if (level.hasPosition && level.baseHeld.gt(0)) {
+            const quoteReceived = level.baseHeld
+              .times(slPrice)
+              .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+            const profit = quoteReceived.minus(quotePerLevel);
+            quoteBalance = quoteBalance.plus(quoteReceived);
+            result.realizedPnl = result.realizedPnl.plus(profit);
+            result.totalSells++;
+            result.totalTrades++;
+            result.tradeLog.push(
+              `#${result.totalTrades}  STOP-LOSS SELL @ ${slPrice.toFixed(2)} | qty ${level.baseHeld.toFixed(5)} | ` +
+                `+${quoteReceived.toFixed(2)} | profit=${profit.toFixed(2)}`,
+            );
+            level.hasPosition = false;
+            level.baseHeld = new Decimal(0);
+            level.hasBuyOrder = true;
           }
         }
         result.stopLossTriggered = true;
@@ -396,7 +397,6 @@ export function optimizeGridParams(
   split = false,
   trailingUp = false,
   stopLoss = 0,
-  stopLossAction: "sell" | "keep" = "keep",
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
@@ -422,7 +422,7 @@ export function optimizeGridParams(
 
   for (const levels of gridLevelsRange) {
     for (const rangePct of rangePctRange) {
-      const bt = runBacktest(candles, levels, rangePct, investment, split, trailingUp, stopLoss, stopLossAction);
+      const bt = runBacktest(candles, levels, rangePct, investment, split, trailingUp, stopLoss);
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
       const totalReturn = totalValue.minus(investment);

@@ -128,7 +128,6 @@ async function handleBacktest(
     split?: boolean;
     trailingUp?: boolean;
     stopLoss?: string;
-    stopLossAction?: string;
     json?: boolean;
     output?: string;
   },
@@ -173,7 +172,6 @@ async function handleBacktest(
   const useSplit = opts.split === true;
   const useTrailingUp = opts.trailingUp === true;
   const stopLossPct = opts.stopLoss ? parseFloat(opts.stopLoss) : 0;
-  const stopLossAction = (opts.stopLossAction as "sell" | "keep") || "keep";
   const result = runBacktest(
     candles,
     gridLevels,
@@ -182,7 +180,6 @@ async function handleBacktest(
     useSplit,
     useTrailingUp,
     stopLossPct,
-    stopLossAction,
   );
 
   if (isJsonOutput(opts)) {
@@ -393,7 +390,6 @@ async function handleOptimize(
     split?: boolean;
     trailingUp?: boolean;
     stopLoss?: string;
-    stopLossAction?: string;
     json?: boolean;
     output?: string;
   },
@@ -471,7 +467,6 @@ async function handleOptimize(
   const useSplit = opts.split === true;
   const useTrailingUp = opts.trailingUp === true;
   const stopLossPct = opts.stopLoss ? parseFloat(opts.stopLoss) : 0;
-  const stopLossAction = (opts.stopLossAction as "sell" | "keep") || "keep";
   const results = optimizeGridParams(
     candles,
     levelsList,
@@ -481,7 +476,6 @@ async function handleOptimize(
     useSplit,
     useTrailingUp,
     stopLossPct,
-    stopLossAction,
   );
 
   if (isJsonOutput(opts)) {
@@ -591,7 +585,6 @@ async function handleRun(
     reset?: boolean;
     trailingUp?: boolean;
     stopLoss?: string;
-    stopLossAction?: string;
   },
 ): Promise<void> {
   pair = validatePair(pair);
@@ -618,7 +611,6 @@ async function handleRun(
     reset: opts.reset === true,
     trailingUp: opts.trailingUp === true,
     stopLoss: opts.stopLoss ? parseFloat(opts.stopLoss) : undefined,
-    stopLossAction: (opts.stopLossAction as "sell" | "keep") || undefined,
   };
 
   const bot = new ForegroundGridBot(config);
@@ -686,10 +678,6 @@ Examples:
     .option("--split", "Market-buy base for sell levels at start")
     .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
     .option("--stop-loss <pct>", "Stop simulation when price drops this % below lower boundary")
-    .option(
-      "--stop-loss-action <action>",
-      "What to do with held base on stop-loss: sell or keep (default: keep)",
-    )
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleBacktest);
@@ -714,10 +702,6 @@ Examples:
     .option("--split", "Market-buy base for sell levels at start")
     .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
     .option("--stop-loss <pct>", "Stop simulation when price drops this % below lower boundary")
-    .option(
-      "--stop-loss-action <action>",
-      "What to do with held base on stop-loss: sell or keep (default: keep)",
-    )
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleOptimize);
@@ -746,10 +730,6 @@ Examples:
     .option(
       "--stop-loss <pct>",
       "Stop bot when price drops this % below the lower grid boundary",
-    )
-    .option(
-      "--stop-loss-action <action>",
-      "What to do with held base asset on stop-loss: sell (market) or keep (default: keep)",
     )
     .action(handleRun);
 }
