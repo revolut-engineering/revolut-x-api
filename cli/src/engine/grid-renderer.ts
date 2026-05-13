@@ -192,10 +192,9 @@ export function renderDashboard(data: DashboardData): string {
     const slPrice = new Decimal(state.levels[0].price).times(
       1 - state.config.stopLoss / 100,
     );
-    const slAction = state.config.stopLossAction ?? "keep";
     lines.push(
       padLine(
-        `  ${chalk.dim("Stop-Loss".padEnd(14))}${chalk.red(fmtPrice(slPrice, cs))}  ${chalk.dim(`(−${state.config.stopLoss}% · ${slAction})`)}`,
+        `  ${chalk.dim("Stop-Loss".padEnd(14))}${chalk.red(fmtPrice(slPrice, cs))}  ${chalk.dim(`(−${state.config.stopLoss}%)`)}`,
         innerW,
       ),
     );

@@ -363,12 +363,6 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Stop simulation when price drops this percentage below the lower grid boundary. 0 disables stop-loss (default).",
           ),
-        stop_loss_action: z
-          .enum(["sell", "keep"])
-          .default("keep")
-          .describe(
-            "What to do with held base asset when stop-loss triggers: sell (liquidate at stop price) or keep (hold on balance, default).",
-          ),
       },
       annotations: {
         title: "Run Grid Backtest",
@@ -387,7 +381,6 @@ export function registerBacktestTools(server: McpServer): void {
       split_investment,
       trailing_up,
       stop_loss_pct,
-      stop_loss_action,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -434,7 +427,6 @@ export function registerBacktestTools(server: McpServer): void {
         split_investment,
         trailing_up,
         stop_loss_pct,
-        stop_loss_action,
       );
 
       return textResult(
@@ -512,12 +504,6 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Stop simulation when price drops this percentage below the lower grid boundary. 0 disables stop-loss (default).",
           ),
-        stop_loss_action: z
-          .enum(["sell", "keep"])
-          .default("keep")
-          .describe(
-            "What to do with held base asset when stop-loss triggers: sell or keep (default).",
-          ),
       },
       annotations: {
         title: "Optimize Grid Parameters",
@@ -537,7 +523,6 @@ export function registerBacktestTools(server: McpServer): void {
       split_investment,
       trailing_up,
       stop_loss_pct,
-      stop_loss_action,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -619,7 +604,6 @@ export function registerBacktestTools(server: McpServer): void {
         split_investment,
         trailing_up,
         stop_loss_pct,
-        stop_loss_action,
       );
 
       return textResult(

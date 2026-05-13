@@ -36,7 +36,6 @@ export interface GridBotConfig {
   reset: boolean;
   trailingUp: boolean;
   stopLoss?: number;
-  stopLossAction?: "sell" | "keep";
 }
 
 const FILLED_STATUSES = new Set(["filled"]);
@@ -446,8 +445,8 @@ export class ForegroundGridBot {
     const state = this._state!;
     const client = this._client;
     const cs = this._cs;
-    const action = this._config.stopLossAction ?? "keep";
 
+    // 1. Cancel all open orders to free reserved funds
     if (!this._config.dryRun && client) {
       const cancels: Promise<void>[] = [];
       for (const level of state.levels) {
@@ -474,56 +473,60 @@ export class ForegroundGridBot {
       level.sellOrderId = null;
     }
 
-    if (action === "sell") {
-      const baseStep = this._getBaseStep();
-      const totalBase = state.levels
-        .filter((l) => l.hasPosition && new Decimal(l.baseHeld).gt(0))
-        .reduce((sum, l) => sum.plus(l.baseHeld), new Decimal(0))
-        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+    // 2. Sell all accumulated base asset via market order
+    const baseStep = this._getBaseStep();
+    const totalBase = state.levels
+      .filter((l) => l.hasPosition && new Decimal(l.baseHeld).gt(0))
+      .reduce((sum, l) => sum.plus(l.baseHeld), new Decimal(0))
+      .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
 
-      if (totalBase.gt(0)) {
-        if (!this._config.dryRun && client) {
-          try {
-            const resp = await client.placeOrder({
-              symbol: this._config.pair,
-              side: "sell",
-              market: { baseSize: totalBase.toString() },
-            });
-            await this._awaitOrderFill(resp.data.venue_order_id);
-          } catch (err) {
-            rethrowIfInsecureKey(err);
-            this._warnings.push(
-              `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
+    if (totalBase.gt(0)) {
+      if (!this._config.dryRun && client) {
+        try {
+          const resp = await client.placeOrder({
+            symbol: this._config.pair,
+            side: "sell",
+            market: { baseSize: totalBase.toString() },
+          });
+          const filled = await this._awaitOrderFill(resp.data.venue_order_id);
+          const netBase = this._netBase(filled);
+          const filledAmount = this._filledAmount(filled, currentPrice);
+          const feeQuote = this._feeQuote(filled, currentPrice);
+          const costBasis = state.levels
+            .filter((l) => l.hasPosition)
+            .reduce(
+              (sum, l) =>
+                sum.plus(
+                  l.fillCost && l.fillCost !== "0"
+                    ? l.fillCost
+                    : state.quotePerLevel,
+                ),
+              new Decimal(0),
             );
-          }
-        }
-
-        const costBasis = state.levels
-          .filter((l) => l.hasPosition)
-          .reduce(
-            (sum, l) =>
-              sum.plus(
-                l.fillCost && l.fillCost !== "0"
-                  ? l.fillCost
-                  : state.quotePerLevel,
-              ),
-            new Decimal(0),
+          const revenue = filledAmount.minus(feeQuote);
+          const pnl = revenue.minus(costBasis);
+          this._addFee(feeQuote);
+          state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+            .plus(pnl)
+            .toString();
+          state.stats.totalSells++;
+          this._logTrade(
+            "sell",
+            currentPrice.toString(),
+            netBase.toString(),
+            "stop-loss",
+            pnl.toFixed(2),
+            feeQuote.toString(),
           );
-        const revenue = totalBase.times(currentPrice);
-        const pnl = revenue.minus(costBasis);
-        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
-          .plus(pnl)
-          .toString();
-        state.stats.totalSells++;
-        this._logTrade(
-          "sell",
-          currentPrice.toString(),
-          totalBase.toString(),
-          "stop-loss",
-          pnl.toFixed(2),
-        );
+        } catch (err) {
+          rethrowIfInsecureKey(err);
+          this._warnings.push(
+            `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
 
+      // Clear positions regardless of whether real sell succeeded
       for (const level of state.levels) {
         level.hasPosition = false;
         level.baseHeld = "0";
@@ -531,10 +534,9 @@ export class ForegroundGridBot {
       }
     }
 
-    const actionLabel = action === "sell" ? "liquidated (market sell)" : "kept on balance";
     this._notify(
       `Grid Bot ${state.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
-        `Base asset: ${actionLabel}. Realized P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
+        `Sold ${totalBase} base. Realized P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
     );
 
     saveGridState(state);
@@ -768,7 +770,6 @@ export class ForegroundGridBot {
         dryRun: config.dryRun,
         trailingUp: config.trailingUp,
         stopLoss: config.stopLoss,
-        stopLossAction: config.stopLossAction,
       },
       splitExecuted,
       shiftCount: 0,
