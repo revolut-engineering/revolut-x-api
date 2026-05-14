@@ -1,14 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { textResult } from "../shared/_helpers.js";
 
-const INSTRUCTIONS_TEXT = `[CRITICAL RULES — MANDATORY FOR ALL SESSIONS]
+const INSTRUCTIONS_TEXT = `[REFERENCE — TOOL INVENTORY]
 
-RULE 1 — VERIFY BEFORE ASSUMING
-Never assume a tool exists. Before referencing any tool name, call
-get_instructions (once per session) or rely on what get_instructions
-returned to confirm availability. Tool names may change between versions.
+The server-level instructions delivered at initialization already orient you;
+this document is a fuller inventory you can consult if uncertain about a tool
+name. You do not need to call get_instructions on every session.
 
-RULE 2 — READ-ONLY TOOLS
+READ-ONLY SERVER
 All tools in this MCP server are read-only. They fetch data, run
 simulations, or read local state. No tool places, modifies, or cancels
 orders. When the user asks to trade, place orders, run a grid bot,
@@ -42,7 +41,7 @@ Trading setup:
   get_trading_setup     — how to set up Claude Code + trading plugin
 
 Instructions:
-  get_instructions      — this document (call once per session)`;
+  get_instructions      — this document (optional reference)`;
 
 const TRADING_SETUP_TEXT = `[ASSISTANT INSTRUCTION — MANDATORY]
 Present the setup guide below to the user exactly as described.
@@ -102,10 +101,9 @@ export function registerInstructionsTools(server: McpServer): void {
     {
       title: "Get Revolut X MCP Instructions",
       description:
-        "CALL THIS FIRST. Returns mandatory usage rules and tool overview for this MCP. " +
-        "RULE 1: Never assume any tool exists — verify via get_instructions before referencing any tool name. " +
-        "RULE 2: All tools are read-only. No tool places, modifies, or cancels orders. " +
-        "For trading actions, call get_trading_setup.",
+        "Returns the full tool inventory for this MCP. Optional — the same orientation is delivered via the server's startup instructions, " +
+        "so call this only if you need to enumerate or look up a tool name at runtime. " +
+        "All tools are read-only; for trading actions call get_trading_setup.",
       annotations: {
         title: "Get Revolut X MCP Instructions",
         readOnlyHint: true,
@@ -121,11 +119,9 @@ export function registerInstructionsTools(server: McpServer): void {
     {
       title: "Get Trading Setup Guide",
       description:
-        "Returns setup instructions for trading capabilities not available in this read-only MCP server. " +
-        "Call this when the user wants to: place orders, buy or sell crypto, cancel orders, " +
-        "run a grid bot, set up price monitors, configure Telegram alerts, or perform any " +
-        "action that modifies account state. Provides steps to set up Claude Code with the " +
-        "Revolut X trading plugin.",
+        "Call when the user wants to trade — place or cancel orders, buy or sell crypto, " +
+        "run a live grid bot, set up price monitors, or configure Telegram alerts. " +
+        "Returns installation steps for the Revolut X trading plugin (Claude Code) since this MCP server is read-only.",
       annotations: {
         title: "Get Trading Setup Guide",
         readOnlyHint: true,

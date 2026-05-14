@@ -98,13 +98,17 @@ async function fetchBacktestCandles(
 
   let actualDays = days;
   let llmNotice =
-    "\n\n*** NOTE TO LLM: This is the complete batch for your request. There is no more data available. ***";
+    "\n\n*** NOTE TO LLM: This output is a simulation of past data — NOT a prediction or guarantee of future performance. " +
+    "When citing any figure from this output (ROI, P&L, drawdown, recommended parameters), explicitly include that caveat in your reply to the user. " +
+    "This is the complete batch for your request. There is no more data available. ***";
 
   if (expectedCandles > 50000) {
     startDate = now - 50000 * intervalMs;
     actualDays = Number(((now - startDate) / (24 * 60 * 60 * 1000)).toFixed(2));
     llmNotice =
-      "\n\n*** NOTE TO LLM: The requested range contains more than 50,000 candles. Returning the last 50,000 candles from the current timestamp. This is all the data available. ***";
+      "\n\n*** NOTE TO LLM: This output is a simulation of past data — NOT a prediction or guarantee of future performance. " +
+      "When citing any figure (ROI, P&L, drawdown, recommended parameters), explicitly include that caveat in your reply. " +
+      "The requested range contained more than 50,000 candles; the simulation was run on the most recent 50,000 candles from the current timestamp. This is all the data available. ***";
   }
 
   let candleResult;
@@ -305,13 +309,12 @@ export function registerBacktestTools(server: McpServer): void {
     {
       title: "Run Grid Backtest",
       description:
-        "Run a grid trading backtest on historical candle data from Revolut X. " +
-        "Simulates a grid strategy: places buy orders at geometrically spaced price levels " +
-        "below the starting price, sells at the next level above. " +
-        "If the requested date range contains more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp. " +
-        "IMPORTANT: Before running, always confirm these key parameters with the user: " +
+        "Simulate a grid trading strategy against historical candle data from Revolut X (no live orders are placed). " +
+        "The grid places buy orders at geometrically spaced price levels below the start price and sells at the next level above. " +
+        "If the requested range contains more than 50,000 candles, the simulation runs on the most recent 50,000. " +
+        "IMPORTANT: Before running, confirm these parameters with the user: " +
         "symbol (required), investment amount, grid_levels, range_pct, and split_investment. " +
-        "These affect capital at risk and strategy behavior — never assume them silently. " +
+        "They materially change the simulated outcome — assuming them silently will produce backtest results the user can't trust. " +
         "Other parameters (days, resolution) can use defaults unless the user specifies otherwise. " +
         "For split_investment: true is best for ranging/sideways markets, false for trending markets.",
       inputSchema: {
@@ -431,13 +434,12 @@ export function registerBacktestTools(server: McpServer): void {
     {
       title: "Optimize Grid Parameters",
       description:
-        "Test multiple grid parameter combinations and return ranked results. " +
-        "Runs grid backtest for every combination of grid levels and range percentages, " +
-        "then ranks by total return. If the requested date range contains more than 50,000 candles, " +
-        "it defaults to testing against the last 50,000 candles from the current timestamp. " +
-        "IMPORTANT: Before running, always confirm these key parameters with the user: " +
+        "Sweep grid backtest across many parameter combinations and return ranked results — all simulations, no live orders. " +
+        "Runs a backtest for every combination of grid levels and range percentages, then ranks by total return. " +
+        "If the requested range contains more than 50,000 candles, the sweep runs on the most recent 50,000. " +
+        "IMPORTANT: Before running, confirm these parameters with the user: " +
         "symbol (required), investment amount, and split_investment. " +
-        "These affect capital at risk and strategy behavior — never assume them silently. " +
+        "They materially change the simulated outcome — assuming them silently will produce ranked results the user can't trust. " +
         "Other parameters (grid_levels_options, range_pct_options, days, resolution, top_n) can use defaults unless the user specifies otherwise. " +
         "For split_investment: true is best for ranging/sideways markets, false for trending markets.",
       inputSchema: {

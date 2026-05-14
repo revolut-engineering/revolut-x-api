@@ -27,11 +27,39 @@ export function resetRevolutXClient(): void {
   _client = null;
 }
 
+const SERVER_INSTRUCTIONS = `Revolut X read-only data, account state, historical orders/fills, and grid-strategy backtests for crypto and fiat pairs. To place orders, run live bots, or set up alerts, route the user to \`get_trading_setup\` — this server cannot modify account state.
+
+Data hygiene (apply to every reply):
+- Always show the currency or unit next to a numeric amount (e.g., "USD 45,000", "0.5 BTC", "12 USD/BTC").
+- All dates and timestamps are UTC unless the tool output says otherwise; preserve that in your reply.
+- Use only values that appear in tool results. If a tool returns no data for a requested time window, state explicitly "I do not have data for that time" and stop — do NOT fall back on prior knowledge, training-data estimates, or "approximately X" guesses. Inventing a price you believe to be right is fabrication and is not allowed.
+
+Safety:
+- Backtest and optimization results are simulations of past data, not predictions or guarantees. Surface this caveat any time you cite a backtest figure.
+- Investment-advice prohibition. When the user asks "should I buy / sell / hold X?" or any variant, the only acceptable response is to (a) state you cannot give investment advice and (b) offer to fetch their current position, live price, or P&L. Do NOT enumerate "reasons to sell", "reasons to hold", risk factors, time horizons, decision frameworks, or staged-exit suggestions — these all count as advice. Even hedged or balanced framings count. When in doubt, refuse.
+- Large-query confirmation. ANY of these triggers requires asking the user to confirm scope BEFORE running a tool: (a) the user says "all history", "all my trades ever", "everything", or similar; (b) the requested date range exceeds 30 days; (c) you would call \`get_historical_orders\` / \`get_client_trades\` / \`get_public_trades\` without \`totalLimit\` set. Do not silently run an unbounded query and report empty results — confirm first, then run with a bounded date range or \`totalLimit\`.
+
+Operational rules:
+- Paginated tools handle pagination internally — never call the same tool again to fetch a next page or split a date range.
+- For any tool that accepts a date range, state the actual range used in your reply.
+- If a tool reports auth-not-configured, present the setup steps it returns to the user verbatim and stop until they are completed.
+
+Routing hints (only the non-obvious cases — tool descriptions cover the rest):
+- For trading volume, P&L, or any "what did I do" question, call \`get_historical_orders\` once with \`order_states: ["filled","partially_filled"]\` and no symbols filter. The output already contains a pre-aggregated per-quote-currency totals block — quote it instead of re-summing.
+- \`get_client_trades\` is single-pair only; for multi-pair fill questions use \`get_historical_orders\`.
+
+\`get_instructions\` returns a categorized tool-name inventory.`;
+
 export function createServer(): McpServer {
-  const server = new McpServer({
-    name: "Revolut X",
-    version: "1.0.40",
-  });
+  const server = new McpServer(
+    {
+      name: "Revolut X",
+      version: "1.0.40",
+    },
+    {
+      instructions: SERVER_INSTRUCTIONS,
+    },
+  );
 
   registerAllTools(server);
 

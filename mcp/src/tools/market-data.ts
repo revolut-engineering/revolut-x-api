@@ -3,11 +3,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Currency, CurrencyPair } from "@revolut/revolut-x-api";
 import {
   formatDate,
-  formatDescription,
   handleApiError,
-  LARGE_DATASET_HINT,
   parseDateRange,
-  REQUIRE_COMPLETE_DATA_HINT,
   textResult,
   validateResolution,
   validateSymbol,
@@ -24,10 +21,9 @@ export function registerMarketDataTools(server: McpServer): void {
     "get_currencies",
     {
       title: "List Currencies",
-      description: formatDescription(
-        "Get all available currencies on Revolut X exchange. Returns currency symbols, names, asset types (crypto/fiat), decimal precision, and status.",
-        [REQUIRE_COMPLETE_DATA_HINT, LARGE_DATASET_HINT],
-      ),
+      description:
+        "List every currency available on Revolut X (crypto and fiat) with symbol, name, asset type, decimal precision, and status. " +
+        "Reference metadata — not needed for order, trade, or volume queries.",
       annotations: {
         title: "List Currencies",
         readOnlyHint: true,
@@ -73,7 +69,8 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "List Currency Pairs",
       description:
-        "Get all tradeable currency pairs on Revolut X exchange. Returns pair details including base/quote currencies, step sizes, min/max order sizes, and status.",
+        "List every tradeable currency pair on Revolut X with base/quote currencies, step sizes, min/max order sizes, and status. " +
+        "Reference metadata — not needed for order, trade, or volume queries.",
       annotations: {
         title: "List Currency Pairs",
         readOnlyHint: true,
@@ -122,7 +119,8 @@ export function registerMarketDataTools(server: McpServer): void {
     "get_order_book",
     {
       title: "Get Order Book",
-      description: "Get the current order book for a trading pair.",
+      description:
+        "Get the LIVE order book (bid/ask depth) for a trading pair. Use for current spread, depth, and immediate-market structure — not historical price action.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         limit: z
@@ -198,7 +196,8 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Tickers",
       description:
-        "Get current ticker data for trading pairs. Returns bid, ask, mid, and last price for each pair.",
+        "Get the LIVE bid/ask/mid/last-price snapshot for one or more trading pairs. " +
+        "For historical price action use `get_candles`; this tool returns only a current snapshot.",
       inputSchema: {
         symbols: z
           .array(z.string())
@@ -251,9 +250,9 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Candlestick Data",
       description:
-        "Get OHLCV candlestick data for a trading pair. " +
-        "Always returns 1 batch query. If the requested date range is too old or contains " +
-        "more than 50,000 candles, it defaults to returning the last 50,000 candles from the current timestamp.",
+        "Get historical OHLCV candlestick data for a trading pair. Use for technical analysis, charting, or backtest input. " +
+        "Returns up to 50,000 candles in one call; older or wider ranges are clamped to the most recent 50,000 candles, " +
+        "and the NOTE TO LLM in the output spells out which case applied.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         resolution: z
@@ -374,10 +373,10 @@ export function registerMarketDataTools(server: McpServer): void {
   server.registerTool(
     "get_public_trades",
     {
-      title: "Get public Trades",
+      title: "Get Public Trades",
       description:
-        "Get public trade history for a trading pair. " +
-        "Handles all pagination internally — NEVER call this tool multiple times to paginate or split date ranges. " +
+        "Get public trade history (every market trade by anyone) for a trading pair. " +
+        "Use for tape-reading, micro-structure analysis, or volume profiling. For your own fills use `get_client_trades` or `get_historical_orders`. " +
         "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 trades). " +
         "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit.",
       inputSchema: {
@@ -407,7 +406,7 @@ export function registerMarketDataTools(server: McpServer): void {
           ),
       },
       annotations: {
-        title: "Get All Trades",
+        title: "Get Public Trades",
         readOnlyHint: true,
         destructiveHint: false,
         openWorldHint: true,

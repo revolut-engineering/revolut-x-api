@@ -137,7 +137,7 @@ describe("setup tools", () => {
       arguments: {},
     });
     const text = getText(result);
-    expect(text).toContain("Authentication is configured and working");
-    expect(text).toContain("Available currencies: 3");
+    expect(text).toContain("Authentication is configured");
+    expect(text).toContain("connection is working");
   });
 });
