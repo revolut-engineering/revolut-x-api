@@ -30,7 +30,7 @@ jobs:
         id: modules-cache
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - name: Install all dependencies
         if: steps.modules-cache.outputs.cache-hit != 'true'
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         id: api-dist-cache
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -112,7 +112,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - run: npm run typecheck
 
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -166,7 +166,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -226,7 +226,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -263,7 +263,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -294,7 +294,7 @@ jobs:
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: node_modules
-          key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-modules-v2-${{ hashFiles('package-lock.json') }}
 
       - name: Generate SBOMs
         run: |
