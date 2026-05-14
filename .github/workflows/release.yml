@@ -51,6 +51,8 @@ jobs:
               '.cursor-plugin/plugin.json',
               'gemini-extension.json',
               'plugins/revolut-x/.codex-plugin/plugin.json',
+              'plugins/revolut-x-clawhub/package.json',
+              'plugins/revolut-x-clawhub/openclaw.plugin.json',
             ];
             for (const f of files) {
               const m = JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -152,6 +154,8 @@ jobs:
             .cursor-plugin/plugin.json \
             gemini-extension.json \
             plugins/revolut-x/.codex-plugin/plugin.json \
+            plugins/revolut-x-clawhub/package.json \
+            plugins/revolut-x-clawhub/openclaw.plugin.json \
             package-lock.json
           git commit -m "chore: bump version to ${VERSION} [skip ci]" || echo "No changes to commit"
           git fetch origin master
