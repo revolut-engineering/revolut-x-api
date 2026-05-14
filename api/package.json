@@ -1,6 +1,6 @@
 {
   "name": "@revolut/revolut-x-api",
-  "version": "1.0.36",
+  "version": "1.0.40",
   "description": "Typed HTTP client for the Revolut X Exchange REST API",
   "keywords": [
     "api",

@@ -10,7 +10,7 @@
       "source": "./",
       "description": "Explains AI assistants how to use the revx CLI for crypto trading, market data, monitoring, and grid bots",
       "category": "trading",
-      "version": "1.0.36"
+      "version": "1.0.40"
     }
   ]
 }
