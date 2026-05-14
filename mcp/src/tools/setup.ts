@@ -150,7 +150,7 @@ export function registerSetupTools(server: McpServer): void {
     {
       title: "Check Auth Status",
       description:
-        "Check if Revolut X API authentication is configured and working. Tests the connection by fetching available currencies.",
+        "Check whether Revolut X API authentication is configured and the connection is working.",
       annotations: {
         title: "Check Auth Status",
         readOnlyHint: true,
@@ -177,16 +177,10 @@ export function registerSetupTools(server: McpServer): void {
       try {
         const { getRevolutXClient } = await import("../server.js");
         const client = getRevolutXClient();
-        const result = await client.getCurrencies();
-        const count =
-          result && typeof result === "object"
-            ? Object.keys(result).length
-            : "unknown";
+        await client.getCurrencies();
         return textResult(
-          "Authentication is configured and working!\n\n" +
-            `Successfully connected to Revolut X API.\n` +
-            `Available currencies: ${count}\n\n` +
-            "You can now use all trading and market data tools.",
+          "Authentication is configured and the connection is working. " +
+            "You can now use the data tools.",
         );
       } catch (exc) {
         return textResult(

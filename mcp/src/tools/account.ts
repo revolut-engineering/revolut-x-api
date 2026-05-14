@@ -7,7 +7,7 @@ export function registerAccountTools(server: McpServer): void {
     {
       title: "Get Account Balances",
       description:
-        "Get all crypto exchange balances for your Revolut X account. Returns a list of all currencies with available, reserved, and total amounts.",
+        "Get your Revolut X account balances across all currencies (crypto and fiat). Returns available, reserved, staked, and total amounts per currency.",
       annotations: {
         title: "Get Account Balances",
         readOnlyHint: true,

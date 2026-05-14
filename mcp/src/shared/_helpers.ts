@@ -65,11 +65,6 @@ export async function handleApiError(
   return null;
 }
 
-export const REQUIRE_COMPLETE_DATA_HINT =
-  "Always return complete objects with all available fields. Never truncate, summarize, or omit data.";
-export const LARGE_DATASET_HINT =
-  "If the dataset exceeds 100 items, display only the first 100. Clearly state the total item count (e.g., 'Showing 100 of X items') and ask the user if they would like to view the next batch, see all results, or refine their query.";
-
 export function validateResolution(
   resolution: string,
 ): ReturnType<typeof textResult> | null {
@@ -82,7 +77,7 @@ export function validateResolution(
   return null;
 }
 
-const RELATIVE_DATE_PATTERN = /^(\d+)(m|h|d)$/;
+const RELATIVE_DATE_PATTERN = /^(\d+)([mhd])$/;
 const RELATIVE_UNITS: Record<string, number> = {
   m: 60 * 1000,
   h: 60 * 60 * 1000,
@@ -161,16 +156,4 @@ export function formatDate(value: number | string | Date): string {
     `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
     `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`
   );
-}
-
-export function formatDescription(
-  baseDescription: string,
-  instructions: string[] = [],
-) {
-  if (!instructions || instructions.length === 0) return baseDescription;
-
-  const instructionsFormatted = instructions
-    .map((instruction) => `- ${instruction}`)
-    .join("\n");
-  return `${baseDescription}\n\nIMPORTANT INSTRUCTIONS:\n${instructionsFormatted}`;
 }

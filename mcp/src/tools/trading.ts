@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Decimal } from "decimal.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   ACTIVE_ORDERS_API_LIMIT,
@@ -14,6 +15,31 @@ import {
   textResult,
   validateSymbol,
 } from "../shared/_helpers.js";
+
+function quoteCurrencyOf(symbol: string): string | null {
+  const parts = symbol.split("-");
+  if (parts.length !== 2 || !parts[1]) return null;
+  return parts[1].toUpperCase();
+}
+
+function volumeByQuoteCurrency(
+  orders: Array<{ symbol: string; status: string; filled_amount?: string }>,
+): { totals: Map<string, Decimal>; unrecognized: string[] } {
+  const totals = new Map<string, Decimal>();
+  const unrecognized: string[] = [];
+  for (const o of orders) {
+    if (o.status !== "filled" && o.status !== "partially_filled") continue;
+    if (!o.filled_amount) continue;
+    const quote = quoteCurrencyOf(o.symbol);
+    if (!quote) {
+      unrecognized.push(o.symbol);
+      continue;
+    }
+    const prev = totals.get(quote) ?? new Decimal(0);
+    totals.set(quote, prev.plus(new Decimal(o.filled_amount)));
+  }
+  return { totals, unrecognized };
+}
 
 function formatTrigger(
   label: string,
@@ -57,7 +83,8 @@ export function registerTradingTools(server: McpServer): void {
           .array(z.enum(["pending_new", "new", "partially_filled"]))
           .optional()
           .describe(
-            'Filter by order state: "pending_new", "new", "partially_filled".',
+            'Filter by order state: "pending_new", "new", "partially_filled". ' +
+              'Omit to see all open orders; pass ["partially_filled"] to focus on orders with executions in flight.',
           ),
         order_types: z
           .array(z.enum(["limit", "conditional", "tpsl"]))
@@ -156,16 +183,12 @@ export function registerTradingTools(server: McpServer): void {
     {
       title: "Get Historical Orders",
       description:
-        "Get historical (filled, cancelled, rejected) orders on Revolut X. " +
-        "Handles all pagination internally — NEVER call this tool multiple times to paginate or split date ranges. " +
-        "If only start_date is provided, returns ALL orders from that date until now. " +
-        "If neither date is provided, defaults to the last 30 days. " +
-        "If the user asks for 'all orders' or 'all historical orders', set start_date to 2024-05-07 to fetch everything. " +
-        "The earliest supported start_date is 2024-05-07 — any earlier date is clamped to this. " +
-        "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 orders). " +
-        "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit. " +
-        "ALWAYS tell the user the date range used in your response. " +
-        "The symbols parameter accepts multiple trading pairs at once — pass an array to filter by several symbols in one call, or omit it to fetch orders for all pairs.",
+        "Get historical orders (filled, partially_filled, cancelled, rejected, replaced) for analytics: trading volume, fills, P&L, and any past-activity questions. " +
+        "Returns ALL pairs in one call when `symbols` is omitted — prefer this over `get_client_trades` for any multi-pair or all-pair query. " +
+        'For trading-volume or activity questions, pass `order_states: ["filled","partially_filled"]` — omitting the filter also returns cancelled/rejected orders which carry zero `filled_amount` and add noise. ' +
+        "When the user asks about volume by quote currency, the tool output contains a pre-aggregated totals block — use it verbatim instead of re-summing per-order rows. " +
+        "Defaults: omitted dates → last 30 days; for 'all orders ever' set `start_date` to 2024-05-07 (the earliest supported — anything earlier is clamped). " +
+        "If `totalLimit` is omitted, the result may exceed 10,000 orders — ask the user to confirm or suggest a reasonable limit first.",
       inputSchema: {
         symbols: z
           .array(z.string())
@@ -185,7 +208,9 @@ export function registerTradingTools(server: McpServer): void {
           )
           .optional()
           .describe(
-            'Filter by order state: "filled", "cancelled", "rejected", "replaced", "partially_filled".',
+            'Filter by order state: "filled", "cancelled", "rejected", "replaced", "partially_filled". ' +
+              'Recommended for any volume or activity query: ["filled","partially_filled"] — these are the only states that carry filled_amount. ' +
+              "Omitting this filter returns ALL states including cancelled/rejected with zero filled_amount.",
           ),
         order_types: z
           .array(z.enum(["market", "limit"]))
@@ -294,10 +319,15 @@ export function registerTradingTools(server: McpServer): void {
 
       const lines = [`Historical orders (${displayOrders.length} returned):\n`];
       for (const o of displayOrders) {
+        const quote = quoteCurrencyOf(o.symbol);
         const priceLine = o.price ? `  Price: ${o.price}\n` : "";
         const avgFillLine = o.average_fill_price
           ? `  Avg Fill Price: ${o.average_fill_price}\n`
           : "";
+        const filledAmountLine = o.filled_amount
+          ? `  Filled amount: ${o.filled_amount}${quote ? ` ${quote}` : ""}\n`
+          : "";
+        const amountLine = o.amount ? `  Amount: ${o.amount}\n` : "";
         lines.push(
           `  Order ID: ${o.id}\n` +
             `  Client Order ID: ${o.client_order_id}\n` +
@@ -307,9 +337,9 @@ export function registerTradingTools(server: McpServer): void {
             priceLine +
             avgFillLine +
             `  Quantity: ${o.quantity}\n` +
-            (o.amount ? `  Amount: ${o.amount}\n` : "") +
+            amountLine +
             `  Filled: ${o.filled_quantity}\n` +
-            (o.filled_amount ? `  Filled amount: ${o.filled_amount}\n` : "") +
+            filledAmountLine +
             `  Remaining: ${o.leaves_quantity}\n` +
             `  Status: ${o.status}\n` +
             `  Time in force: ${o.time_in_force}\n` +
@@ -317,10 +347,29 @@ export function registerTradingTools(server: McpServer): void {
         );
       }
 
+      const { totals, unrecognized } = volumeByQuoteCurrency(displayOrders);
+      if (totals.size > 0 || unrecognized.length > 0) {
+        lines.push("");
+        lines.push(
+          "─── Volume by quote currency (sum of filled_amount for filled + partially_filled) ───",
+        );
+        for (const quote of [...totals.keys()].sort()) {
+          lines.push(`  ${quote}: ${totals.get(quote)!.toFixed(2)}`);
+        }
+        if (unrecognized.length > 0) {
+          const sample = [...new Set(unrecognized)].slice(0, 5).join(", ");
+          const ellipsis = unrecognized.length > 5 ? ", ..." : "";
+          lines.push(
+            `  (${unrecognized.length} order(s) had an unrecognized symbol format and are NOT in the totals: ${sample}${ellipsis})`,
+          );
+        }
+      }
+
       lines.push("");
       lines.push(
         `*** NOTE TO LLM: Complete results for ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}. ` +
           "This is the full dataset — do NOT call this tool again to paginate. " +
+          "If the user asked about volume by quote currency, use the totals block above verbatim — do not recompute from per-order rows. " +
           "ALWAYS ask the user if they need a wider date range (earliest available: 2024-05-07). ***",
       );
 
@@ -333,15 +382,11 @@ export function registerTradingTools(server: McpServer): void {
     {
       title: "Get Trade History",
       description:
-        "Get your personal trade history (fills) for a specific trading pair. " +
-        "Handles all pagination internally — NEVER call this tool multiple times to paginate or split date ranges. " +
-        "If only start_date is provided, returns ALL trades from that date until now. " +
-        "If neither date is provided, defaults to the last 30 days. " +
-        "If the user asks for 'all trades' or 'all trade history', set start_date to 2024-05-07 to fetch everything. " +
-        "The earliest supported start_date is 2024-05-07 — any earlier date is clamped to this. " +
-        "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 trades). " +
-        "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit. " +
-        "ALWAYS tell the user the date range used in your response.",
+        "Get personal trade fills for a SINGLE trading pair only. " +
+        "For multi-pair, all-pair, or trading-volume questions, use `get_historical_orders` instead — one call covers every pair and includes a pre-aggregated volume-by-quote-currency block. " +
+        "Use this tool when the user explicitly wants the raw fill-level stream for a specific pair (individual trade IDs, maker/taker flags, fill timestamps). " +
+        "Defaults: omitted dates → last 30 days; for 'all trades ever' set `start_date` to 2024-05-07 (the earliest supported — anything earlier is clamped). " +
+        "If `totalLimit` is omitted, the result may exceed 10,000 trades — ask the user to confirm or suggest a reasonable limit first.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         start_date: z
@@ -465,7 +510,8 @@ export function registerTradingTools(server: McpServer): void {
     {
       title: "Get Order Fills",
       description:
-        "Get all fills (trade executions) for a specific order by its order ID.",
+        "Get all fills (individual trade executions) for a specific order by its order ID. " +
+        "For fills across many orders or a date range, use `get_client_trades` instead.",
       inputSchema: {
         order_id: z.string().describe("The order ID to retrieve fills for."),
       },
