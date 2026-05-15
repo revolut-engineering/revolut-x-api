@@ -351,6 +351,18 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Split investment across buy and sell levels. When true, market-buys base for sell levels above the starting price — best for ranging/sideways markets. When false (default), all capital funds buy levels only — best for trending markets.",
           ),
+        trailing_up: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Simulate trailing up: rebuild the grid when price exits the upper boundary. Best for trending markets.",
+          ),
+        stop_loss_price: z
+          .number()
+          .default(0)
+          .describe(
+            "Absolute price at which stop-loss triggers. Must be below the lowest grid level. 0 disables stop-loss (default). Does not change when trailing-up shifts the grid.",
+          ),
       },
       annotations: {
         title: "Run Grid Backtest",
@@ -367,6 +379,8 @@ export function registerBacktestTools(server: McpServer): void {
       resolution,
       days,
       split_investment,
+      trailing_up,
+      stop_loss_pct,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -411,6 +425,8 @@ export function registerBacktestTools(server: McpServer): void {
         rangeDec,
         investDec!,
         split_investment,
+        trailing_up,
+        stop_loss_pct,
       );
 
       return textResult(
@@ -476,6 +492,18 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Split investment across buy and sell levels. When true, market-buys base for sell levels above the starting price — best for ranging/sideways markets. When false (default), all capital funds buy levels only — best for trending markets.",
           ),
+        trailing_up: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Simulate trailing up: rebuild grid when price exits upper boundary. Best for trending markets.",
+          ),
+        stop_loss_pct: z
+          .number()
+          .default(0)
+          .describe(
+            "Stop simulation when price drops this percentage below the lower grid boundary. 0 disables stop-loss (default).",
+          ),
       },
       annotations: {
         title: "Optimize Grid Parameters",
@@ -493,6 +521,8 @@ export function registerBacktestTools(server: McpServer): void {
       range_pct_options,
       top_n,
       split_investment,
+      trailing_up,
+      stop_loss_pct,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -572,6 +602,8 @@ export function registerBacktestTools(server: McpServer): void {
         investDec!,
         actualDays,
         split_investment,
+        trailing_up,
+        stop_loss_pct,
       );
 
       return textResult(

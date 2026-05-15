@@ -188,6 +188,15 @@ export function renderDashboard(data: DashboardData): string {
       innerW,
     ),
   );
+  if (state.config.stopLoss) {
+    const slPrice = new Decimal(state.config.stopLoss);
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Stop-Loss".padEnd(14))}${chalk.red(fmtPrice(slPrice, cs))}`,
+        innerW,
+      ),
+    );
+  }
   lines.push(
     padLine(
       `  ${chalk.dim("Levels".padEnd(14))}${state.config.levels / 2} per side`,
@@ -215,6 +224,14 @@ export function renderDashboard(data: DashboardData): string {
     lines.push(
       padLine(
         `  ${chalk.dim("Profit/Grid".padEnd(14))}${fmtPrice(profitDollar, cs)} (${profitPct.toFixed(2)}%)`,
+        innerW,
+      ),
+    );
+  }
+  if (state.config.trailingUp) {
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Shifts".padEnd(14))}${state.shiftCount ?? 0}↑`,
         innerW,
       ),
     );
@@ -275,19 +292,19 @@ export function renderDashboard(data: DashboardData): string {
   let heldLevels = 0;
   let idleLevels = 0;
   for (const lv of state.levels) {
-    const hasSell = !!lv.sellOrderId;
-    const hasBuy = !!lv.buyOrderId;
-    const hasPos = lv.hasPosition;
-    const sellAbove =
-      lv.index + 1 < state.levels.length &&
-      !!state.levels[lv.index + 1]?.sellOrderId;
-    const isHeld = hasPos && !sellAbove;
+    const hasBuy = lv.buyOrderIds.length > 0;
+    const hasPos = lv.positions.length > 0;
+    const isSellTarget =
+      lv.index > 0 &&
+      state.levels[lv.index - 1].positions.some((p) => !!p.sellOrderId);
+    const hasUnsoldPos = hasPos && lv.positions.some((p) => !p.sellOrderId);
+    const hasSoldPos = hasPos && lv.positions.some((p) => !!p.sellOrderId);
 
-    if (hasSell) activeSells++;
-    else if (hasBuy) activeBuys++;
-    else if (isHeld) heldLevels++;
-    else if (hasPos && sellAbove) posLevels++;
-    else idleLevels++;
+    if (isSellTarget) activeSells++;
+    if (hasBuy) activeBuys++;
+    if (hasUnsoldPos) heldLevels++;
+    if (hasSoldPos && !hasUnsoldPos) posLevels++;
+    if (!hasBuy && !hasPos && !isSellTarget) idleLevels++;
   }
 
   lines.push(padLine("", innerW));
@@ -342,32 +359,47 @@ export function renderDashboard(data: DashboardData): string {
     let statusStr: string;
     let barStr: string;
 
-    // In the v2 model: sellOrderId on a level means a sell order at this level's price
-    // hasPosition means this level bought and holds base (sell is on the level above)
-    const hasSell = !!level.sellOrderId;
-    const hasBuy = !!level.buyOrderId;
-    const hasPos = level.hasPosition;
-    const sellAbove =
-      level.index + 1 < state.levels.length &&
-      !!state.levels[level.index + 1]?.sellOrderId;
-    const isHeld = hasPos && !sellAbove;
+    const hasBuy = level.buyOrderIds.length > 0;
+    const hasPos = level.positions.length > 0;
+    const buyBelow = level.index > 0 ? state.levels[level.index - 1] : null;
+    const sellPosBelow =
+      buyBelow?.positions.filter((p) => !!p.sellOrderId) ?? [];
+    const isSellTarget = sellPosBelow.length > 0;
+    const posUnsold = level.positions.filter((p) => !p.sellOrderId);
+    const isHeld = posUnsold.length > 0;
 
-    if (hasSell) {
-      const buyBelow = state.levels[level.index - 1];
-      const baseAmt = buyBelow?.hasPosition ? buyBelow.baseHeld : "";
+    if (isSellTarget) {
+      const totalBase = sellPosBelow.reduce(
+        (sum, p) => sum + parseFloat(p.baseHeld),
+        0,
+      );
+      const baseAmt = totalBase > 0 ? totalBase.toFixed(5) : "";
       barStr = chalk.red("\u2592\u2592\u2592\u2592\u2592");
       statusStr = baseAmt
         ? `${chalk.red("SELL")}  ${chalk.dim(baseAmt)}`
         : chalk.red("SELL");
+      if (hasBuy) statusStr += `  +${chalk.green("BUY")}`;
     } else if (hasBuy) {
       barStr = chalk.green("\u2592\u2592\u2592\u2592\u2592");
       statusStr = chalk.green("BUY");
+      if (isHeld) {
+        const base = posUnsold
+          .reduce((s, p) => s + parseFloat(p.baseHeld), 0)
+          .toFixed(5);
+        statusStr += `  ${chalk.yellow("HELD")} ${chalk.dim(base)}`;
+      }
     } else if (isHeld) {
+      const totalBase = posUnsold
+        .reduce((s, p) => s + parseFloat(p.baseHeld), 0)
+        .toFixed(5);
       barStr = chalk.yellow("\u2588\u2588\u2588\u2588\u2588");
-      statusStr = `${chalk.yellow("HELD")}  ${chalk.dim(level.baseHeld)}`;
-    } else if (hasPos && sellAbove) {
+      statusStr = `${chalk.yellow("HELD")}  ${chalk.dim(totalBase)}`;
+    } else if (hasPos) {
+      const totalBase = level.positions
+        .reduce((s, p) => s + parseFloat(p.baseHeld), 0)
+        .toFixed(5);
       barStr = chalk.green("\u2588\u2588\u2588\u2588\u2588");
-      statusStr = `${chalk.dim("POS")}   ${chalk.dim(level.baseHeld)}`;
+      statusStr = `${chalk.dim("POS")}   ${chalk.dim(totalBase)}`;
     } else {
       barStr = chalk.dim("\u00B7\u00B7\u00B7\u00B7\u00B7");
       statusStr = chalk.dim("\u2014");
@@ -403,12 +435,12 @@ export function renderDashboard(data: DashboardData): string {
   let totalBaseHeld = new Decimal(0);
   let costBasis = new Decimal(0);
   for (const lv of state.levels) {
-    if (lv.hasPosition) {
-      const held = new Decimal(lv.baseHeld);
+    for (const pos of lv.positions) {
+      const held = new Decimal(pos.baseHeld);
       totalBaseHeld = totalBaseHeld.plus(held);
       const cost =
-        lv.fillCost && lv.fillCost !== "0"
-          ? new Decimal(lv.fillCost)
+        pos.fillCost && pos.fillCost !== "0"
+          ? new Decimal(pos.fillCost)
           : held.times(new Decimal(lv.price));
       costBasis = costBasis.plus(cost);
     }
@@ -527,12 +559,12 @@ export function renderShutdownSummary(
   let totalBaseHeld = new Decimal(0);
   let costBasis = new Decimal(0);
   for (const lv of state.levels) {
-    if (lv.hasPosition) {
-      const held = new Decimal(lv.baseHeld);
+    for (const pos of lv.positions) {
+      const held = new Decimal(pos.baseHeld);
       totalBaseHeld = totalBaseHeld.plus(held);
       const cost =
-        lv.fillCost && lv.fillCost !== "0"
-          ? new Decimal(lv.fillCost)
+        pos.fillCost && pos.fillCost !== "0"
+          ? new Decimal(pos.fillCost)
           : held.times(new Decimal(lv.price));
       costBasis = costBasis.plus(cost);
     }

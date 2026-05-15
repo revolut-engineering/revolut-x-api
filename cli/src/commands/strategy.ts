@@ -126,6 +126,8 @@ async function handleBacktest(
     days: string;
     interval: string;
     split?: boolean;
+    trailingUp?: boolean;
+    stopLoss?: string;
     json?: boolean;
     output?: string;
   },
@@ -168,12 +170,32 @@ async function handleBacktest(
     chalk.gray(`  ↳ Running backtest on ${candles.length} candles...\n`),
   );
   const useSplit = opts.split === true;
+  const useTrailingUp = opts.trailingUp === true;
+  const stopLossPrice = opts.stopLoss
+    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
+    : 0;
+
+  if (stopLossPrice > 0) {
+    const startPrice = candles[0].open;
+    const lowestLevel = startPrice.times(new Decimal(1).minus(rangePct));
+    if (new Decimal(stopLossPrice).gte(lowestLevel)) {
+      printError(
+        `Stop-loss ${stopLossPrice} must be strictly below the lowest grid level ` +
+          `(~${lowestLevel.toFixed(2)} for ±${rangePct.times(100).toFixed(1)}% range around ` +
+          `start price ${startPrice.toFixed(2)}). Try a lower value.`,
+      );
+      process.exit(1);
+    }
+  }
+
   const result = runBacktest(
     candles,
     gridLevels,
     rangePct,
     investment,
     useSplit,
+    useTrailingUp,
+    stopLossPrice,
   );
 
   if (isJsonOutput(opts)) {
@@ -312,6 +334,16 @@ async function handleBacktest(
     (Math.pow(1 + returnPct.toNumber() / 100, 365 / days) - 1) * 100;
   const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
   console.log(pad("Annualized", annColor(`${annualizedPct.toFixed(2)}%`)));
+  if (useTrailingUp) {
+    console.log(pad("Trailing Up", chalk.cyan(`${result.trailingUpShifts} shifts`)));
+  }
+  if (stopLossPrice > 0) {
+    const slLabel = result.stopLossTriggered
+      ? chalk.red("triggered")
+      : chalk.green("not triggered");
+    const cs = getCurrSymbol(pair);
+    console.log(pad(`Stop-Loss (${cs}${stopLossPrice})`, slLabel));
+  }
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
 
   if (result.tradeLog.length > 0) {
@@ -373,6 +405,8 @@ async function handleOptimize(
     ranges: string;
     top: string;
     split?: boolean;
+    trailingUp?: boolean;
+    stopLoss?: string;
     json?: boolean;
     output?: string;
   },
@@ -448,6 +482,22 @@ async function handleOptimize(
     ),
   );
   const useSplit = opts.split === true;
+  const useTrailingUp = opts.trailingUp === true;
+  const stopLossPrice = opts.stopLoss
+    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
+    : 0;
+
+  if (stopLossPrice > 0) {
+    const startPrice = candles[0].open;
+    if (new Decimal(stopLossPrice).gte(startPrice)) {
+      printError(
+        `Stop-loss ${stopLossPrice} must be below the backtest start price ` +
+          `(${startPrice.toFixed(2)}). Try a lower value.`,
+      );
+      process.exit(1);
+    }
+  }
+
   const results = optimizeGridParams(
     candles,
     levelsList,
@@ -455,6 +505,8 @@ async function handleOptimize(
     investment,
     days,
     useSplit,
+    useTrailingUp,
+    stopLossPrice,
   );
 
   if (isJsonOutput(opts)) {
@@ -562,6 +614,8 @@ async function handleRun(
     interval: string;
     dryRun?: boolean;
     reset?: boolean;
+    trailingUp?: boolean;
+    stopLoss?: string;
   },
 ): Promise<void> {
   pair = validatePair(pair);
@@ -586,6 +640,8 @@ async function handleRun(
     intervalSec,
     dryRun: opts.dryRun === true,
     reset: opts.reset === true,
+    trailingUp: opts.trailingUp === true,
+    stopLoss: opts.stopLoss || undefined,
   };
 
   const bot = new ForegroundGridBot(config);
@@ -651,6 +707,8 @@ Examples:
       "1m",
     )
     .option("--split", "Market-buy base for sell levels at start")
+    .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
+    .option("--stop-loss <price>", "Stop when price reaches this absolute value (must be below the lowest grid level)")
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleBacktest);
@@ -673,6 +731,8 @@ Examples:
     )
     .option("--top <n>", "Number of top results to show", "10")
     .option("--split", "Market-buy base for sell levels at start")
+    .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
+    .option("--stop-loss <price>", "Stop when price reaches this absolute value (must be below the lowest grid level)")
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleOptimize);
@@ -694,5 +754,13 @@ Examples:
     .option("--interval <sec>", "Polling interval in seconds", "10")
     .option("--dry-run", "Simulate without placing real orders")
     .option("--reset", "Discard saved state and start a fresh grid")
+    .option(
+      "--trailing-up",
+      "Rebuild grid around current price when upper boundary is breached",
+    )
+    .option(
+      "--stop-loss <price>",
+      "Stop bot when price reaches this absolute value (must be below the lowest grid level)",
+    )
     .action(handleRun);
 }
