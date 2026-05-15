@@ -171,7 +171,23 @@ async function handleBacktest(
   );
   const useSplit = opts.split === true;
   const useTrailingUp = opts.trailingUp === true;
-  const stopLossPct = opts.stopLoss ? parseFloat(opts.stopLoss) : 0;
+  const stopLossPrice = opts.stopLoss
+    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
+    : 0;
+
+  if (stopLossPrice > 0) {
+    const startPrice = candles[0].open;
+    const lowestLevel = startPrice.times(new Decimal(1).minus(rangePct));
+    if (new Decimal(stopLossPrice).gte(lowestLevel)) {
+      printError(
+        `Stop-loss ${stopLossPrice} must be strictly below the lowest grid level ` +
+          `(~${lowestLevel.toFixed(2)} for ±${rangePct.times(100).toFixed(1)}% range around ` +
+          `start price ${startPrice.toFixed(2)}). Try a lower value.`,
+      );
+      process.exit(1);
+    }
+  }
+
   const result = runBacktest(
     candles,
     gridLevels,
@@ -179,7 +195,7 @@ async function handleBacktest(
     investment,
     useSplit,
     useTrailingUp,
-    stopLossPct,
+    stopLossPrice,
   );
 
   if (isJsonOutput(opts)) {
@@ -321,11 +337,12 @@ async function handleBacktest(
   if (useTrailingUp) {
     console.log(pad("Trailing Up", chalk.cyan(`${result.trailingUpShifts} shifts`)));
   }
-  if (stopLossPct > 0) {
+  if (stopLossPrice > 0) {
     const slLabel = result.stopLossTriggered
       ? chalk.red("triggered")
       : chalk.green("not triggered");
-    console.log(pad(`Stop-Loss (${stopLossPct}%)`, slLabel));
+    const cs = getCurrSymbol(pair);
+    console.log(pad(`Stop-Loss (${cs}${stopLossPrice})`, slLabel));
   }
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
 
@@ -466,7 +483,21 @@ async function handleOptimize(
   );
   const useSplit = opts.split === true;
   const useTrailingUp = opts.trailingUp === true;
-  const stopLossPct = opts.stopLoss ? parseFloat(opts.stopLoss) : 0;
+  const stopLossPrice = opts.stopLoss
+    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
+    : 0;
+
+  if (stopLossPrice > 0) {
+    const startPrice = candles[0].open;
+    if (new Decimal(stopLossPrice).gte(startPrice)) {
+      printError(
+        `Stop-loss ${stopLossPrice} must be below the backtest start price ` +
+          `(${startPrice.toFixed(2)}). Try a lower value.`,
+      );
+      process.exit(1);
+    }
+  }
+
   const results = optimizeGridParams(
     candles,
     levelsList,
@@ -475,7 +506,7 @@ async function handleOptimize(
     days,
     useSplit,
     useTrailingUp,
-    stopLossPct,
+    stopLossPrice,
   );
 
   if (isJsonOutput(opts)) {
@@ -610,7 +641,7 @@ async function handleRun(
     dryRun: opts.dryRun === true,
     reset: opts.reset === true,
     trailingUp: opts.trailingUp === true,
-    stopLoss: opts.stopLoss ? parseFloat(opts.stopLoss) : undefined,
+    stopLoss: opts.stopLoss || undefined,
   };
 
   const bot = new ForegroundGridBot(config);
@@ -677,7 +708,7 @@ Examples:
     )
     .option("--split", "Market-buy base for sell levels at start")
     .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
-    .option("--stop-loss <pct>", "Stop simulation when price drops this % below lower boundary")
+    .option("--stop-loss <price>", "Stop when price reaches this absolute value (must be below the lowest grid level)")
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleBacktest);
@@ -701,7 +732,7 @@ Examples:
     .option("--top <n>", "Number of top results to show", "10")
     .option("--split", "Market-buy base for sell levels at start")
     .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
-    .option("--stop-loss <pct>", "Stop simulation when price drops this % below lower boundary")
+    .option("--stop-loss <price>", "Stop when price reaches this absolute value (must be below the lowest grid level)")
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleOptimize);
@@ -728,8 +759,8 @@ Examples:
       "Rebuild grid around current price when upper boundary is breached",
     )
     .option(
-      "--stop-loss <pct>",
-      "Stop bot when price drops this % below the lower grid boundary",
+      "--stop-loss <price>",
+      "Stop bot when price reaches this absolute value (must be below the lowest grid level)",
     )
     .action(handleRun);
 }

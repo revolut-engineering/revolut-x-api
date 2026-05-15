@@ -35,7 +35,7 @@ export interface GridBotConfig {
   dryRun: boolean;
   reset: boolean;
   trailingUp: boolean;
-  stopLoss?: number;
+  stopLoss?: string;
 }
 
 const FILLED_STATUSES = new Set(["filled"]);
@@ -675,6 +675,18 @@ export class ForegroundGridBot {
       });
     }
 
+    // Validate stop-loss: must be strictly below the lowest grid level
+    if (config.stopLoss) {
+      const slPrice = new Decimal(config.stopLoss);
+      const lowestLevel = new Decimal(levels[0].price);
+      if (slPrice.gte(lowestLevel)) {
+        throw new Error(
+          `Stop-loss price (${slPrice.toFixed(2)}) must be strictly below ` +
+            `the lowest grid level (${lowestLevel.toFixed(2)}). `,
+        );
+      }
+    }
+
     // Determine sell levels for split mode (strictly above current price)
     const sellLevelIndices = new Set<number>();
     if (config.splitInvestment) {
@@ -1247,10 +1259,8 @@ export class ForegroundGridBot {
     this._previousPrice = this._currentPrice;
     this._currentPrice = currentPrice;
 
-    if (this._config.stopLoss && this._config.stopLoss > 0) {
-      const stopLossPrice = new Decimal(state.levels[0].price).times(
-        1 - this._config.stopLoss / 100,
-      );
+    if (this._config.stopLoss) {
+      const stopLossPrice = new Decimal(this._config.stopLoss);
       if (currentPrice.lte(stopLossPrice)) {
         await this._triggerStopLoss(currentPrice);
         return;
