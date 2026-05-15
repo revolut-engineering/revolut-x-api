@@ -17,7 +17,7 @@ import {
 } from "../shared/_helpers.js";
 
 function quoteCurrencyOf(symbol: string): string | null {
-  const parts = symbol.split("-");
+  const parts = symbol.split(/[-/]/);
   if (parts.length !== 2 || !parts[1]) return null;
   return parts[1].toUpperCase();
 }
