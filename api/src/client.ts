@@ -10,7 +10,7 @@ import { loadPrivateKey } from "./auth/keypair.js";
 import { loadCredentials } from "./auth/index.js";
 import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
 import { type LogCallback, Logger } from "./logging/logger.js";
-import { placeOrderSchema } from "./validation/schemas.js";
+import { placeOrderSchema, replaceOrderSchema } from "./validation/schemas.js";
 import type { AccountBalance } from "./types/account.js";
 import type { CurrencyMap, CurrencyPairMap } from "./types/config.js";
 import {
@@ -20,6 +20,7 @@ import {
   OrderDetails,
   OrderPlacementResult,
   PlaceOrderParams,
+  ReplaceOrderParams,
 } from "./types/orders.js";
 import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
 import {
@@ -365,6 +366,38 @@ export class RevolutXClient {
     }
 
     return response;
+  }
+
+  async replaceOrder(
+    venueOrderId: string,
+    params: ReplaceOrderParams,
+  ): Promise<DataResponse<OrderPlacementResult>> {
+    this.requireAuth();
+
+    const validation = replaceOrderSchema.safeParse(params);
+    if (!validation.success) {
+      throw new ValidationError(
+        "Invalid replace order parameters",
+        validation.error.errors,
+      );
+    }
+
+    const body: Record<string, unknown> = {
+      client_order_id: params.clientOrderId,
+    };
+    if (params.price !== undefined) body.price = params.price;
+    if (params.baseSize !== undefined) body.base_size = params.baseSize;
+    if (params.quoteSize !== undefined) body.quote_size = params.quoteSize;
+    if (params.executionInstructions !== undefined) {
+      body.execution_instructions = params.executionInstructions;
+    }
+
+    return this.request<DataResponse<OrderPlacementResult>>(
+      "PUT",
+      `/orders/${venueOrderId}`,
+      undefined,
+      body,
+    );
   }
 
   async cancelOrder(venueOrderId: string): Promise<void> {

@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { randomUUID } from "node:crypto";
 import chalk from "chalk";
 import {
   type Order,
@@ -156,6 +157,10 @@ Examples:
   $ revx order get <order-id>                                 Get order details
   $ revx order cancel <order-id>                              Cancel an order
   $ revx order cancel --all                                   Cancel all open orders
+  $ revx order replace <order-id> --price 96000               Replace order limit price
+  $ revx order replace <order-id> --qty 0.002                 Replace order qty (amount recalculated)
+  $ revx order replace <order-id> --quote 150                 Replace order quote amount
+  $ revx order replace <order-id> --allow-taker               Replace order to allow taker
   $ revx order fills <order-id>                               Get order fills`,
     );
 
@@ -541,6 +546,103 @@ Examples:
         handleError(err);
       }
     });
+
+  order
+    .command("replace <order-id>")
+    .description(
+      "Replace (modify) an existing order. Provide at least one of --price, --qty, --quote, --post-only, --allow-taker.",
+    )
+    .option("--price <price>", "New limit price")
+    .option(
+      "--qty <amount>",
+      "New quantity in base currency (amount recalculated server-side)",
+    )
+    .option(
+      "--quote <amount>",
+      "New amount in quote currency (qty recalculated server-side)",
+    )
+    .option(
+      "--client-order-id <id>",
+      "Client order ID for the replacement (auto-generated if omitted)",
+    )
+    .option("--post-only", "Set execution_instructions to [post_only]")
+    .option(
+      "--allow-taker",
+      "Set execution_instructions to [allow_taker] explicitly",
+    )
+    .option("--json", "Output as JSON")
+    .option("--output <format>", "Output format (table|json)", "table")
+    .action(
+      async (
+        orderId: string,
+        opts: {
+          price?: string;
+          qty?: string;
+          quote?: string;
+          clientOrderId?: string;
+          postOnly?: boolean;
+          allowTaker?: boolean;
+          json?: boolean;
+          output?: string;
+        },
+      ) => {
+        try {
+          if (opts.qty && opts.quote) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --qty or --quote, not both.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.postOnly && opts.allowTaker) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --post-only or --allow-taker, not both.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (
+            !opts.price &&
+            !opts.qty &&
+            !opts.quote &&
+            !opts.postOnly &&
+            !opts.allowTaker
+          ) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --post-only, --allow-taker.")}`,
+            );
+            process.exit(1);
+          }
+
+          const client = getClient({ requireAuth: true });
+
+          const params: Parameters<typeof client.replaceOrder>[1] = {
+            clientOrderId: opts.clientOrderId ?? randomUUID(),
+          };
+          if (opts.price) params.price = opts.price;
+          if (opts.qty) params.baseSize = opts.qty;
+          if (opts.quote) params.quoteSize = opts.quote;
+          if (opts.postOnly) params.executionInstructions = ["post_only"];
+          else if (opts.allowTaker)
+            params.executionInstructions = ["allow_taker"];
+
+          const result = await client.replaceOrder(orderId, params);
+
+          if (isJsonOutput(opts)) {
+            printJson(result);
+          } else {
+            printSuccess(`✓ Order replaced successfully.\n`);
+            printKeyValue([
+              ["Venue Order ID", chalk.white.bold(result.data.venue_order_id)],
+              ["Client Order ID", result.data.client_order_id],
+              ["State", chalk.yellow(result.data.state)],
+            ]);
+          }
+        } catch (err) {
+          handleError(err);
+        }
+      },
+    );
 
   order
     .command("fills <order-id>")

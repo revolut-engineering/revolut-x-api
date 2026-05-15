@@ -1,14 +1,14 @@
 ---
 name: revx-trading
 description: >
-  Revolut X order placement and cancellation. Use when the user asks to "place an order",
-  "buy BTC", "sell ETH", "market order", "limit order", "cancel order", "cancel all orders",
-  or runs revx order place or revx order cancel commands.
+  Revolut X order placement, replacement and cancellation. Use when the user asks to "place an order",
+  "buy BTC", "sell ETH", "market order", "limit order", "replace order", "modify order",
+  "cancel order", "cancel all orders", or runs revx order place, revx order replace or revx order cancel commands.
 ---
 
-# Trading (`revx order place` / `revx order cancel`)
+# Trading (`revx order place` / `revx order replace` / `revx order cancel`)
 
-> Place market and limit orders, cancel open orders.
+> Place market and limit orders, replace (modify) open orders, cancel open orders.
 
 > **Auth required.** Make sure `revx` is installed and configured before running these commands. If any command fails with an auth-related error — `Auth not configured`, `No private key found`, `Authentication failed (401)`, `Invalid signature`, `insecure permissions`, or a missing key/config file at `~/.config/revolut-x/` — **invoke the `revx-auth` skill immediately and apply the fix yourself.** Do not interrupt the user to ask them to run setup. Only escalate to the user for steps only they can perform (pasting the API key, registering the public key in their Revolut X profile, choosing a passphrase). After the fix, retry the original command.
 
@@ -22,7 +22,7 @@ Symbols use `BASE-QUOTE` format with a dash: `BTC-USD`, `ETH-EUR`, `SOL-USD`. Ch
 
 ### Human Confirmation Required
 
-**NEVER execute `revx order place` or `revx order cancel` without explicit user confirmation.** These commands move real money.
+**NEVER execute `revx order place`, `revx order replace`, or `revx order cancel` without explicit user confirmation.** These commands move real money.
 
 Before running any order command, present a confirmation summary to the user:
 
@@ -87,6 +87,51 @@ revx order place BTC-USD buy --quote 500 --market
 | `--post-only` | Post-only execution (limit orders only) |
 
 Must specify either `--qty` or `--quote` (not both).
+
+---
+
+## Replace (Modify) Orders
+
+Updates an existing open order in place. Same URL as cancel, but with `PUT`.
+
+```bash
+# Change limit price
+revx order replace <order-id> --price 96000
+
+# Change quantity (amount is recalculated server-side)
+revx order replace <order-id> --qty 0.002
+
+# Change quote amount (qty is recalculated server-side)
+revx order replace <order-id> --quote 150
+
+# Explicitly allow taker execution (must be set explicitly)
+revx order replace <order-id> --allow-taker
+
+# Switch to post-only
+revx order replace <order-id> --post-only
+
+# Combine — re-price and re-size
+revx order replace <order-id> --price 96000 --qty 0.002
+```
+
+**Behavior:**
+- Only fields you pass change; everything else stays as-is.
+- If price changes on a `buy` and only one of qty/amount is provided, the amount stays and qty is recalculated. For `sell`, the opposite. If you change qty, amount is recalculated (and vice versa).
+- `--allow-taker` must be set **explicitly** — it is never inferred.
+- **The order ID changes.** After replace, the original order is closed and a new order is created with a new `venue_order_id` (returned in the response). The original ID is preserved on the new order as `previous_order_id`. Use the new ID for any further cancel/replace/get operations — the old ID will no longer be active.
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--price <price>` | New limit price |
+| `--qty <amount>` | New base-currency size |
+| `--quote <amount>` | New quote-currency size |
+| `--client-order-id <id>` | Client order ID for the replacement (auto-generated if omitted) |
+| `--post-only` | Set execution to `[post_only]` |
+| `--allow-taker` | Set execution to `[allow_taker]` explicitly |
+
+At least one of `--price`, `--qty`, `--quote`, `--post-only`, `--allow-taker` is required.
 
 ---
 

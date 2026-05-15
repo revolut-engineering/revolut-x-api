@@ -56,3 +56,23 @@ export const placeOrderSchema = z
   .refine((data) => data.limit !== undefined || data.market !== undefined, {
     message: "Either limit or market configuration is required",
   });
+
+export const replaceOrderSchema = z
+  .object({
+    clientOrderId: z.string().min(1, "clientOrderId is required"),
+    price: priceSchema.optional(),
+    baseSize: quantitySchema.optional(),
+    quoteSize: quantitySchema.optional(),
+    executionInstructions: z.array(z.string()).optional(),
+  })
+  .refine(
+    (data) =>
+      data.price !== undefined ||
+      data.baseSize !== undefined ||
+      data.quoteSize !== undefined ||
+      data.executionInstructions !== undefined,
+    {
+      message:
+        "At least one of price, baseSize, quoteSize, or executionInstructions must be provided",
+    },
+  );

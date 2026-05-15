@@ -9,6 +9,7 @@ const mockGetOrder = vi.fn();
 const mockCancelOrder = vi.fn();
 const mockCancelAllOrders = vi.fn();
 const mockGetOrderFills = vi.fn();
+const mockReplaceOrder = vi.fn();
 
 vi.mock("../../src/util/client.js", () => ({
   getClient: vi.fn(() => ({
@@ -19,6 +20,7 @@ vi.mock("../../src/util/client.js", () => ({
     cancelOrder: mockCancelOrder,
     cancelAllOrders: mockCancelAllOrders,
     getOrderFills: mockGetOrderFills,
+    replaceOrder: mockReplaceOrder,
   })),
 }));
 
@@ -664,6 +666,190 @@ describe("order cancel", () => {
         "cancel",
         "order-123",
         "--all",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("order replace", () => {
+  let program: Command;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    program = makeProgram();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    mockReplaceOrder.mockResolvedValue({
+      data: {
+        venue_order_id: "new-order-999",
+        client_order_id: "client-new",
+        state: "new",
+      },
+    });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("replaces order with --qty", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--qty",
+      "0.002",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      baseSize: "0.002",
+    });
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("new-order-999");
+  });
+
+  it("replaces order with --price", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      price: "96000",
+    });
+  });
+
+  it("replaces order with --quote", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--quote",
+      "150",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      quoteSize: "150",
+    });
+  });
+
+  it("replaces order with --allow-taker explicitly", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--allow-taker",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      executionInstructions: ["allow_taker"],
+    });
+  });
+
+  it("replaces order with --post-only", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--post-only",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      executionInstructions: ["post_only"],
+    });
+  });
+
+  it("auto-generates client-order-id when omitted", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--qty",
+      "0.002",
+    ]);
+    const call = mockReplaceOrder.mock.calls[0];
+    expect(call[0]).toBe("order-123");
+    expect(typeof call[1].clientOrderId).toBe("string");
+    expect(call[1].clientOrderId.length).toBeGreaterThan(0);
+    expect(call[1].baseSize).toBe("0.002");
+  });
+
+  it("exits when no replaceable field given", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--client-order-id",
+        "client-new",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits when both --qty and --quote are provided", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--qty",
+        "0.001",
+        "--quote",
+        "100",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits when both --post-only and --allow-taker are provided", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--post-only",
+        "--allow-taker",
       ]),
     ).rejects.toThrow("process.exit");
     expect(exitSpy).toHaveBeenCalledWith(1);

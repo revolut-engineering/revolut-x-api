@@ -493,6 +493,178 @@ describe("Orders", () => {
     });
   });
 
+  describe("replaceOrder", () => {
+    it("replaces order with baseSize", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-999",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      const result = await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        baseSize: "0.002",
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        base_size: "0.002",
+      });
+      expect(result.data.venue_order_id).toBe("order-999");
+      expect(result.data.state).toBe("new");
+    });
+
+    it("replaces order with price", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-price",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        price: "96000",
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        price: "96000",
+      });
+    });
+
+    it("replaces order with quoteSize", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-1000",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        quoteSize: "200",
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        quote_size: "200",
+      });
+    });
+
+    it("replaces order with executionInstructions allow_taker explicitly", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-1001",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        executionInstructions: ["allow_taker"],
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        execution_instructions: ["allow_taker"],
+      });
+    });
+
+    it("replaces order with multiple fields", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-1002",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        price: "97000",
+        baseSize: "0.5",
+        quoteSize: "100",
+        executionInstructions: ["post_only"],
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        price: "97000",
+        base_size: "0.5",
+        quote_size: "100",
+        execution_instructions: ["post_only"],
+      });
+    });
+
+    it("throws when no replaceable field provided", async () => {
+      const client = createTestClient();
+      await expect(
+        client.replaceOrder("order-123", { clientOrderId: "client-new" }),
+      ).rejects.toThrow("Invalid replace order parameters");
+    });
+
+    it("throws when clientOrderId is empty", async () => {
+      const client = createTestClient();
+      await expect(
+        client.replaceOrder("order-123", {
+          clientOrderId: "",
+          baseSize: "0.001",
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("requires authentication", async () => {
+      const client = createTestClient({ authenticated: false });
+      await expect(
+        client.replaceOrder("order-123", {
+          clientOrderId: "client-new",
+          baseSize: "0.001",
+        }),
+      ).rejects.toThrow("Revolut X credentials not configured");
+    });
+  });
+
   describe("cancelOrder", () => {
     it("cancels order successfully (204 no content)", async () => {
       const client = createTestClient();

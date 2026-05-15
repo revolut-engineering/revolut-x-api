@@ -108,6 +108,14 @@ export interface PlaceOrderParams {
   clientOrderId?: string;
 }
 
+export interface ReplaceOrderParams {
+  clientOrderId: string;
+  price?: string;
+  baseSize?: string;
+  quoteSize?: string;
+  executionInstructions?: ExecutionInstruction[];
+}
+
 export interface ActiveOrdersOptions {
   symbols?: string[];
   orderStates?: ActiveOrderState[];
