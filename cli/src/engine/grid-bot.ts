@@ -13,6 +13,7 @@ import {
   deleteGridState,
   type GridState,
   type GridLevelState,
+  type GridLevelPosition,
   type GridTradeEntry,
 } from "../db/grid-store.js";
 import { loadConnections, type TelegramConnection } from "../db/store.js";
@@ -44,6 +45,19 @@ const ORDER_DELAY_MS = 200;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// --------------- position helpers ---------------
+
+function levelBaseHeld(level: GridLevelState): Decimal {
+  return level.positions.reduce(
+    (sum, p) => sum.plus(p.baseHeld),
+    new Decimal(0),
+  );
+}
+
+function levelHasPosition(level: GridLevelState): boolean {
+  return level.positions.some((p) => new Decimal(p.baseHeld).gt(0));
 }
 
 export class ForegroundGridBot {
@@ -144,7 +158,7 @@ export class ForegroundGridBot {
     const modeLabel = activeConfig.dryRun ? " [DRY RUN]" : "";
     this._notify(
       `Grid Bot started${modeLabel}: ${this._state!.pair} | ` +
-        `${activeConfig.levels} levels | \u00B1${rangePctDisplay}% | ` +
+        `${activeConfig.levels} levels | ±${rangePctDisplay}% | ` +
         `${activeConfig.investment} ${this._state!.pair.split("-")[1] ?? ""}`,
     );
     await this._loop();
@@ -157,26 +171,28 @@ export class ForegroundGridBot {
     let cancelled = 0;
     let remaining = 0;
     for (const level of this._state.levels) {
-      if (level.buyOrderId) {
+      for (const buyOrderId of [...level.buyOrderIds]) {
         try {
           if (!this._config.dryRun) {
-            await this._client.cancelOrder(level.buyOrderId);
+            await this._client.cancelOrder(buyOrderId);
           }
-          level.buyOrderId = null;
+          level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
           cancelled++;
         } catch {
           remaining++;
         }
       }
-      if (level.sellOrderId) {
-        try {
-          if (!this._config.dryRun) {
-            await this._client.cancelOrder(level.sellOrderId);
+      for (const pos of level.positions) {
+        if (pos.sellOrderId) {
+          try {
+            if (!this._config.dryRun) {
+              await this._client.cancelOrder(pos.sellOrderId);
+            }
+            pos.sellOrderId = null;
+            cancelled++;
+          } catch {
+            remaining++;
           }
-          level.sellOrderId = null;
-          cancelled++;
-        } catch {
-          remaining++;
         }
       }
     }
@@ -208,12 +224,13 @@ export class ForegroundGridBot {
     let totalBaseHeld = new Decimal(0);
     let costBasis = new Decimal(0);
     for (const lv of this._state.levels) {
-      if (lv.hasPosition) {
-        const held = new Decimal(lv.baseHeld);
+      for (const pos of lv.positions) {
+        const held = new Decimal(pos.baseHeld);
+        if (held.lte(0)) continue;
         totalBaseHeld = totalBaseHeld.plus(held);
         const cost =
-          lv.fillCost && lv.fillCost !== "0"
-            ? new Decimal(lv.fillCost)
+          pos.fillCost && pos.fillCost !== "0"
+            ? new Decimal(pos.fillCost)
             : held.times(new Decimal(lv.price));
         costBasis = costBasis.plus(cost);
       }
@@ -370,30 +387,29 @@ export class ForegroundGridBot {
     if (!this._config.dryRun && client) {
       const cancels: Promise<void>[] = [];
       for (const level of state.levels) {
-        if (level.buyOrderId) {
+        for (const buyOrderId of level.buyOrderIds) {
           cancels.push(
             client
-              .cancelOrder(level.buyOrderId)
+              .cancelOrder(buyOrderId)
               .catch((err) => rethrowIfInsecureKey(err)),
           );
         }
-        if (level.sellOrderId) {
-          cancels.push(
-            client
-              .cancelOrder(level.sellOrderId)
-              .catch((err) => rethrowIfInsecureKey(err)),
-          );
+        for (const pos of level.positions) {
+          if (pos.sellOrderId) {
+            cancels.push(
+              client
+                .cancelOrder(pos.sellOrderId)
+                .catch((err) => rethrowIfInsecureKey(err)),
+            );
+          }
         }
       }
       await Promise.all(cancels);
     }
 
     for (const level of state.levels) {
-      level.buyOrderId = null;
-      level.sellOrderId = null;
-      level.hasPosition = false;
-      level.baseHeld = "0";
-      level.fillCost = "0";
+      level.buyOrderIds = [];
+      level.positions = [];
     }
 
     const rangePct = new Decimal(this._config.rangePct);
@@ -421,7 +437,7 @@ export class ForegroundGridBot {
             level,
             new Decimal(state.quotePerLevel),
           );
-          level.buyOrderId = orderId;
+          level.buyOrderIds.push(orderId);
           await sleep(ORDER_DELAY_MS);
         } catch (err) {
           rethrowIfInsecureKey(err);
@@ -450,34 +466,39 @@ export class ForegroundGridBot {
     if (!this._config.dryRun && client) {
       const cancels: Promise<void>[] = [];
       for (const level of state.levels) {
-        if (level.buyOrderId) {
+        for (const buyOrderId of level.buyOrderIds) {
           cancels.push(
             client
-              .cancelOrder(level.buyOrderId)
+              .cancelOrder(buyOrderId)
               .catch((err) => rethrowIfInsecureKey(err)),
           );
         }
-        if (level.sellOrderId) {
-          cancels.push(
-            client
-              .cancelOrder(level.sellOrderId)
-              .catch((err) => rethrowIfInsecureKey(err)),
-          );
+        for (const pos of level.positions) {
+          if (pos.sellOrderId) {
+            cancels.push(
+              client
+                .cancelOrder(pos.sellOrderId)
+                .catch((err) => rethrowIfInsecureKey(err)),
+            );
+          }
         }
       }
       await Promise.all(cancels);
     }
 
     for (const level of state.levels) {
-      level.buyOrderId = null;
-      level.sellOrderId = null;
+      level.buyOrderIds = [];
+      for (const pos of level.positions) {
+        pos.sellOrderId = null;
+      }
     }
 
     // 2. Sell all accumulated base asset via market order
     const baseStep = this._getBaseStep();
-    const totalBase = state.levels
-      .filter((l) => l.hasPosition && new Decimal(l.baseHeld).gt(0))
-      .reduce((sum, l) => sum.plus(l.baseHeld), new Decimal(0))
+    const allPositions = state.levels.flatMap((l) => l.positions);
+    const totalBase = allPositions
+      .filter((p) => new Decimal(p.baseHeld).gt(0))
+      .reduce((sum, p) => sum.plus(p.baseHeld), new Decimal(0))
       .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
 
     if (totalBase.gt(0)) {
@@ -492,13 +513,13 @@ export class ForegroundGridBot {
           const netBase = this._netBase(filled);
           const filledAmount = this._filledAmount(filled, currentPrice);
           const feeQuote = this._feeQuote(filled, currentPrice);
-          const costBasis = state.levels
-            .filter((l) => l.hasPosition)
+          const costBasis = allPositions
+            .filter((p) => new Decimal(p.baseHeld).gt(0))
             .reduce(
-              (sum, l) =>
+              (sum, p) =>
                 sum.plus(
-                  l.fillCost && l.fillCost !== "0"
-                    ? l.fillCost
+                  p.fillCost && p.fillCost !== "0"
+                    ? p.fillCost
                     : state.quotePerLevel,
                 ),
               new Decimal(0),
@@ -528,9 +549,7 @@ export class ForegroundGridBot {
 
       // Clear positions regardless of whether real sell succeeded
       for (const level of state.levels) {
-        level.hasPosition = false;
-        level.baseHeld = "0";
-        level.fillCost = "0";
+        level.positions = [];
       }
     }
 
@@ -667,11 +686,8 @@ export class ForegroundGridBot {
       levels.push({
         index: i,
         price: price.toString(),
-        buyOrderId: null,
-        sellOrderId: null,
-        hasPosition: false,
-        baseHeld: "0",
-        fillCost: "0",
+        buyOrderIds: [],
+        positions: [],
       });
     }
 
@@ -814,7 +830,7 @@ export class ForegroundGridBot {
       for (const level of buyLevels) {
         try {
           const orderId = await this._placeBuyOrder(level, quotePerLevel);
-          level.buyOrderId = orderId;
+          level.buyOrderIds.push(orderId);
           buysPlaced++;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -884,18 +900,19 @@ export class ForegroundGridBot {
           const buyLevel = levels[sellIdx - 1];
 
           if (buyLevel) {
-            buyLevel.hasPosition = true;
-            buyLevel.baseHeld = basePerLevel.toString();
-            buyLevel.fillCost = (costPerLevel ?? quotePerLevel).toFixed(2);
-          }
-
-          await this._placeSellOnLevel(sellLevel, basePerLevel);
-          if (sellLevel.sellOrderId) {
-            sellsPlaced++;
-          } else if (buyLevel) {
-            buyLevel.hasPosition = false;
-            buyLevel.baseHeld = "0";
-            buyLevel.fillCost = "0";
+            const pos: GridLevelPosition = {
+              id: `split-${sellIdx}`,
+              baseHeld: basePerLevel.toString(),
+              fillCost: (costPerLevel ?? quotePerLevel).toFixed(2),
+              sellOrderId: null,
+            };
+            buyLevel.positions.push(pos);
+            await this._placeSellOnLevel(sellLevel, pos);
+            if (pos.sellOrderId) {
+              sellsPlaced++;
+            } else {
+              buyLevel.positions.pop();
+            }
           }
           await sleep(ORDER_DELAY_MS);
         }
@@ -944,118 +961,127 @@ export class ForegroundGridBot {
     let ordersKept = 0;
     let ordersDead = 0;
 
+    // Check buy orders
     for (const level of this._state.levels) {
-      // --- Check buy order ---
-      if (level.buyOrderId) {
-        if (level.buyOrderId.startsWith("dry-")) {
+      for (const buyOrderId of [...level.buyOrderIds]) {
+        if (buyOrderId.startsWith("dry-")) {
           ordersKept++;
-        } else {
-          try {
-            const resp = await client.getOrder(level.buyOrderId);
-            const order = resp.data;
-            if (FILLED_STATUSES.has(order.status)) {
-              buysFilled++;
-              const levelPrice = new Decimal(level.price);
-              const netBase = this._netBase(order);
-              const filledAmount = this._filledAmount(order, levelPrice);
-              const feeQuote = this._feeQuote(order, levelPrice);
-              level.hasPosition = true;
-              level.baseHeld = netBase.toString();
-              level.fillCost = filledAmount.plus(feeQuote).toString();
-              this._state.stats.totalBuys++;
-              this._addFee(feeQuote);
-              this._logTrade(
-                "buy",
-                level.price,
-                netBase.toString(),
-                order.id,
-                undefined,
-                feeQuote.toString(),
-              );
-              level.buyOrderId = null;
-            } else if (DEAD_STATUSES.has(order.status)) {
-              level.buyOrderId = null;
-              ordersDead++;
-            } else {
-              ordersKept++;
-            }
-          } catch (err) {
-            rethrowIfInsecureKey(err);
-            level.buyOrderId = null;
-            ordersDead++;
-          }
-          await sleep(ORDER_DELAY_MS);
+          continue;
         }
-      }
-
-      // --- Check sell order ---
-      if (level.sellOrderId) {
-        if (level.sellOrderId.startsWith("dry-")) {
-          ordersKept++;
-        } else {
-          try {
-            const resp = await client.getOrder(level.sellOrderId);
-            const order = resp.data;
-            if (FILLED_STATUSES.has(order.status)) {
-              sellsFilled++;
-              const filledQty = new Decimal(order.filled_quantity);
-              const sellPrice = new Decimal(level.price);
-              const filledAmount = this._filledAmount(order, sellPrice);
-              const feeQuote = this._feeQuote(order, sellPrice);
-              const buyLevel = this._state.levels[level.index - 1];
-              const costBasis =
-                buyLevel?.fillCost && buyLevel.fillCost !== "0"
-                  ? new Decimal(buyLevel.fillCost)
-                  : new Decimal(this._state.quotePerLevel);
-              const profit = filledAmount.minus(feeQuote).minus(costBasis);
-
-              level.sellOrderId = null;
-              this._state.stats.totalSells++;
-              this._addFee(feeQuote);
-              this._state.stats.realizedPnl = new Decimal(
-                this._state.stats.realizedPnl,
-              )
-                .plus(profit)
-                .toString();
-              this._logTrade(
-                "sell",
-                sellPrice.toString(),
-                filledQty.toString(),
-                order.id,
-                profit.toFixed(2),
-                feeQuote.toString(),
-              );
-
-              // Clear position on buy level below
-              if (buyLevel) {
-                buyLevel.hasPosition = false;
-                buyLevel.baseHeld = "0";
-                buyLevel.fillCost = "0";
-              }
-            } else if (DEAD_STATUSES.has(order.status)) {
-              level.sellOrderId = null;
-              ordersDead++;
-            } else {
-              ordersKept++;
-            }
-          } catch (err) {
-            rethrowIfInsecureKey(err);
-            level.sellOrderId = null;
+        try {
+          const resp = await client.getOrder(buyOrderId);
+          const order = resp.data;
+          if (FILLED_STATUSES.has(order.status)) {
+            buysFilled++;
+            const levelPrice = new Decimal(level.price);
+            const netBase = this._netBase(order);
+            const filledAmount = this._filledAmount(order, levelPrice);
+            const feeQuote = this._feeQuote(order, levelPrice);
+            level.positions.push({
+              id: order.id,
+              baseHeld: netBase.toString(),
+              fillCost: filledAmount.plus(feeQuote).toString(),
+              sellOrderId: null,
+            });
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
+            this._state.stats.totalBuys++;
+            this._addFee(feeQuote);
+            this._logTrade(
+              "buy",
+              level.price,
+              netBase.toString(),
+              order.id,
+              undefined,
+              feeQuote.toString(),
+            );
+          } else if (DEAD_STATUSES.has(order.status)) {
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             ordersDead++;
+          } else {
+            ordersKept++;
           }
-          await sleep(ORDER_DELAY_MS);
+        } catch (err) {
+          rethrowIfInsecureKey(err);
+          level.buyOrderIds = level.buyOrderIds.filter(
+            (id) => id !== buyOrderId,
+          );
+          ordersDead++;
         }
+        await sleep(ORDER_DELAY_MS);
       }
     }
 
-    // Recalculate quotePerLevel if investment changed (after Phase 2 so hasPosition is up-to-date)
+    // Check sell orders (tracked via positions)
+    for (const level of this._state.levels) {
+      const sellLevel = this._state.levels[level.index + 1];
+
+      for (const pos of [...level.positions]) {
+        if (!pos.sellOrderId) continue;
+        const sellOrderId = pos.sellOrderId;
+
+        if (sellOrderId.startsWith("dry-")) {
+          ordersKept++;
+          continue;
+        }
+        try {
+          const resp = await client.getOrder(sellOrderId);
+          const order = resp.data;
+          if (FILLED_STATUSES.has(order.status)) {
+            sellsFilled++;
+            const sellPrice = sellLevel
+              ? new Decimal(sellLevel.price)
+              : new Decimal(level.price);
+            const filledQty = new Decimal(order.filled_quantity);
+            const filledAmount = this._filledAmount(order, sellPrice);
+            const feeQuote = this._feeQuote(order, sellPrice);
+            const costBasis =
+              pos.fillCost && pos.fillCost !== "0"
+                ? new Decimal(pos.fillCost)
+                : new Decimal(this._state.quotePerLevel);
+            const profit = filledAmount.minus(feeQuote).minus(costBasis);
+
+            level.positions = level.positions.filter((p) => p !== pos);
+            this._state.stats.totalSells++;
+            this._addFee(feeQuote);
+            this._state.stats.realizedPnl = new Decimal(
+              this._state.stats.realizedPnl,
+            )
+              .plus(profit)
+              .toString();
+            this._logTrade(
+              "sell",
+              sellPrice.toString(),
+              filledQty.toString(),
+              order.id,
+              profit.toFixed(2),
+              feeQuote.toString(),
+            );
+          } else if (DEAD_STATUSES.has(order.status)) {
+            pos.sellOrderId = null;
+            ordersDead++;
+          } else {
+            ordersKept++;
+          }
+        } catch (err) {
+          rethrowIfInsecureKey(err);
+          pos.sellOrderId = null;
+          ordersDead++;
+        }
+        await sleep(ORDER_DELAY_MS);
+      }
+    }
+
+    // Recalculate quotePerLevel if investment changed
     if (config.investment !== this._state.config.investment) {
       const midPrice = await this._getMidPrice();
       const totalActiveLevels = this._state.levels.filter(
         (l) =>
-          !!l.buyOrderId ||
-          !!l.sellOrderId ||
-          l.hasPosition ||
+          l.buyOrderIds.length > 0 ||
+          l.positions.length > 0 ||
           new Decimal(l.price).lte(midPrice),
       ).length;
       const quotePerLevel = newInvestment
@@ -1126,9 +1152,10 @@ export class ForegroundGridBot {
         );
 
         // Distribute acquired base across sell levels above current price
-        const baseStep = this._getBaseStep();
         const sellLevels = this._state.levels.filter(
-          (l) => new Decimal(l.price).gt(currentPrice) && !l.sellOrderId,
+          (l) =>
+            new Decimal(l.price).gt(currentPrice) &&
+            !l.positions.some((p) => !!p.sellOrderId),
         );
 
         if (sellLevels.length > 0) {
@@ -1149,18 +1176,19 @@ export class ForegroundGridBot {
             for (const sellLevel of sellLevels) {
               const buyLevel = this._state.levels[sellLevel.index - 1];
               if (buyLevel) {
-                buyLevel.hasPosition = true;
-                buyLevel.baseHeld = basePerLevel.toString();
-                buyLevel.fillCost = costPerLevel.toFixed(2);
-              }
-
-              await this._placeSellOnLevel(sellLevel, basePerLevel);
-              if (sellLevel.sellOrderId) {
-                sellsPlaced++;
-              } else if (buyLevel) {
-                buyLevel.hasPosition = false;
-                buyLevel.baseHeld = "0";
-                buyLevel.fillCost = "0";
+                const pos: GridLevelPosition = {
+                  id: `split-reconcile-${sellLevel.index}`,
+                  baseHeld: basePerLevel.toString(),
+                  fillCost: costPerLevel.toFixed(2),
+                  sellOrderId: null,
+                };
+                buyLevel.positions.push(pos);
+                await this._placeSellOnLevel(sellLevel, pos);
+                if (pos.sellOrderId) {
+                  sellsPlaced++;
+                } else {
+                  buyLevel.positions.pop();
+                }
               }
               await sleep(ORDER_DELAY_MS);
             }
@@ -1274,7 +1302,7 @@ export class ForegroundGridBot {
       this._tickCount++;
       if (this._shouldRebuildUp) {
         this._shouldRebuildUp = false;
-        const hasOpenPositions = state.levels.some((l) => l.hasPosition);
+        const hasOpenPositions = state.levels.some((l) => l.positions.length > 0);
         if (hasOpenPositions) {
           this._warnings.push(
             "Trailing up deferred: open positions present, will retry next tick",
@@ -1307,22 +1335,30 @@ export class ForegroundGridBot {
       );
     }
 
-    // Check each level's orders against active set
+    // Check each level's buy orders
     for (const level of state.levels) {
-      // --- Buy order gone from active set ---
-      if (level.buyOrderId && !activeOrderIds.has(level.buyOrderId)) {
+      for (const buyOrderId of [...level.buyOrderIds]) {
+        if (activeOrderIds.has(buyOrderId)) continue;
+
         try {
-          const resp = await client.getOrder(level.buyOrderId);
+          const resp = await client.getOrder(buyOrderId);
           const order = resp.data;
           if (FILLED_STATUSES.has(order.status)) {
             const levelPrice = new Decimal(level.price);
             const netBase = this._netBase(order);
             const filledAmount = this._filledAmount(order, levelPrice);
             const feeQuote = this._feeQuote(order, levelPrice);
-            level.hasPosition = true;
-            level.baseHeld = netBase.toString();
-            level.fillCost = filledAmount.plus(feeQuote).toString();
-            level.buyOrderId = null;
+
+            const pos: GridLevelPosition = {
+              id: order.id,
+              baseHeld: netBase.toString(),
+              fillCost: filledAmount.plus(feeQuote).toString(),
+              sellOrderId: null,
+            };
+            level.positions.push(pos);
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             state.stats.totalBuys++;
             this._addFee(feeQuote);
             this._logTrade(
@@ -1346,10 +1382,12 @@ export class ForegroundGridBot {
             // Place sell on the level above
             const sellLevel = state.levels[level.index + 1];
             if (sellLevel) {
-              await this._placeSellOnLevel(sellLevel, netBase);
+              await this._placeSellOnLevel(sellLevel, pos);
             }
           } else if (DEAD_STATUSES.has(order.status)) {
-            level.buyOrderId = null;
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             await this._replaceGridBuy(level);
           }
         } catch (err) {
@@ -1359,27 +1397,32 @@ export class ForegroundGridBot {
           );
         }
       }
+    }
 
-      // --- Sell order gone from active set ---
-      if (level.sellOrderId && !activeOrderIds.has(level.sellOrderId)) {
+    // Check each level's positions for sell fills
+    for (const level of state.levels) {
+      const sellLevel = state.levels[level.index + 1];
+      if (!sellLevel) continue;
+
+      for (const pos of [...level.positions]) {
+        if (!pos.sellOrderId || activeOrderIds.has(pos.sellOrderId)) continue;
+
         try {
-          const resp = await client.getOrder(level.sellOrderId);
+          const resp = await client.getOrder(pos.sellOrderId);
           const order = resp.data;
           if (FILLED_STATUSES.has(order.status)) {
             const filledQty = new Decimal(order.filled_quantity);
-            const sellPrice = new Decimal(level.price);
+            const sellPrice = new Decimal(sellLevel.price);
             const filledAmount = this._filledAmount(order, sellPrice);
             const feeQuote = this._feeQuote(order, sellPrice);
-
-            const buyLevel = state.levels[level.index - 1];
             const costBasis =
-              buyLevel?.fillCost && buyLevel.fillCost !== "0"
-                ? new Decimal(buyLevel.fillCost)
+              pos.fillCost && pos.fillCost !== "0"
+                ? new Decimal(pos.fillCost)
                 : new Decimal(state.quotePerLevel);
             const revenue = filledAmount.minus(feeQuote);
             const profit = revenue.minus(costBasis);
 
-            level.sellOrderId = null;
+            level.positions = level.positions.filter((p) => p !== pos);
             state.stats.totalSells++;
             this._addFee(feeQuote);
             state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
@@ -1405,35 +1448,24 @@ export class ForegroundGridBot {
                 `total P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
             );
 
-            // Clear position on buy level (one below) and place buy back
-            if (buyLevel) {
-              buyLevel.hasPosition = false;
-              buyLevel.baseHeld = "0";
-              buyLevel.fillCost = "0";
-              if (!buyLevel.buyOrderId) {
-                try {
-                  const orderId = await this._placeBuyOrder(
-                    buyLevel,
-                    new Decimal(state.quotePerLevel),
-                  );
-                  buyLevel.buyOrderId = orderId;
-                } catch (err) {
-                  rethrowIfInsecureKey(err);
-                  this._warnings.push(
-                    `Re-buy #${buyLevel.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
-                  );
-                }
+            // Place buy back on this level
+            if (level.buyOrderIds.length === 0) {
+              try {
+                const orderId = await this._placeBuyOrder(
+                  level,
+                  new Decimal(state.quotePerLevel),
+                );
+                level.buyOrderIds.push(orderId);
+              } catch (err) {
+                rethrowIfInsecureKey(err);
+                this._warnings.push(
+                  `Re-buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+                );
               }
             }
           } else if (DEAD_STATUSES.has(order.status)) {
-            level.sellOrderId = null;
-            const buyLevel = state.levels[level.index - 1];
-            if (buyLevel?.hasPosition) {
-              await this._placeSellOnLevel(
-                level,
-                new Decimal(buyLevel.baseHeld),
-              );
-            }
+            pos.sellOrderId = null;
+            // HELD recovery below will re-place the sell
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
@@ -1455,9 +1487,8 @@ export class ForegroundGridBot {
     if (canPlaceBuys) {
       for (const level of state.levels) {
         if (
-          !level.buyOrderId &&
-          !level.sellOrderId &&
-          !level.hasPosition &&
+          level.buyOrderIds.length === 0 &&
+          level.positions.length === 0 &&
           new Decimal(level.price).lt(currentPrice)
         ) {
           await this._replaceGridBuy(level);
@@ -1465,14 +1496,15 @@ export class ForegroundGridBot {
       }
     }
 
-    // HELD recovery: positions without a sell order on the level above
+    // HELD recovery: positions without a sell order get one placed
     for (const level of state.levels) {
-      if (level.hasPosition) {
-        const sellLevel = state.levels[level.index + 1];
-        if (sellLevel && !sellLevel.sellOrderId) {
-          const baseHeld = new Decimal(level.baseHeld);
+      const sellLevel = state.levels[level.index + 1];
+      if (!sellLevel) continue;
+      for (const pos of level.positions) {
+        if (!pos.sellOrderId) {
+          const baseHeld = new Decimal(pos.baseHeld);
           if (baseHeld.gt(0)) {
-            await this._placeSellOnLevel(sellLevel, baseHeld);
+            await this._placeSellOnLevel(sellLevel, pos);
           }
         }
       }
@@ -1483,7 +1515,7 @@ export class ForegroundGridBot {
 
     if (this._shouldRebuildUp) {
       this._shouldRebuildUp = false;
-      const hasOpenPositions = state.levels.some((l) => l.hasPosition);
+      const hasOpenPositions = state.levels.some((l) => l.positions.length > 0);
       if (hasOpenPositions) {
         this._warnings.push(
           "Trailing up deferred: open positions present, will retry next tick",
@@ -1499,69 +1531,74 @@ export class ForegroundGridBot {
   private async _dryRunTick(currentPrice: Decimal): Promise<void> {
     const state = this._state!;
 
+    // Simulate buy fills
     for (const level of state.levels) {
       const levelPrice = new Decimal(level.price);
+      if (level.buyOrderIds.length === 0 || !currentPrice.lt(levelPrice)) continue;
 
-      // Simulate buy fill: price dropped below buy level
-      if (level.buyOrderId && currentPrice.lt(levelPrice)) {
-        const quotePerLevel = new Decimal(state.quotePerLevel);
-        const baseStep = this._getBaseStep();
-        const filledQty = quotePerLevel
-          .div(levelPrice)
-          .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+      const buyOrderId = level.buyOrderIds[0]!;
+      const quotePerLevel = new Decimal(state.quotePerLevel);
+      const baseStep = this._getBaseStep();
+      const filledQty = quotePerLevel
+        .div(levelPrice)
+        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
 
-        level.hasPosition = true;
-        level.baseHeld = filledQty.toString();
-        level.fillCost = quotePerLevel.toString();
-        level.buyOrderId = null;
-        state.stats.totalBuys++;
-        this._logTrade(
-          "buy",
-          level.price,
-          filledQty.toString(),
-          `dry-${randomUUID().slice(0, 8)}`,
-        );
+      const pos: GridLevelPosition = {
+        id: `dry-${randomUUID().slice(0, 8)}`,
+        baseHeld: filledQty.toString(),
+        fillCost: quotePerLevel.toString(),
+        sellOrderId: null,
+      };
+      level.positions.push(pos);
+      level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+      state.stats.totalBuys++;
+      this._logTrade(
+        "buy",
+        level.price,
+        filledQty.toString(),
+        `dry-${randomUUID().slice(0, 8)}`,
+      );
 
-        const base = this._config.pair.split("-")[0] ?? "";
-        const cs = this._cs;
-        this._notify(
-          `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base} [DRY RUN]`,
-        );
+      const base = this._config.pair.split("-")[0] ?? "";
+      const cs = this._cs;
+      this._notify(
+        `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base} [DRY RUN]`,
+      );
 
-        // Place sell on the level above
-        const sellLevel = state.levels[level.index + 1];
-        if (sellLevel) {
-          sellLevel.sellOrderId = `dry-sell-${sellLevel.index}`;
-        }
+      // Place sell on the level above (dry run: just assign ID to position)
+      const sellLevel = state.levels[level.index + 1];
+      if (sellLevel) {
+        pos.sellOrderId = `dry-sell-${randomUUID().slice(0, 8)}`;
       }
+    }
 
-      // Simulate sell fill: price rose above this sell level
-      if (level.sellOrderId && currentPrice.gt(levelPrice)) {
-        const buyLevel = state.levels[level.index - 1];
-        if (!buyLevel) continue;
+    // Simulate sell fills
+    for (const level of state.levels) {
+      const sellLevel = state.levels[level.index + 1];
+      if (!sellLevel) continue;
+      const sellLevelPrice = new Decimal(sellLevel.price);
 
-        const filledQty = new Decimal(buyLevel.baseHeld);
+      for (const pos of [...level.positions]) {
+        if (!pos.sellOrderId || !currentPrice.gt(sellLevelPrice)) continue;
+
+        const filledQty = new Decimal(pos.baseHeld);
         if (filledQty.lte(0)) continue;
 
-        const sellPrice = levelPrice;
         const costBasis =
-          buyLevel.fillCost && buyLevel.fillCost !== "0"
-            ? new Decimal(buyLevel.fillCost)
+          pos.fillCost && pos.fillCost !== "0"
+            ? new Decimal(pos.fillCost)
             : new Decimal(state.quotePerLevel);
-        const revenue = filledQty.times(sellPrice);
+        const revenue = filledQty.times(sellLevelPrice);
         const profit = revenue.minus(costBasis);
 
-        level.sellOrderId = null;
-        buyLevel.hasPosition = false;
-        buyLevel.baseHeld = "0";
-        buyLevel.fillCost = "0";
+        level.positions = level.positions.filter((p) => p !== pos);
         state.stats.totalSells++;
         state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
           .plus(profit)
           .toString();
         this._logTrade(
           "sell",
-          sellPrice.toString(),
+          sellLevelPrice.toString(),
           filledQty.toString(),
           `dry-${randomUUID().slice(0, 8)}`,
           profit.toFixed(2),
@@ -1570,14 +1607,14 @@ export class ForegroundGridBot {
         const base = this._config.pair.split("-")[0] ?? "";
         const cs = this._cs;
         this._notify(
-          `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellPrice} | ` +
+          `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellLevelPrice} | ` +
             `${filledQty} ${base} | profit ${cs}${profit.toFixed(2)} | ` +
             `total P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)} [DRY RUN]`,
         );
 
-        // Place buy back on the buy level
-        if (!buyLevel.buyOrderId) {
-          buyLevel.buyOrderId = `dry-buy-${buyLevel.index}`;
+        // Place buy back on this level
+        if (level.buyOrderIds.length === 0) {
+          level.buyOrderIds.push(`dry-buy-${level.index}`);
         }
       }
     }
@@ -1587,25 +1624,24 @@ export class ForegroundGridBot {
 
   // --------------- order placement ---------------
 
-  /**
-   * Place a sell order on the given level at its own price.
-   * The base being sold belongs to the position on the level below.
-   */
+  // Place a sell order on sellLevel for the given position.
+  // The position lives on the level below (sellLevel.index - 1).
   private async _placeSellOnLevel(
     sellLevel: GridLevelState,
-    baseAmount: Decimal,
+    position: GridLevelPosition,
   ): Promise<void> {
+    const baseAmount = new Decimal(position.baseHeld);
     if (baseAmount.lte(0)) return;
 
-    if (sellLevel.sellOrderId) {
+    if (position.sellOrderId) {
       this._warnings.push(
-        `Sell @${sellLevel.price}: skipped – already has order ${sellLevel.sellOrderId}`,
+        `Sell: position already has order ${position.sellOrderId}`,
       );
       return;
     }
 
     if (this._config.dryRun) {
-      sellLevel.sellOrderId = `dry-sell-${sellLevel.index}`;
+      position.sellOrderId = `dry-sell-${sellLevel.index}`;
       return;
     }
 
@@ -1619,7 +1655,7 @@ export class ForegroundGridBot {
           executionInstructions: ["post_only"],
         },
       });
-      sellLevel.sellOrderId = resp.data.venue_order_id;
+      position.sellOrderId = resp.data.venue_order_id;
     } catch (err) {
       rethrowIfInsecureKey(err);
       this._warnings.push(
@@ -1633,7 +1669,7 @@ export class ForegroundGridBot {
 
     try {
       const orderId = await this._placeBuyOrder(level, quotePerLevel);
-      level.buyOrderId = orderId;
+      level.buyOrderIds.push(orderId);
     } catch (err) {
       rethrowIfInsecureKey(err);
       this._warnings.push(
