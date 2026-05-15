@@ -17,7 +17,7 @@ const ORDERS = [
   {
     id: "ord-btcusd-1",
     client_order_id: "cli-btcusd-1",
-    symbol: "BTC-USD",
+    symbol: "BTC/USD",
     side: "buy",
     type: "limit",
     quantity: "0.5",
@@ -35,7 +35,7 @@ const ORDERS = [
   {
     id: "ord-btcusd-2",
     client_order_id: "cli-btcusd-2",
-    symbol: "BTC-USD",
+    symbol: "BTC/USD",
     side: "sell",
     type: "limit",
     quantity: "0.3",
@@ -53,7 +53,7 @@ const ORDERS = [
   {
     id: "ord-btcusd-3",
     client_order_id: "cli-btcusd-3",
-    symbol: "BTC-USD",
+    symbol: "BTC/USD",
     side: "buy",
     type: "limit",
     quantity: "0.5",
@@ -71,7 +71,7 @@ const ORDERS = [
   {
     id: "ord-etheur-1",
     client_order_id: "cli-etheur-1",
-    symbol: "ETH-EUR",
+    symbol: "ETH/EUR",
     side: "buy",
     type: "limit",
     quantity: "4",
@@ -89,7 +89,7 @@ const ORDERS = [
   {
     id: "ord-etheur-2",
     client_order_id: "cli-etheur-2",
-    symbol: "ETH-EUR",
+    symbol: "ETH/EUR",
     side: "sell",
     type: "limit",
     quantity: "5",
@@ -107,7 +107,7 @@ const ORDERS = [
   {
     id: "ord-btcgbp-1",
     client_order_id: "cli-btcgbp-1",
-    symbol: "BTC-GBP",
+    symbol: "BTC/GBP",
     side: "buy",
     type: "limit",
     quantity: "0.25",
@@ -125,7 +125,7 @@ const ORDERS = [
   {
     id: "ord-ethusdc-1",
     client_order_id: "cli-ethusdc-1",
-    symbol: "ETH-USDC",
+    symbol: "ETH/USDC",
     side: "buy",
     type: "limit",
     quantity: "10",
@@ -143,7 +143,7 @@ const ORDERS = [
   {
     id: "ord-ethusdc-2",
     client_order_id: "cli-ethusdc-2",
-    symbol: "ETH-USDC",
+    symbol: "ETH/USDC",
     side: "sell",
     type: "limit",
     quantity: "8",

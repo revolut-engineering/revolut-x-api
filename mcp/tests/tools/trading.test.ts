@@ -132,6 +132,55 @@ describe("trading read-only tools", () => {
     expect(text).toContain("Avg Fill Price: 91500");
   });
 
+  it("get_historical_orders aggregates volume by quote currency for slash-format symbols", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          id: "ord-slash-1",
+          client_order_id: "co-slash-1",
+          symbol: "BTC/USD",
+          side: "buy",
+          type: "limit",
+          price: "90000",
+          quantity: "0.5",
+          filled_quantity: "0.5",
+          filled_amount: "45000",
+          leaves_quantity: "0",
+          status: "filled",
+          time_in_force: "gtc",
+          created_date: 1700000000000,
+        },
+        {
+          id: "ord-slash-2",
+          client_order_id: "co-slash-2",
+          symbol: "ETH/EUR",
+          side: "sell",
+          type: "limit",
+          price: "4000",
+          quantity: "5",
+          filled_quantity: "2",
+          filled_amount: "8000",
+          leaves_quantity: "3",
+          status: "partially_filled",
+          time_in_force: "gtc",
+          created_date: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {},
+    });
+    const text = getText(result);
+    expect(text).toContain("Volume by quote currency");
+    expect(text).toContain("USD: 45000.00");
+    expect(text).toContain("EUR: 8000.00");
+    expect(text).not.toContain("unrecognized symbol format");
+    expect(text).toContain("Filled amount: 45000 USD");
+  });
+
   it("get_historical_orders handles empty result", async () => {
     mockClient.getHistoricalOrders.mockResolvedValue({
       data: [],
