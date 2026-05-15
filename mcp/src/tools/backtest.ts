@@ -357,11 +357,11 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Simulate trailing up: rebuild the grid when price exits the upper boundary. Best for trending markets.",
           ),
-        stop_loss_pct: z
+        stop_loss_price: z
           .number()
           .default(0)
           .describe(
-            "Stop simulation when price drops this percentage below the lower grid boundary. 0 disables stop-loss (default).",
+            "Absolute price at which stop-loss triggers. Must be below the lowest grid level. 0 disables stop-loss (default). Does not change when trailing-up shifts the grid.",
           ),
       },
       annotations: {
