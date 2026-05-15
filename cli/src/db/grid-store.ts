@@ -42,7 +42,7 @@ export interface GridState {
     intervalSec: number;
     dryRun: boolean;
     trailingUp?: boolean;
-    stopLoss?: number;
+    stopLoss?: string;
   };
   splitExecuted: boolean;
   shiftCount?: number;

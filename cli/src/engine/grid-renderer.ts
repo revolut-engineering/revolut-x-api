@@ -188,13 +188,11 @@ export function renderDashboard(data: DashboardData): string {
       innerW,
     ),
   );
-  if (state.config.stopLoss && state.config.stopLoss > 0) {
-    const slPrice = new Decimal(state.levels[0].price).times(
-      1 - state.config.stopLoss / 100,
-    );
+  if (state.config.stopLoss) {
+    const slPrice = new Decimal(state.config.stopLoss);
     lines.push(
       padLine(
-        `  ${chalk.dim("Stop-Loss".padEnd(14))}${chalk.red(fmtPrice(slPrice, cs))}  ${chalk.dim(`(−${state.config.stopLoss}%)`)}`,
+        `  ${chalk.dim("Stop-Loss".padEnd(14))}${chalk.red(fmtPrice(slPrice, cs))}`,
         innerW,
       ),
     );
