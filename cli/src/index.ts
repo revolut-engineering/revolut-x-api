@@ -32,7 +32,7 @@ Examples:
     $ revx account balances BTC                           Get BTC balance
     $ revx account balances --currencies BTC,ETH,USD      Filter by currencies
     $ revx account balances --all                         Include zero balances
-    $ revx account balances --json                        Output as JSON,
+    $ revx account balances --json                        Output as JSON
 
   Market:
     $ revx market currencies                              List supported currencies
@@ -62,6 +62,9 @@ Examples:
     $ revx order fills <order-id>                         Get order fills
     $ revx order cancel <order-id>                        Cancel an order
     $ revx order cancel --all                             Cancel all open orders
+    $ revx order replace <order-id> --price 96000         Replace order limit price
+    $ revx order replace <order-id> --qty 0.002           Replace order qty (amount recalculated)
+    $ revx order replace <order-id> --allow-taker         Allow taker on an existing order
 
   Trades:
     $ revx trade private BTC-USD                          Private trade history
