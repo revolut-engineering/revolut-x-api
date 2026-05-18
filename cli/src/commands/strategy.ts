@@ -13,9 +13,29 @@ import {
   runBacktest,
   optimizeGridParams,
   createGrid,
+  type BacktestTickEvent,
 } from "../shared/backtest/index.js";
-import { ForegroundGridBot, type GridBotConfig } from "../engine/grid-bot.js";
+import {
+  ForegroundGridBot,
+  type GridBotConfig,
+  type GridBotTickEvent,
+} from "../engine/grid-bot.js";
 import { getCurrSymbol } from "../engine/grid-renderer.js";
+import {
+  parseSpec,
+  loadBatch,
+  createLiveProvider,
+  isScenarioSpec,
+  PriceSpecError,
+  type PriceSpec,
+  type ScenarioCandle,
+} from "../shared/price-source/index.js";
+import {
+  emitBacktestTracePlain,
+  emitBacktestTraceJson,
+  emitGridBotTracePlain,
+  emitGridBotTraceJson,
+} from "../output/trace.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
@@ -34,12 +54,7 @@ const VALID_RESOLUTIONS = new Set([
   "4w",
 ]);
 
-interface ParsedCandle extends Record<string, Decimal> {
-  open: Decimal;
-  high: Decimal;
-  low: Decimal;
-  close: Decimal;
-}
+type ParsedCandle = ScenarioCandle;
 
 function printSectionHeader(title: string): void {
   console.log(chalk.cyan.bold(`\n❖ ${title}`));
@@ -57,10 +72,12 @@ function parseCandles(candles: Candle[]): ParsedCandle[] {
       parsed.push({
         ts: c.start,
         candle: {
+          start: c.start,
           open: new Decimal(c.open),
           high: new Decimal(c.high),
           low: new Decimal(c.low),
           close: new Decimal(c.close),
+          volume: new Decimal(c.volume),
         },
       });
     } catch {
@@ -117,6 +134,59 @@ async function fetchCandles(
   return parseCandles(resp.data);
 }
 
+function parsePriceSpec(raw: string | undefined): PriceSpec {
+  try {
+    return parseSpec(raw);
+  } catch (err) {
+    if (err instanceof PriceSpecError) {
+      printError(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+async function loadScenarioCandles(
+  spec: PriceSpec,
+  pair: string,
+  resolution: string,
+  days: number,
+): Promise<ParsedCandle[]> {
+  if (spec.kind === "api") {
+    return fetchCandles(pair, resolution, days);
+  }
+  if (spec.kind === "interactive") {
+    printError(
+      "--prices interactive is only valid for live runs (revx strategy grid run --dry-run)",
+    );
+    process.exit(1);
+  }
+  try {
+    const candles = await loadBatch(spec);
+    return candles;
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+function describeSource(spec: PriceSpec): string {
+  switch (spec.kind) {
+    case "api":
+      return "Revolut X candles";
+    case "file":
+      return `file ${spec.path}`;
+    case "stdin":
+      return "stdin";
+    case "inline":
+      return `inline (${spec.values.length} prices)`;
+    case "gen":
+      return `gen:${spec.gen.type}`;
+    case "interactive":
+      return "interactive";
+  }
+}
+
 async function handleBacktest(
   pair: string,
   opts: {
@@ -128,6 +198,8 @@ async function handleBacktest(
     split?: boolean;
     trailingUp?: boolean;
     stopLoss?: string;
+    prices?: string;
+    trace?: boolean;
     json?: boolean;
     output?: string;
   },
@@ -151,13 +223,21 @@ async function handleBacktest(
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
   const days = parseInt(opts.days, 10) || 30;
+  const spec = parsePriceSpec(opts.prices);
+  const traceEnabled = opts.trace === true;
 
-  console.log(
-    chalk.gray(
-      `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
-    ),
-  );
-  const candles = await fetchCandles(pair, opts.interval, days);
+  if (isScenarioSpec(spec)) {
+    console.log(
+      chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
+    );
+  } else {
+    console.log(
+      chalk.gray(
+        `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
+      ),
+    );
+  }
+  const candles = await loadScenarioCandles(spec, pair, opts.interval, days);
 
   if (candles.length === 0) {
     printError(
@@ -188,6 +268,24 @@ async function handleBacktest(
     }
   }
 
+  const traceJson = traceEnabled && isJsonOutput(opts);
+  const tracePlain = traceEnabled && !isJsonOutput(opts);
+  const csTrace = getCurrSymbol(pair);
+  const onTick = traceEnabled
+    ? (ev: BacktestTickEvent) => {
+        if (traceJson) {
+          emitBacktestTraceJson(ev);
+        } else {
+          emitBacktestTracePlain(ev, csTrace);
+        }
+      }
+    : undefined;
+
+  if (tracePlain) {
+    console.log(chalk.cyan.bold("\n❖ Trace (per-tick)"));
+    console.log(chalk.dim("─".repeat(50)));
+  }
+
   const result = runBacktest(
     candles,
     gridLevels,
@@ -196,7 +294,12 @@ async function handleBacktest(
     useSplit,
     useTrailingUp,
     stopLossPrice,
+    onTick,
   );
+
+  if (traceJson) {
+    return;
+  }
 
   if (isJsonOutput(opts)) {
     const finalPrice = candles[candles.length - 1].close;
@@ -335,7 +438,9 @@ async function handleBacktest(
   const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
   console.log(pad("Annualized", annColor(`${annualizedPct.toFixed(2)}%`)));
   if (useTrailingUp) {
-    console.log(pad("Trailing Up", chalk.cyan(`${result.trailingUpShifts} shifts`)));
+    console.log(
+      pad("Trailing Up", chalk.cyan(`${result.trailingUpShifts} shifts`)),
+    );
   }
   if (stopLossPrice > 0) {
     const slLabel = result.stopLossTriggered
@@ -407,6 +512,7 @@ async function handleOptimize(
     split?: boolean;
     trailingUp?: boolean;
     stopLoss?: string;
+    prices?: string;
     json?: boolean;
     output?: string;
   },
@@ -462,12 +568,19 @@ async function handleOptimize(
     process.exit(1);
   }
 
-  console.log(
-    chalk.gray(
-      `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
-    ),
-  );
-  const candles = await fetchCandles(pair, opts.interval, days);
+  const spec = parsePriceSpec(opts.prices);
+  if (isScenarioSpec(spec)) {
+    console.log(
+      chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
+    );
+  } else {
+    console.log(
+      chalk.gray(
+        `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
+      ),
+    );
+  }
+  const candles = await loadScenarioCandles(spec, pair, opts.interval, days);
 
   if (candles.length === 0) {
     printError(
@@ -616,6 +729,9 @@ async function handleRun(
     reset?: boolean;
     trailingUp?: boolean;
     stopLoss?: string;
+    prices?: string;
+    trace?: boolean;
+    json?: boolean;
   },
 ): Promise<void> {
   pair = validatePair(pair);
@@ -630,6 +746,25 @@ async function handleRun(
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
   const intervalSec = Math.max(5, parseInt(opts.interval, 10) || 30);
+  const spec = parsePriceSpec(opts.prices);
+  const isDryRun = opts.dryRun === true;
+
+  if (isScenarioSpec(spec) && !isDryRun) {
+    printError(
+      `--prices ${spec.kind} is only allowed with --dry-run (real orders must use the live market)`,
+    );
+    process.exit(1);
+  }
+
+  let priceSource;
+  if (isScenarioSpec(spec)) {
+    try {
+      priceSource = await createLiveProvider(spec);
+    } catch (err) {
+      printError(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
 
   const config: GridBotConfig = {
     pair,
@@ -638,13 +773,31 @@ async function handleRun(
     investment: investment.toString(),
     splitInvestment: opts.split === true,
     intervalSec,
-    dryRun: opts.dryRun === true,
+    dryRun: isDryRun,
     reset: opts.reset === true,
     trailingUp: opts.trailingUp === true,
     stopLoss: opts.stopLoss || undefined,
   };
 
-  const bot = new ForegroundGridBot(config);
+  const traceEnabled = opts.trace === true;
+  const traceJson = traceEnabled && isJsonOutput(opts);
+  const csTrace = getCurrSymbol(pair);
+  const onTick = traceEnabled
+    ? (ev: GridBotTickEvent) => {
+        if (traceJson) {
+          emitGridBotTraceJson(ev);
+        } else {
+          emitGridBotTracePlain(ev, csTrace);
+        }
+      }
+    : undefined;
+
+  const suppressDashboard = isScenarioSpec(spec) && traceEnabled;
+  const bot = new ForegroundGridBot(config, {
+    priceSource,
+    onTick,
+    suppressDashboard,
+  });
 
   const shutdown = async () => {
     console.log(chalk.yellow("\n  ↳ Shutting down grid bot..."));
@@ -658,6 +811,9 @@ async function handleRun(
 
   try {
     await bot.run();
+    if (isScenarioSpec(spec)) {
+      await bot.shutdown();
+    }
   } catch (err) {
     printError(err instanceof Error ? err.message : String(err));
     process.exit(1);
@@ -681,7 +837,9 @@ Examples:
   $ revx strategy grid backtest BTC-USD --levels 5 --range 10 --investment 1000 --days 30
   $ revx strategy grid optimize BTC-USD --investment 1000 --days 30 --interval 1h
   $ revx strategy grid run BTC-USD --levels 5 --range 5 --investment 500 --interval 30
-  $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run`,
+  $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run
+
+Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-prices.md`,
     );
 
   const grid = strategy
@@ -707,8 +865,27 @@ Examples:
       "1m",
     )
     .option("--split", "Market-buy base for sell levels at start")
-    .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
-    .option("--stop-loss <price>", "Stop when price reaches this absolute value (must be below the lowest grid level)")
+    .option(
+      "--trailing-up",
+      "Simulate grid rebuild when price exits upper boundary",
+    )
+    .option(
+      "--stop-loss <price>",
+      "Stop when price reaches this absolute value (must be below the lowest grid level)",
+    )
+    .option(
+      "--prices <spec>",
+      "Drive the backtest with a synthetic price sequence (for scenario testing) instead of fetching real candles. " +
+        "Sources: api (default — real candles), file:<path> (CSV/JSON), stdin (piped), " +
+        "inline:<csv> (e.g. inline:100,102,98), gen:<type>?<params> (linear, sine, walk, steps). " +
+        "See grid-mock-prices.md.",
+      "api",
+    )
+    .option(
+      "--trace",
+      "Emit a per-tick trace of strategy reaction (price, fills, position, P&L). " +
+        "With --json, emits NDJSON to stdout. Useful for inspecting how the strategy reacts to each candle in a test scenario.",
+    )
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleBacktest);
@@ -731,8 +908,21 @@ Examples:
     )
     .option("--top <n>", "Number of top results to show", "10")
     .option("--split", "Market-buy base for sell levels at start")
-    .option("--trailing-up", "Simulate grid rebuild when price exits upper boundary")
-    .option("--stop-loss <price>", "Stop when price reaches this absolute value (must be below the lowest grid level)")
+    .option(
+      "--trailing-up",
+      "Simulate grid rebuild when price exits upper boundary",
+    )
+    .option(
+      "--stop-loss <price>",
+      "Stop when price reaches this absolute value (must be below the lowest grid level)",
+    )
+    .option(
+      "--prices <spec>",
+      "Sweep parameters against a synthetic price sequence (for scenario testing) instead of fetching real candles. " +
+        "Sources: api (default), file:<path>, stdin, inline:<csv>, gen:<type>?<params>. " +
+        "See grid-mock-prices.md.",
+      "api",
+    )
     .option("--json", "Output as JSON")
     .option("-o, --output <format>", "Output format (json)")
     .action(handleOptimize);
@@ -761,6 +951,22 @@ Examples:
     .option(
       "--stop-loss <price>",
       "Stop bot when price reaches this absolute value (must be below the lowest grid level)",
+    )
+    .option(
+      "--prices <spec>",
+      "[Dry-run only] Drive the bot with a synthetic price sequence (for scenario testing) instead of polling the live order book. " +
+        "Sources: api (default), file:<path>, stdin, inline:<csv>, gen:<type>?<params>, interactive (prompt for each tick). " +
+        "Rejected unless --dry-run is also set — real orders always use the live market. See grid-mock-prices.md.",
+      "api",
+    )
+    .option(
+      "--trace",
+      "[Dry-run only] Per-tick trace of the bot's reaction (price, fills, position, open orders, P&L). " +
+        "With --json, emits NDJSON. The TUI dashboard is suppressed while trace runs so lines aren't wiped.",
+    )
+    .option(
+      "--json",
+      "Output as JSON. Combined with --trace, emits NDJSON per-tick records.",
     )
     .action(handleRun);
 }

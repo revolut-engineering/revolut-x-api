@@ -7,6 +7,11 @@ import {
 import type { CurrencyPair, OrderDetails } from "@revolut/revolut-x-api";
 import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
+import type { LivePriceSource } from "../shared/price-source/index.js";
+import {
+  OrderBookMidProvider,
+  withCachedPeek,
+} from "../shared/price-source/index.js";
 import {
   saveGridState,
   loadGridState,
@@ -37,6 +42,23 @@ export interface GridBotConfig {
   reset: boolean;
   trailingUp: boolean;
   stopLoss?: string;
+}
+
+export interface GridBotTickEvent {
+  index: number;
+  timestamp: number;
+  price: Decimal;
+  fills: string[];
+  position: Decimal;
+  realizedPnl: Decimal;
+  unrealizedPnl: Decimal;
+  openOrders: number;
+}
+
+export interface GridBotOptions {
+  priceSource?: LivePriceSource;
+  onTick?: (event: GridBotTickEvent) => void;
+  suppressDashboard?: boolean;
 }
 
 const FILLED_STATUSES = new Set(["filled"]);
@@ -78,10 +100,17 @@ export class ForegroundGridBot {
   private _shouldRebuildUp = false;
   private _lastNotifyOk = 0;
   private _cs: string;
+  private _priceSource: LivePriceSource | null = null;
+  private _onTick: ((event: GridBotTickEvent) => void) | null = null;
+  private _tradeLogStart = 0;
+  private _suppressDashboard = false;
 
-  constructor(config: GridBotConfig) {
+  constructor(config: GridBotConfig, options: GridBotOptions = {}) {
     this._config = config;
     this._cs = getCurrSymbol(config.pair);
+    this._priceSource = options.priceSource ?? null;
+    this._onTick = options.onTick ?? null;
+    this._suppressDashboard = options.suppressDashboard === true;
   }
 
   get connectionCount(): number {
@@ -113,6 +142,16 @@ export class ForegroundGridBot {
       throw new Error(
         "API credentials not configured. Run 'revx configure' first.",
       );
+    }
+
+    if (this._priceSource) {
+      this._priceSource = withCachedPeek(this._priceSource);
+    } else {
+      this._priceSource = new OrderBookMidProvider({
+        client: this._client,
+        pair: this._config.pair,
+        intervalSec: this._config.intervalSec,
+      });
     }
 
     await this._fetchPairInfo();
@@ -176,7 +215,9 @@ export class ForegroundGridBot {
           if (!this._config.dryRun) {
             await this._client.cancelOrder(buyOrderId);
           }
-          level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+          level.buyOrderIds = level.buyOrderIds.filter(
+            (id) => id !== buyOrderId,
+          );
           cancelled++;
         } catch {
           remaining++;
@@ -313,14 +354,17 @@ export class ForegroundGridBot {
   }
 
   private async _getMidPrice(): Promise<Decimal> {
-    const client = this._client!;
-    const resp = await client.getOrderBook(this._config.pair, { limit: 1 });
-    const bestBid = resp.data.bids[0];
-    const bestAsk = resp.data.asks[0];
-    if (!bestBid || !bestAsk) {
-      throw new Error(`No order book data for ${this._config.pair}`);
+    if (!this._priceSource) {
+      throw new Error("price source not initialized");
     }
-    return new Decimal(bestBid.price).plus(new Decimal(bestAsk.price)).div(2);
+    if (this._priceSource.peek) {
+      return this._priceSource.peek();
+    }
+    const t = await this._priceSource.next();
+    if (!t) {
+      throw new Error("price source exhausted");
+    }
+    return t.price;
   }
 
   private async _checkBalance(quoteCurrency: string): Promise<Decimal | null> {
@@ -346,9 +390,7 @@ export class ForegroundGridBot {
     const levels = state.levels;
     const lower = new Decimal(levels[0].price);
     const upper = new Decimal(levels[levels.length - 1].price);
-    const ratio = upper
-      .div(lower)
-      .pow(new Decimal(1).div(levels.length - 1));
+    const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
     const cs = this._cs;
 
     if (this._config.trailingUp && currentPrice.gt(upper.times(ratio))) {
@@ -1238,11 +1280,46 @@ export class ForegroundGridBot {
   // --------------- main loop ---------------
 
   private async _loop(): Promise<void> {
+    const source = this._priceSource!;
     while (this._running) {
-      const tickStart = performance.now();
+      const cycleStart = performance.now();
+
+      let tick;
+      try {
+        tick = await source.next();
+      } catch (err) {
+        if (err instanceof InsecureKeyPermissionsError) {
+          console.log(
+            chalk.red(
+              `\n  Halting grid bot: credential file permissions are unsafe.\n  ${err.message}`,
+            ),
+          );
+          console.log(
+            chalk.yellow(
+              "  Open exchange orders were NOT cancelled (signing is no longer safe).\n" +
+                "  Fix the key permissions, then cancel manually with: revx order cancel --all",
+            ),
+          );
+          this.stop();
+          throw err;
+        }
+        this._lastError = err instanceof Error ? err.message : String(err);
+        this._render();
+        if (!this._running) break;
+        await this._paceSleep(cycleStart, source.paceIntervalSec);
+        continue;
+      }
+
+      if (!tick) {
+        console.log(chalk.dim("\n  Price source exhausted; stopping loop."));
+        this.stop();
+        break;
+      }
+
+      this._tradeLogStart = this._state?.tradeLog.length ?? 0;
 
       try {
-        await this._tick();
+        await this._tick(tick.price);
         this._lastError = null;
       } catch (err) {
         if (err instanceof InsecureKeyPermissionsError) {
@@ -1264,26 +1341,75 @@ export class ForegroundGridBot {
       }
 
       this._render();
+      this._emitTickEvent(tick.price, tick.timestamp);
 
-      const elapsed = (performance.now() - tickStart) / 1000;
-      const delay = Math.max(0, this._config.intervalSec - elapsed) * 1000;
       if (!this._running) break;
-      await new Promise<void>((resolve) => {
-        this._timer = setTimeout(() => {
-          this._timer = null;
-          resolve();
-        }, delay);
-      });
+      await this._paceSleep(cycleStart, source.paceIntervalSec);
     }
+    await this._priceSource?.close?.();
   }
 
-  private async _tick(): Promise<void> {
+  private async _paceSleep(
+    cycleStart: number,
+    paceIntervalSec: number | undefined,
+  ): Promise<void> {
+    if (paceIntervalSec === undefined) return;
+    const elapsed = (performance.now() - cycleStart) / 1000;
+    const delay = Math.max(0, paceIntervalSec - elapsed) * 1000;
+    if (delay <= 0) return;
+    await new Promise<void>((resolve) => {
+      this._timer = setTimeout(() => {
+        this._timer = null;
+        resolve();
+      }, delay);
+    });
+  }
+
+  private _emitTickEvent(price: Decimal, timestamp: number): void {
+    if (!this._onTick || !this._state) return;
+    const fills: string[] = [];
+    const newEntries = this._state.tradeLog.slice(this._tradeLogStart);
+    for (const e of newEntries) {
+      const sign = e.side === "buy" ? "BUY" : "SELL";
+      fills.push(`${sign} ${e.quantity}@${e.price}`);
+    }
+    let position = new Decimal(0);
+    let costBasis = new Decimal(0);
+    let openOrders = 0;
+    for (const lv of this._state.levels) {
+      openOrders += lv.buyOrderIds.length;
+      for (const pos of lv.positions) {
+        const held = new Decimal(pos.baseHeld);
+        if (held.gt(0)) {
+          position = position.plus(held);
+          const cost =
+            pos.fillCost && pos.fillCost !== "0"
+              ? new Decimal(pos.fillCost)
+              : held.times(new Decimal(lv.price));
+          costBasis = costBasis.plus(cost);
+        }
+        if (pos.sellOrderId) openOrders++;
+      }
+    }
+    const unrealized = position.times(price).minus(costBasis);
+    this._onTick({
+      index: this._tickCount,
+      timestamp,
+      price,
+      fills,
+      position,
+      realizedPnl: new Decimal(this._state.stats.realizedPnl ?? "0"),
+      unrealizedPnl: unrealized,
+      openOrders,
+    });
+  }
+
+  private async _tick(currentPrice: Decimal): Promise<void> {
     const state = this._state!;
     const client = this._client!;
     this._warnings = [];
     this._connections = loadConnections().filter((c) => c.enabled);
 
-    const currentPrice = await this._getMidPrice();
     this._previousPrice = this._currentPrice;
     this._currentPrice = currentPrice;
 
@@ -1302,7 +1428,9 @@ export class ForegroundGridBot {
       this._tickCount++;
       if (this._shouldRebuildUp) {
         this._shouldRebuildUp = false;
-        const hasOpenPositions = state.levels.some((l) => l.positions.length > 0);
+        const hasOpenPositions = state.levels.some(
+          (l) => l.positions.length > 0,
+        );
         if (hasOpenPositions) {
           this._warnings.push(
             "Trailing up deferred: open positions present, will retry next tick",
@@ -1534,7 +1662,8 @@ export class ForegroundGridBot {
     // Simulate buy fills
     for (const level of state.levels) {
       const levelPrice = new Decimal(level.price);
-      if (level.buyOrderIds.length === 0 || !currentPrice.lt(levelPrice)) continue;
+      if (level.buyOrderIds.length === 0 || !currentPrice.lt(levelPrice))
+        continue;
 
       const buyOrderId = level.buyOrderIds[0]!;
       const quotePerLevel = new Decimal(state.quotePerLevel);
@@ -1747,6 +1876,7 @@ export class ForegroundGridBot {
 
   private _render(): void {
     if (!this._state) return;
+    if (this._suppressDashboard) return;
 
     let currentPrice: Decimal;
     try {

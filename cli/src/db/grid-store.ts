@@ -93,9 +93,17 @@ function migrateStateIfNeeded(raw: Record<string, unknown>): void {
     const idx = Number(lv.index ?? 0);
 
     lv.buyOrderIds = oldBuyId ? [oldBuyId] : [];
-    lv.positions = oldHasPos && parseFloat(oldBase) > 0
-      ? [{ id: `migrated-${idx}`, baseHeld: oldBase, fillCost: oldCost, sellOrderId: null }]
-      : [];
+    lv.positions =
+      oldHasPos && parseFloat(oldBase) > 0
+        ? [
+            {
+              id: `migrated-${idx}`,
+              baseHeld: oldBase,
+              fillCost: oldCost,
+              sellOrderId: null,
+            },
+          ]
+        : [];
   }
 
   // Second pass: assign old sellOrderId from level N+1 to the position on level N
@@ -104,7 +112,9 @@ function migrateStateIfNeeded(raw: Record<string, unknown>): void {
     if (!oldSellId) continue;
     const idx = Number(lv.index ?? 0);
     const buyLv = levels[idx - 1];
-    const positions = buyLv?.positions as Array<Record<string, unknown>> | undefined;
+    const positions = buyLv?.positions as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (positions && positions.length > 0) {
       positions[0].sellOrderId = oldSellId;
     }
