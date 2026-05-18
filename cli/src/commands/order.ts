@@ -153,7 +153,7 @@ Examples:
   $ revx order place BTC-USD buy --quote 100 --market         Place market buy (quote amount)
   $ revx order place BTC-USD sell --qty 0.001 --limit 95000   Place limit sell
   $ revx order open                                           List open/active orders
-  $ revx order history --symbol BTC-USD                       Order history for pair
+  $ revx order history --symbols BTC-USD                      Order history for pair
   $ revx order get <order-id>                                 Get order details
   $ revx order cancel <order-id>                              Cancel an order
   $ revx order cancel --all                                   Cancel all open orders
