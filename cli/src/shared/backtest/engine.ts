@@ -1,5 +1,14 @@
 import { Decimal } from "decimal.js";
 
+export interface BacktestCandle {
+  open: Decimal;
+  high: Decimal;
+  low: Decimal;
+  close: Decimal;
+  start?: number;
+  volume?: Decimal;
+}
+
 interface GridLevel {
   price: Decimal;
   index: number;
@@ -20,6 +29,34 @@ interface BacktestResult {
   trailingUpShifts: number;
   stopLossTriggered: boolean;
 }
+
+export type BacktestFillTrigger = "grid" | "stop-loss" | "trailing-up";
+
+export interface BacktestFill {
+  side: "buy" | "sell";
+  price: Decimal;
+  quantity: Decimal;
+  quoteValue: Decimal;
+  profit?: Decimal;
+  trigger: BacktestFillTrigger;
+}
+
+export interface BacktestTickEvent {
+  index: number;
+  timestamp: number;
+  open: Decimal;
+  high: Decimal;
+  low: Decimal;
+  close: Decimal;
+  fills: BacktestFill[];
+  position: Decimal;
+  cash: Decimal;
+  realizedPnl: Decimal;
+  unrealizedPnl: Decimal;
+  totalValue: Decimal;
+}
+
+export type BacktestOnTick = (event: BacktestTickEvent) => void;
 
 interface OptimizationResult {
   gridLevels: number;
@@ -87,6 +124,44 @@ function fmtPnl(v: Decimal): string {
   return `${sign}${v.toFixed(2)}`;
 }
 
+function emitTick(
+  cb: BacktestOnTick,
+  index: number,
+  candle: BacktestCandle,
+  levels: GridLevel[],
+  quoteBalance: Decimal,
+  result: BacktestResult,
+  fills: BacktestFill[],
+): void {
+  let position = new Decimal(0);
+  let costBasis = new Decimal(0);
+  for (const lv of levels) {
+    if (lv.baseHeld.gt(0)) {
+      position = position.plus(lv.baseHeld);
+      const buyPrice = lv.index > 0 ? levels[lv.index].price : lv.price;
+      costBasis = costBasis.plus(lv.baseHeld.times(buyPrice));
+    }
+  }
+  const markPrice = candle.close;
+  const unrealized = position.times(markPrice).minus(costBasis);
+  const totalValue = quoteBalance.plus(position.times(markPrice));
+  const ts = typeof candle.start === "number" ? candle.start : Date.now();
+  cb({
+    index,
+    timestamp: ts,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    fills,
+    position,
+    cash: quoteBalance,
+    realizedPnl: result.realizedPnl,
+    unrealizedPnl: unrealized,
+    totalValue,
+  });
+}
+
 function runBuyPass(
   levels: GridLevel[],
   low: Decimal,
@@ -94,6 +169,7 @@ function runBuyPass(
   result: BacktestResult,
   quoteBalance: Decimal,
   investment: Decimal,
+  tickFills: BacktestFill[],
 ): Decimal {
   for (const level of levels) {
     if (level.hasBuyOrder && low.lte(level.price)) {
@@ -120,6 +196,13 @@ function runBuyPass(
         `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel} | ` +
           `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
       );
+      tickFills.push({
+        side: "buy",
+        price: level.price,
+        quantity: baseBought,
+        quoteValue: quotePerLevel,
+        trigger: "grid",
+      });
     }
   }
   return quoteBalance;
@@ -132,6 +215,7 @@ function runSellPass(
   result: BacktestResult,
   quoteBalance: Decimal,
   investment: Decimal,
+  tickFills: BacktestFill[],
 ): Decimal {
   for (const level of levels) {
     if (level.hasPosition && level.index + 1 < levels.length) {
@@ -151,6 +235,14 @@ function runSellPass(
         quoteBalance = quoteBalance.plus(quoteReceived);
         result.totalSells += 1;
         result.totalTrades += 1;
+        tickFills.push({
+          side: "sell",
+          price: sellLevel.price,
+          quantity: baseToSell,
+          quoteValue: quoteReceived,
+          profit,
+          trigger: "grid",
+        });
         result.realizedPnl = result.realizedPnl.plus(profit);
 
         const totalPnl = quoteBalance
@@ -181,6 +273,7 @@ function simulateCandle(
   result: BacktestResult,
   quoteBalance: Decimal,
   investment: Decimal,
+  tickFills: BacktestFill[],
 ): Decimal {
   const bearish = open.gt(close);
   if (bearish) {
@@ -191,6 +284,7 @@ function simulateCandle(
       result,
       quoteBalance,
       investment,
+      tickFills,
     );
     quoteBalance = runBuyPass(
       levels,
@@ -199,6 +293,7 @@ function simulateCandle(
       result,
       quoteBalance,
       investment,
+      tickFills,
     );
   } else {
     quoteBalance = runBuyPass(
@@ -208,6 +303,7 @@ function simulateCandle(
       result,
       quoteBalance,
       investment,
+      tickFills,
     );
     quoteBalance = runSellPass(
       levels,
@@ -216,6 +312,7 @@ function simulateCandle(
       result,
       quoteBalance,
       investment,
+      tickFills,
     );
   }
 
@@ -223,13 +320,14 @@ function simulateCandle(
 }
 
 export function runBacktest(
-  candles: Array<Record<string, Decimal>>,
+  candles: Array<BacktestCandle>,
   gridLevels: number,
   rangePct: Decimal,
   investment: Decimal,
   split = false,
   trailingUp = false,
   stopLossPrice = 0,
+  onTick?: BacktestOnTick,
 ): BacktestResult {
   if (candles.length === 0) {
     return createEmptyResult();
@@ -288,10 +386,11 @@ export function runBacktest(
 
   // Fix the stop-loss price before the candle loop so it never moves,
   // even when trailing-up rebuilds the grid around a new centre price.
-  const fixedSlPrice =
-    stopLossPrice > 0 ? new Decimal(stopLossPrice) : null;
+  const fixedSlPrice = stopLossPrice > 0 ? new Decimal(stopLossPrice) : null;
 
-  for (const candle of candles) {
+  for (let tickIdx = 0; tickIdx < candles.length; tickIdx++) {
+    const candle = candles[tickIdx];
+    const tickFills: BacktestFill[] = [];
     // Stop-loss check: did the candle's low breach the fixed threshold?
     if (fixedSlPrice && candle.low.lte(fixedSlPrice)) {
       // Simulate market sell of all held positions at the stop-loss price
@@ -309,12 +408,31 @@ export function runBacktest(
             `#${result.totalTrades}  STOP-LOSS SELL @ ${fixedSlPrice.toFixed(2)} | qty ${level.baseHeld.toFixed(5)} | ` +
               `+${quoteReceived.toFixed(2)} | profit=${profit.toFixed(2)}`,
           );
+          tickFills.push({
+            side: "sell",
+            price: fixedSlPrice,
+            quantity: level.baseHeld,
+            quoteValue: quoteReceived,
+            profit,
+            trigger: "stop-loss",
+          });
           level.hasPosition = false;
           level.baseHeld = new Decimal(0);
           level.hasBuyOrder = true;
         }
       }
       result.stopLossTriggered = true;
+      if (onTick) {
+        emitTick(
+          onTick,
+          tickIdx,
+          candle,
+          levels,
+          quoteBalance,
+          result,
+          tickFills,
+        );
+      }
       break;
     }
 
@@ -328,15 +446,14 @@ export function runBacktest(
       result,
       quoteBalance,
       investment,
+      tickFills,
     );
 
     // Trailing up check: did the candle's high breach the upper boundary + one step?
     if (trailingUp) {
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
-      const ratio = upper
-        .div(lower)
-        .pow(new Decimal(1).div(levels.length - 1));
+      const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
       if (candle.high.gt(upper.times(ratio))) {
         const rebuildPrice = candle.close;
 
@@ -355,6 +472,14 @@ export function runBacktest(
               `#${result.totalTrades}  TRAILING-UP SELL @ ${rebuildPrice.toFixed(2)} | ` +
                 `profit=${profit.toFixed(2)}`,
             );
+            tickFills.push({
+              side: "sell",
+              price: rebuildPrice,
+              quantity: level.baseHeld,
+              quoteValue: quoteReceived,
+              profit,
+              trigger: "trailing-up",
+            });
             level.hasPosition = false;
             level.baseHeld = new Decimal(0);
           }
@@ -389,6 +514,18 @@ export function runBacktest(
       const drawdown = peakValue.minus(lowValue).div(peakValue);
       result.maxDrawdown = Decimal.max(result.maxDrawdown, drawdown);
     }
+
+    if (onTick) {
+      emitTick(
+        onTick,
+        tickIdx,
+        candle,
+        levels,
+        quoteBalance,
+        result,
+        tickFills,
+      );
+    }
   }
 
   let finalBase = new Decimal(0);
@@ -402,7 +539,7 @@ export function runBacktest(
 }
 
 export function optimizeGridParams(
-  candles: Array<Record<string, Decimal>>,
+  candles: Array<BacktestCandle>,
   gridLevelsRange?: number[],
   rangePctRange?: Decimal[],
   investment: Decimal = new Decimal(1000),
@@ -445,7 +582,15 @@ export function optimizeGridParams(
         }
       }
 
-      const bt = runBacktest(candles, levels, rangePct, investment, split, trailingUp, stopLossPrice);
+      const bt = runBacktest(
+        candles,
+        levels,
+        rangePct,
+        investment,
+        split,
+        trailingUp,
+        stopLossPrice,
+      );
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
       const totalReturn = totalValue.minus(investment);

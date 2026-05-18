@@ -8,7 +8,7 @@ interface GridLevel {
   baseHeld: Decimal;
 }
 
-interface BacktestResult {
+export interface BacktestResult {
   totalTrades: number;
   totalBuys: number;
   totalSells: number;
@@ -21,7 +21,7 @@ interface BacktestResult {
   stopLossTriggered: boolean;
 }
 
-interface OptimizationResult {
+export interface OptimizationResult {
   gridLevels: number;
   rangePct: Decimal;
   investment: Decimal;
@@ -288,8 +288,7 @@ export function runBacktest(
 
   // Fix the stop-loss price before the candle loop so it never moves,
   // even when trailing-up rebuilds the grid around a new centre price.
-  const fixedSlPrice =
-    stopLossPrice > 0 ? new Decimal(stopLossPrice) : null;
+  const fixedSlPrice = stopLossPrice > 0 ? new Decimal(stopLossPrice) : null;
 
   for (const candle of candles) {
     // Stop-loss check: did the candle's low breach the fixed threshold?
@@ -334,9 +333,7 @@ export function runBacktest(
     if (trailingUp) {
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
-      const ratio = upper
-        .div(lower)
-        .pow(new Decimal(1).div(levels.length - 1));
+      const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
       if (candle.high.gt(upper.times(ratio))) {
         const rebuildPrice = candle.close;
 
@@ -445,7 +442,15 @@ export function optimizeGridParams(
         }
       }
 
-      const bt = runBacktest(candles, levels, rangePct, investment, split, trailingUp, stopLossPrice);
+      const bt = runBacktest(
+        candles,
+        levels,
+        rangePct,
+        investment,
+        split,
+        trailingUp,
+        stopLossPrice,
+      );
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
       const totalReturn = totalValue.minus(investment);

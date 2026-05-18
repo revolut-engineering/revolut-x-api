@@ -380,7 +380,7 @@ export function registerBacktestTools(server: McpServer): void {
       days,
       split_investment,
       trailing_up,
-      stop_loss_pct,
+      stop_loss_price,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -426,7 +426,7 @@ export function registerBacktestTools(server: McpServer): void {
         investDec!,
         split_investment,
         trailing_up,
-        stop_loss_pct,
+        stop_loss_price,
       );
 
       return textResult(
