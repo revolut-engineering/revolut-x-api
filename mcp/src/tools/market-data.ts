@@ -376,7 +376,7 @@ export function registerMarketDataTools(server: McpServer): void {
       title: "Get Public Trades",
       description:
         "Get public trade history (every market trade by anyone) for a trading pair. " +
-        "Use for tape-reading, micro-structure analysis, or volume profiling. For your own fills use `get_client_trades` or `get_historical_orders`. " +
+        "Use for tape-reading, micro-structure analysis, or volume profiling. For your own fills use `get_historical_orders`. " +
         "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 trades). " +
         "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit.",
       inputSchema: {

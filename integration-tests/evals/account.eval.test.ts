@@ -115,7 +115,6 @@ describe("account state & single-record lookups", () => {
       a.callsTool("get_order_by_id"),
       a.callsToolWithArgs("get_order_by_id", { order_id: "f2b9c-447e" }),
       a.doesNotCallTool("get_historical_orders"),
-      a.doesNotCallTool("get_client_trades"),
       a.finalTextContainsAll(["filled", "BTC-USD"]),
       a.judge({
         name: "reports the order's filled status, quantity, and average fill price",

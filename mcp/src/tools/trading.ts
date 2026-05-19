@@ -6,7 +6,6 @@ import {
   HISTORICAL_ORDERS_API_LIMIT,
   PAGINATED_DATA_MAX_LIMIT,
   paginateWithDynamicWindows,
-  TRADES_API_LIMIT,
 } from "@revolut/revolut-x-api";
 import {
   formatDate,
@@ -184,7 +183,7 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Historical Orders",
       description:
         "Get historical orders (filled, partially_filled, cancelled, rejected, replaced) for analytics: trading volume, fills, P&L, and any past-activity questions. " +
-        "Returns ALL pairs in one call when `symbols` is omitted — prefer this over `get_client_trades` for any multi-pair or all-pair query. " +
+        "Returns ALL pairs in one call when `symbols` is omitted. " +
         'For trading-volume or activity questions, pass `order_states: ["filled","partially_filled"]` — omitting the filter also returns cancelled/rejected orders which carry zero `filled_amount` and add noise. ' +
         "When the user asks about volume by quote currency, the tool output contains a pre-aggregated totals block — use it verbatim instead of re-summing per-order rows. " +
         "Defaults: omitted dates → last 30 days; for 'all orders ever' set `start_date` to 2024-05-07 (the earliest supported — anything earlier is clamped). " +
@@ -378,140 +377,12 @@ export function registerTradingTools(server: McpServer): void {
   );
 
   server.registerTool(
-    "get_client_trades",
-    {
-      title: "Get Trade History",
-      description:
-        "Get personal trade fills for a SINGLE trading pair only. " +
-        "For multi-pair, all-pair, or trading-volume questions, use `get_historical_orders` instead — one call covers every pair and includes a pre-aggregated volume-by-quote-currency block. " +
-        "Use this tool when the user explicitly wants the raw fill-level stream for a specific pair (individual trade IDs, maker/taker flags, fill timestamps). " +
-        "Defaults: omitted dates → last 30 days; for 'all trades ever' set `start_date` to 2024-05-07 (the earliest supported — anything earlier is clamped). " +
-        "If `totalLimit` is omitted, the result may exceed 10,000 trades — ask the user to confirm or suggest a reasonable limit first.",
-      inputSchema: {
-        symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
-        start_date: z
-          .string()
-          .optional()
-          .describe(
-            "Start of UTC date range. Accepts ISO format (e.g. '2024-05-07') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
-              "Earliest supported date is 2024-05-07. " +
-              "If only start_date is provided, all trades from this date until now are returned. " +
-              "If omitted, defaults to 30 days before end_date (or 30 days ago when both dates are omitted).",
-          ),
-        end_date: z
-          .string()
-          .optional()
-          .describe(
-            "End of UTC date range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
-              "If omitted, defaults to the current timestamp.",
-          ),
-        totalLimit: z
-          .number()
-          .int()
-          .positive()
-          .max(PAGINATED_DATA_MAX_LIMIT)
-          .optional()
-          .describe(
-            `Maximum total number of trades to return across all paginated batches. Max is ${PAGINATED_DATA_MAX_LIMIT}. ` +
-              "WARNING: If omitted, ALL trades in the date range are returned which may be very large (>10,000). " +
-              "Always ask the user to confirm or suggest a reasonable limit before omitting this parameter.",
-          ),
-      },
-      annotations: {
-        title: "Get Trade History",
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ symbol, start_date, end_date, totalLimit }) => {
-      const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
-
-      symbol = symbol.trim().toUpperCase();
-      const error = validateSymbol(symbol);
-      if (error) return textResult(error);
-
-      const dates = parseDateRange(start_date, end_date, {
-        defaultWindowMs: 30 * 24 * 60 * 60 * 1000,
-        minStartDate: new Date("2024-05-07T00:00:00Z").getTime(),
-        endDefaultsToNow: true,
-      });
-      if ("error" in dates) return dates.error;
-      const {
-        parsedStartDate: resolvedStartDate,
-        parsedEndDate: resolvedEndDate,
-      } = dates;
-
-      type Trade = Awaited<
-        ReturnType<ReturnType<typeof getRevolutXClient>["getPrivateTrades"]>
-      >["data"][number];
-
-      let displayTrades: Trade[];
-
-      try {
-        const client = getRevolutXClient();
-        displayTrades = await paginateWithDynamicWindows<Trade>({
-          fetchPage: (startDate, endDate, cursor, apiLimit) =>
-            client.getPrivateTrades(symbol, {
-              startDate,
-              endDate,
-              cursor,
-              limit: apiLimit,
-            }),
-          startDate: resolvedStartDate,
-          endDate: resolvedEndDate,
-          apiLimit: TRADES_API_LIMIT,
-          userLimit: totalLimit,
-        });
-      } catch (err) {
-        const handled = await handleApiError(err, SETUP_GUIDE);
-        if (handled) return handled;
-        throw err;
-      }
-
-      if (!displayTrades.length)
-        return textResult(
-          `No trade history found for ${symbol} from ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}.`,
-        );
-
-      const lines = [
-        `Your trades for ${symbol} (${displayTrades.length} returned):\n`,
-      ];
-      lines.push(
-        `${"ID".padEnd(36)} | ${"Order ID".padEnd(36)} | ${"Symbol".padStart(10)} | ${"Side".padStart(4)} | ${"Price".padStart(14)} | ${"Quantity".padStart(14)} | ${"Maker".padStart(5)} | Time`,
-      );
-      lines.push("-".repeat(145));
-      for (const t of displayTrades) {
-        lines.push(
-          `${t.id.padEnd(36)} | ` +
-            `${t.orderId.padEnd(36)} | ` +
-            `${t.symbol.padStart(10)} | ` +
-            `${t.side.padStart(4)} | ` +
-            `${t.price.padStart(14)} | ` +
-            `${t.quantity.padStart(14)} | ` +
-            `${String(t.maker).padStart(5)} | ` +
-            `${formatDate(t.timestamp)}`,
-        );
-      }
-
-      lines.push("");
-      lines.push(
-        `*** NOTE TO LLM: Complete results for ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)}. ` +
-          "This is the full dataset — do NOT call this tool again to paginate. " +
-          "ALWAYS ask the user if they need a wider date range (earliest available: 2024-05-07). ***",
-      );
-
-      return textResult(lines.join("\n"));
-    },
-  );
-
-  server.registerTool(
     "get_order_fills",
     {
       title: "Get Order Fills",
       description:
         "Get all fills (individual trade executions) for a specific order by its order ID. " +
-        "For fills across many orders or a date range, use `get_client_trades` instead.",
+        "For fills across many orders or a date range, use `get_historical_orders` instead.",
       inputSchema: {
         order_id: z.string().describe("The order ID to retrieve fills for."),
       },
@@ -566,7 +437,8 @@ export function registerTradingTools(server: McpServer): void {
       title: "Get Order by ID",
       description:
         "Get the full details of a single order by its venue order ID. " +
-        "Supports market, limit, conditional, and tpsl orders.",
+        "Supports market, limit, conditional, and tpsl orders. " +
+        "Includes total fees paid (`total_fee` and `fee_currency`) when the venue has reported them — this is the only tool that surfaces per-order fee data.",
       inputSchema: {
         order_id: z.string().describe("The venue order ID to look up."),
       },

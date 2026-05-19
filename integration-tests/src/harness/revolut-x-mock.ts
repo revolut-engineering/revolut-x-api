@@ -12,7 +12,6 @@ export interface RevolutXMockState {
   getOrder: Mock;
   getOrderFills: Mock;
   getAllTrades: Mock;
-  getPrivateTrades: Mock;
 }
 
 function makeClientStubs(): RevolutXMockState {
@@ -28,7 +27,6 @@ function makeClientStubs(): RevolutXMockState {
     getOrder: vi.fn(),
     getOrderFills: vi.fn(),
     getAllTrades: vi.fn(),
-    getPrivateTrades: vi.fn(),
   };
 }
 
@@ -46,7 +44,6 @@ export function resetRevolutXMockState(): void {
   revolutXMockState.getOrder.mockReset();
   revolutXMockState.getOrderFills.mockReset();
   revolutXMockState.getAllTrades.mockReset();
-  revolutXMockState.getPrivateTrades.mockReset();
 }
 
 export async function buildRevolutXMockModule(): Promise<

@@ -100,10 +100,6 @@
       "description": "Get your historical (completed, cancelled, rejected) orders on Revolut X. Optionally filter by trading pair and date range."
     },
     {
-      "name": "get_client_trades",
-      "description": "Get your personal trade history (fills) for a specific trading pair."
-    },
-    {
       "name": "get_order_fills",
       "description": "Get fill details for a specific order. Returns individual trade executions that filled the order."
     },
@@ -117,7 +113,7 @@
     },
     {
       "name": "get_order_by_id",
-      "description": "Get the full details of a single order by its venue order ID. Supports market, limit, conditional, and tpsl orders."
+      "description": "Get the full details of a single order by its venue order ID. Supports market, limit, conditional, and tpsl orders. Includes total fees paid (`total_fee` and `fee_currency`) when the venue has reported them — this is the only tool that surfaces per-order fee data."
     }
   ],
   "user_config": {
