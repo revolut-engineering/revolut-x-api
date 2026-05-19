@@ -937,8 +937,11 @@ export async function runBacktestBot(
       });
     }
     for (const fill of exchange.filledSells) {
-      const trigger: BacktestFillTrigger =
-        result.stopLossTriggered ? "stop-loss" : shiftDelta > 0 ? "trailing-up" : "grid";
+      const trigger: BacktestFillTrigger = result.stopLossTriggered
+        ? "stop-loss"
+        : shiftDelta > 0
+          ? "trailing-up"
+          : "grid";
       tickFills.push({
         side: "sell",
         price: fill.price,
@@ -988,8 +991,7 @@ export async function runBacktestBot(
       const markPrice = candle.close;
       const unrealized = position.times(markPrice).minus(costBasis);
       const totalValue = cash.plus(position.times(markPrice));
-      const ts =
-        typeof candle.start === "number" ? candle.start : Date.now();
+      const ts = typeof candle.start === "number" ? candle.start : Date.now();
       onTick({
         index: tickIdx,
         timestamp: ts,

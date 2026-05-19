@@ -169,7 +169,10 @@ export class SimulatedExchange {
     symbols?: string[];
     cursor?: string;
     limit?: number;
-  }): Promise<{ data: Array<{ id: string }>; metadata: Record<string, unknown> }> {
+  }): Promise<{
+    data: Array<{ id: string }>;
+    metadata: Record<string, unknown>;
+  }> {
     const active: Array<{ id: string }> = [];
     for (const [id, order] of this._orders) {
       if (!this._isFilled(order)) {
@@ -179,9 +182,7 @@ export class SimulatedExchange {
     return { data: active, metadata: {} };
   }
 
-  async getOrder(
-    id: string,
-  ): Promise<{
+  async getOrder(id: string): Promise<{
     data: {
       id: string;
       status: string;
