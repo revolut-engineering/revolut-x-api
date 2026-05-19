@@ -69,19 +69,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// --------------- position helpers ---------------
-
-function levelBaseHeld(level: GridLevelState): Decimal {
-  return level.positions.reduce(
-    (sum, p) => sum.plus(p.baseHeld),
-    new Decimal(0),
-  );
-}
-
-function levelHasPosition(level: GridLevelState): boolean {
-  return level.positions.some((p) => new Decimal(p.baseHeld).gt(0));
-}
-
 export class ForegroundGridBot {
   private _config: GridBotConfig;
   private _running = false;

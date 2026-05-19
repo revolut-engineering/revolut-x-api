@@ -165,11 +165,7 @@ export class SimulatedExchange {
     this._orders.delete(id);
   }
 
-  async getActiveOrders(params: {
-    symbols?: string[];
-    cursor?: string;
-    limit?: number;
-  }): Promise<{
+  async getActiveOrders(): Promise<{
     data: Array<{ id: string }>;
     metadata: Record<string, unknown>;
   }> {
