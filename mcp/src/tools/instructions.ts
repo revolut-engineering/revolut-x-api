@@ -31,9 +31,8 @@ Read-only data (safe to call):
   get_public_trades     — public trade history
   get_active_orders     — open orders
   get_historical_orders — completed/cancelled orders
-  get_order_by_id       — single order detail
+  get_order_by_id       — single order detail (incl. fees paid)
   get_order_fills       — fill details for an order
-  get_client_trades     — personal trade history
   grid_backtest         — run backtest simulation
   grid_optimize         — optimize grid parameters
 

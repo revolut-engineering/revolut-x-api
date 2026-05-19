@@ -167,14 +167,8 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 |------|-------------|
 | `get_active_orders` | Fetch all open orders. Filter by `symbols`, `side`, `order_states` (`pending_new`, `new`, `partially_filled`), `order_types` (`limit`, `conditional`, `tpsl`). Auto-paginates. |
 | `get_historical_orders` | Fetch completed orders (`filled`, `cancelled`, `rejected`, `replaced`). Supports date ranges with automatic 7-day chunking. |
-| `get_order_by_id` | Get full details of a single order by venue order ID. Shows trigger details for `conditional` and `tpsl` orders. |
+| `get_order_by_id` | Get full details of a single order by venue order ID. Includes total fees paid (`total_fee` + `fee_currency`). Shows trigger details for `conditional` and `tpsl` orders. |
 | `get_order_fills` | Get all fills (executions) for a specific order. |
-
-### Trades
-
-| Tool | Description |
-|------|-------------|
-| `get_client_trades` | Get your personal trade history for a pair. Auto-paginates in 7-day chunks when a date range is given. |
 
 ---
 

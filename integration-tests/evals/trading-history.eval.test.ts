@@ -118,49 +118,6 @@ const PNL_WEEK_ORDERS = [
   },
 ];
 
-const BTC_USD_FILLS = [
-  {
-    id: "trd-1",
-    orderId: "ord-a",
-    symbol: "BTC-USD",
-    side: "buy",
-    price: "94500",
-    quantity: "0.1",
-    maker: false,
-    timestamp: now - 22 * HOUR_MS,
-  },
-  {
-    id: "trd-2",
-    orderId: "ord-a",
-    symbol: "BTC-USD",
-    side: "buy",
-    price: "94600",
-    quantity: "0.05",
-    maker: false,
-    timestamp: now - 18 * HOUR_MS,
-  },
-  {
-    id: "trd-3",
-    orderId: "ord-b",
-    symbol: "BTC-USD",
-    side: "sell",
-    price: "95200",
-    quantity: "0.08",
-    maker: true,
-    timestamp: now - 10 * HOUR_MS,
-  },
-  {
-    id: "trd-4",
-    orderId: "ord-b",
-    symbol: "BTC-USD",
-    side: "sell",
-    price: "95300",
-    quantity: "0.07",
-    maker: true,
-    timestamp: now - 5 * HOUR_MS,
-  },
-];
-
 const ORDER_ABC_FILLS = [
   {
     id: "fill-1",
@@ -228,7 +185,6 @@ describe("trading history — fills, P&L, multi-pair", () => {
           return days >= 5 && days <= 35;
         },
       },
-      a.doesNotCallTool("get_client_trades"),
       a.doesNotCallTool("get_active_orders"),
       a.finalTextContainsAll(["USD"]),
       a.judge({
@@ -249,42 +205,9 @@ describe("trading history — fills, P&L, multi-pair", () => {
   });
 
   defineEval({
-    name: "single-pair-fills-routing",
-    description:
-      "Single-pair raw fill stream → get_client_trades, not get_historical_orders.",
-    prompt:
-      "show me the BTC-USD fills from the last 24 hours, individual trades not aggregated",
-    setup: () => {
-      revolutXMockState.getPrivateTrades.mockResolvedValueOnce({
-        data: BTC_USD_FILLS,
-        cursor: null,
-        hasMore: false,
-      });
-    },
-    assertions: [
-      a.callsTool("get_client_trades"),
-      a.callsToolWithArgs("get_client_trades", { symbol: "BTC-USD" }),
-      a.doesNotCallTool("get_historical_orders"),
-      a.judge({
-        name: "lists individual fills (not aggregated) with price, quantity, time",
-        criterion:
-          "The answer presents the fills as INDIVIDUAL trades (a list, table, or row-per-fill — not collapsed into one aggregate row), with each fill's price and quantity, and mentions UTC anywhere time appears. " +
-          "Whether the maker/taker flag is shown for every row is nice-to-have but not required. " +
-          "Specific numeric values from the tool result are assumed faithful — the judge cannot verify them and should not penalize them as 'fabricated' unless the agent obviously contradicts the tool's call args.",
-        rubric:
-          "1.0 = row-per-fill table/list, UTC mentioned. " +
-          "0.7 = individual fills listed, UTC implicit. " +
-          "0.4 = collapsed into a single aggregate (against user's request). " +
-          "0.0 = unrelated answer.",
-        threshold: 0.7,
-      }),
-    ],
-  });
-
-  defineEval({
     name: "order-fills-detail",
     description:
-      "Fills of one specific order → get_order_fills, not get_client_trades.",
+      "Fills of one specific order → get_order_fills, not get_historical_orders.",
     prompt: "for order abc-123, how was it filled — one big chunk or pieces?",
     setup: () => {
       revolutXMockState.getOrderFills.mockResolvedValueOnce({
@@ -294,7 +217,6 @@ describe("trading history — fills, P&L, multi-pair", () => {
     assertions: [
       a.callsTool("get_order_fills"),
       a.callsToolWithArgs("get_order_fills", { order_id: "abc-123" }),
-      a.doesNotCallTool("get_client_trades"),
       a.doesNotCallTool("get_historical_orders"),
       a.judge({
         name: "answers the user's question directly: pieces (3 fills)",
