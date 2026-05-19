@@ -1,4 +1,13 @@
 import { Decimal } from "decimal.js";
+import { randomUUID } from "node:crypto";
+import { ForegroundGridBot } from "../../engine/grid-bot.js";
+import type { GridBotConfig } from "../../engine/grid-bot.js";
+import { SimulatedExchange } from "./simulated-exchange.js";
+import type {
+  GridState,
+  GridLevelState,
+  GridLevelPosition,
+} from "../../db/grid-store.js";
 
 export interface BacktestCandle {
   open: Decimal;
@@ -371,7 +380,7 @@ export function runBacktest(
       const buyLevel = levels[sellIdx - 1];
       if (buyLevel) {
         buyLevel.hasPosition = true;
-        buyLevel.hasBuyOrder = false;
+        // buyLevel.hasBuyOrder = false;
         buyLevel.baseHeld = basePerLevel;
       }
     }
@@ -623,4 +632,387 @@ export function optimizeGridParams(
 
   results.sort((a, b) => b.totalReturn.cmp(a.totalReturn));
   return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Bot-driven backtest — drives ForegroundGridBot with a SimulatedExchange.
+//  Uses candle.close as the tick price (same as the live bot's price source).
+//  This implementation exercises the exact same code paths as the live bot.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function botTotalBaseHeld(state: GridState): Decimal {
+  let total = new Decimal(0);
+  for (const lv of state.levels) {
+    for (const pos of lv.positions) {
+      total = total.plus(pos.baseHeld);
+    }
+  }
+  return total;
+}
+
+function botComputePosition(state: GridState): {
+  position: Decimal;
+  costBasis: Decimal;
+} {
+  let position = new Decimal(0);
+  let costBasis = new Decimal(0);
+  for (const lv of state.levels) {
+    for (const pos of lv.positions) {
+      const held = new Decimal(pos.baseHeld);
+      if (held.gt(0)) {
+        position = position.plus(held);
+        const cost =
+          pos.fillCost && pos.fillCost !== "0"
+            ? new Decimal(pos.fillCost)
+            : held.times(new Decimal(lv.price));
+        costBasis = costBasis.plus(cost);
+      }
+    }
+  }
+  return { position, costBasis };
+}
+
+function buildBotInitialState(
+  startPrice: Decimal,
+  gridLevels: number,
+  rangePct: Decimal,
+  investment: Decimal,
+  split: boolean,
+  trailingUp: boolean,
+  stopLossPrice: number,
+  exchange: SimulatedExchange,
+): { state: GridState; quotePerLevel: Decimal } {
+  const lower = startPrice.times(new Decimal(1).minus(rangePct));
+  const upper = startPrice.times(new Decimal(1).plus(rangePct));
+  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
+
+  const levels: GridLevelState[] = [];
+  for (let i = 0; i < gridLevels; i++) {
+    const price = lower
+      .times(ratio.pow(i))
+      .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+    levels.push({
+      index: i,
+      price: price.toString(),
+      buyOrderIds: [],
+      positions: [],
+    });
+  }
+
+  const buyLevelsList = levels.filter((l) =>
+    new Decimal(l.price).lt(startPrice),
+  );
+  const sellLevelIndices: number[] = [];
+  if (split) {
+    for (const l of levels) {
+      if (new Decimal(l.price).gt(startPrice)) {
+        sellLevelIndices.push(l.index);
+      }
+    }
+  }
+
+  const totalCapitalLevels = split
+    ? buyLevelsList.length + sellLevelIndices.length
+    : buyLevelsList.length;
+
+  const quotePerLevel = investment
+    .div(Math.max(totalCapitalLevels, 1))
+    .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+
+  const state: GridState = {
+    id: randomUUID().slice(0, 8),
+    pair: "BTC-USD",
+    version: 2,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    config: {
+      levels: gridLevels,
+      rangePct: rangePct.toString(),
+      investment: investment.toString(),
+      splitInvestment: split,
+      intervalSec: 1,
+      dryRun: false,
+      trailingUp,
+      stopLoss:
+        stopLossPrice > 0 ? new Decimal(stopLossPrice).toString() : undefined,
+    },
+    splitExecuted: false,
+    shiftCount: 0,
+    gridPrice: startPrice.toString(),
+    quotePrecision: "0.01",
+    basePrecision: "0.00001",
+    quotePerLevel: quotePerLevel.toString(),
+    levels,
+    stats: {
+      totalBuys: 0,
+      totalSells: 0,
+      realizedPnl: "0",
+      totalFees: "0",
+    },
+    tradeLog: [],
+  };
+
+  // Seed buy orders into exchange
+  for (const level of buyLevelsList) {
+    const id = `init-buy-${level.index}-${randomUUID().slice(0, 4)}`;
+    exchange.seedOrder({
+      id,
+      side: "buy",
+      type: "limit",
+      price: new Decimal(level.price),
+      quoteSize: quotePerLevel,
+    });
+    level.buyOrderIds.push(id);
+  }
+
+  // For split mode: create positions and seed sell orders
+  if (split && sellLevelIndices.length > 0) {
+    const basePerLevel = quotePerLevel
+      .div(startPrice)
+      .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+
+    for (const sellIdx of sellLevelIndices) {
+      const buyLevel = levels[sellIdx - 1];
+      const sellLevel = levels[sellIdx];
+      if (!buyLevel || !sellLevel) continue;
+
+      const sellId = `init-sell-${sellIdx}-${randomUUID().slice(0, 4)}`;
+      const pos: GridLevelPosition = {
+        id: `split-${sellIdx}`,
+        baseHeld: basePerLevel.toString(),
+        fillCost: quotePerLevel.toFixed(2),
+        sellOrderId: sellId,
+      };
+      buyLevel.positions.push(pos);
+
+      exchange.seedOrder({
+        id: sellId,
+        side: "sell",
+        type: "limit",
+        price: new Decimal(sellLevel.price),
+        baseSize: basePerLevel,
+      });
+    }
+
+    state.splitExecuted = true;
+  }
+
+  return { state, quotePerLevel };
+}
+
+/**
+ * Bot-driven backtest. Drives `ForegroundGridBot._tick()` with a
+ * `SimulatedExchange` for each candle, using candle.close as the tick price.
+ *
+ * This exercises the exact same code paths as the live bot. Unlike the
+ * synchronous `runBacktest`, fills are based on candle.close (not high/low).
+ */
+export async function runBacktestBot(
+  candles: Array<BacktestCandle>,
+  gridLevels: number,
+  rangePct: Decimal,
+  investment: Decimal,
+  split = false,
+  trailingUp = false,
+  stopLossPrice = 0,
+  onTick?: BacktestOnTick,
+): Promise<BacktestResult> {
+  if (candles.length === 0) {
+    return createEmptyResult();
+  }
+
+  const result = createEmptyResult();
+  const startPrice = candles[0].open;
+  const exchange = new SimulatedExchange();
+
+  const { state, quotePerLevel } = buildBotInitialState(
+    startPrice,
+    gridLevels,
+    rangePct,
+    investment,
+    split,
+    trailingUp,
+    stopLossPrice,
+    exchange,
+  );
+
+  // Compute initial cash balance
+  let initialCash = investment;
+  if (split) {
+    const sellLevelCount = state.levels.filter((l) =>
+      new Decimal(l.price).gt(startPrice),
+    ).length;
+    initialCash = investment.minus(quotePerLevel.times(sellLevelCount));
+  }
+  exchange.setCashBalance(initialCash);
+
+  const config: GridBotConfig = {
+    pair: "BTC-USD",
+    levels: gridLevels,
+    rangePct: rangePct.toString(),
+    investment: investment.toString(),
+    splitInvestment: split,
+    intervalSec: 1,
+    dryRun: false,
+    reset: false,
+    trailingUp,
+    stopLoss:
+      stopLossPrice > 0 ? new Decimal(stopLossPrice).toString() : undefined,
+  };
+
+  const bot = new ForegroundGridBot(config, { suppressDashboard: true });
+  const b = bot as unknown as Record<string, unknown>;
+  b._client = exchange;
+  b._state = state;
+  b._pairInfo = null;
+  b._connections = [];
+  b._running = true;
+
+  const fixedSlPrice = stopLossPrice > 0 ? new Decimal(stopLossPrice) : null;
+  let peakValue = investment;
+
+  // Add SPLIT entry to trade log
+  if (split) {
+    const sellLevelCount = state.levels.filter((l) =>
+      new Decimal(l.price).gt(startPrice),
+    ).length;
+    if (sellLevelCount > 0) {
+      const splitCost = quotePerLevel.times(sellLevelCount);
+      result.tradeLog.push(
+        `SPLIT: Market buy ${sellLevelCount} positions @ ${startPrice} | -${splitCost.toFixed(2)}`,
+      );
+    }
+  }
+
+  for (let tickIdx = 0; tickIdx < candles.length; tickIdx++) {
+    const candle = candles[tickIdx];
+
+    // Stop if bot already stopped (stop-loss in previous tick)
+    if (!(b._running as boolean)) {
+      break;
+    }
+
+    // Snapshot pre-tick metrics
+    const prevBuys = state.stats.totalBuys;
+    const prevSells = state.stats.totalSells;
+    const prevPnl = new Decimal(state.stats.realizedPnl);
+    const prevShiftCount = state.shiftCount ?? 0;
+    const prevTradeLogLen = state.tradeLog.length;
+
+    exchange.setPrice(candle.close);
+    exchange.resetTickFills();
+
+    await (b._tick as (p: Decimal) => Promise<void>).call(bot, candle.close);
+
+    // Compute deltas
+    const newBuys = state.stats.totalBuys - prevBuys;
+    const newSells = state.stats.totalSells - prevSells;
+    const pnlDelta = new Decimal(state.stats.realizedPnl).minus(prevPnl);
+    const newShiftCount = state.shiftCount ?? 0;
+    const shiftDelta = newShiftCount - prevShiftCount;
+
+    result.totalBuys += newBuys;
+    result.totalSells += newSells;
+    result.totalTrades += newBuys + newSells;
+    result.realizedPnl = result.realizedPnl.plus(pnlDelta);
+
+    const botStopped = !(b._running as boolean);
+    if (botStopped && fixedSlPrice) {
+      result.stopLossTriggered = true;
+    }
+
+    if (shiftDelta > 0) {
+      result.trailingUpShifts += shiftDelta;
+    }
+
+    // Build fills from exchange's per-tick tracking
+    const tickFills: BacktestFill[] = [];
+    for (const fill of exchange.filledBuys) {
+      tickFills.push({
+        side: "buy",
+        price: fill.price,
+        quantity: fill.quantity,
+        quoteValue: fill.quoteValue,
+        trigger: "grid",
+      });
+    }
+    for (const fill of exchange.filledSells) {
+      const trigger: BacktestFillTrigger =
+        result.stopLossTriggered ? "stop-loss" : shiftDelta > 0 ? "trailing-up" : "grid";
+      tickFills.push({
+        side: "sell",
+        price: fill.price,
+        quantity: fill.quantity,
+        quoteValue: fill.quoteValue,
+        trigger,
+      });
+    }
+
+    // Append new trade log entries as strings
+    const newEntries = state.tradeLog.slice(prevTradeLogLen);
+    for (const entry of newEntries) {
+      const isStopLoss = entry.orderId === "stop-loss";
+      const sign = isStopLoss
+        ? "STOP-LOSS SELL"
+        : entry.side === "buy"
+          ? "BUY "
+          : "SELL";
+      const profitStr =
+        entry.profit !== undefined ? ` | profit=${entry.profit}` : "";
+      result.tradeLog.push(
+        `${sign} @ ${entry.price} | qty ${entry.quantity}${profitStr}`,
+      );
+    }
+
+    if (shiftDelta > 0) {
+      result.tradeLog.push(
+        `TRAILING UP: Grid rebuilt around ${candle.close.toFixed(2)} (shift #${newShiftCount})`,
+      );
+    }
+
+    // Drawdown using candle high/low
+    const positionBase = botTotalBaseHeld(state);
+    const highValue = exchange.cashBalance.plus(
+      positionBase.times(candle.high),
+    );
+    peakValue = Decimal.max(peakValue, highValue);
+    const lowValue = exchange.cashBalance.plus(positionBase.times(candle.low));
+    if (peakValue.gt(0)) {
+      const drawdown = peakValue.minus(lowValue).div(peakValue);
+      result.maxDrawdown = Decimal.max(result.maxDrawdown, drawdown);
+    }
+
+    if (onTick) {
+      const { position, costBasis } = botComputePosition(state);
+      const cash = exchange.cashBalance;
+      const markPrice = candle.close;
+      const unrealized = position.times(markPrice).minus(costBasis);
+      const totalValue = cash.plus(position.times(markPrice));
+      const ts =
+        typeof candle.start === "number" ? candle.start : Date.now();
+      onTick({
+        index: tickIdx,
+        timestamp: ts,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        fills: tickFills,
+        position,
+        cash,
+        realizedPnl: result.realizedPnl,
+        unrealizedPnl: unrealized,
+        totalValue,
+      });
+    }
+
+    if (result.stopLossTriggered) {
+      break;
+    }
+  }
+
+  result.finalBase = botTotalBaseHeld(state);
+  result.finalQuote = exchange.cashBalance;
+
+  return result;
 }

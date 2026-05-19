@@ -10,7 +10,7 @@ import {
   printKeyValue,
 } from "../output/formatter.js";
 import {
-  runBacktest,
+  runBacktestBot,
   optimizeGridParams,
   createGrid,
   type BacktestTickEvent,
@@ -286,7 +286,7 @@ async function handleBacktest(
     console.log(chalk.dim("─".repeat(50)));
   }
 
-  const result = runBacktest(
+  const result = await runBacktestBot(
     candles,
     gridLevels,
     rangePct,
