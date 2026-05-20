@@ -872,6 +872,27 @@ export class ForegroundGridBot {
       tradeLog: [],
     };
 
+    // Log the split market buy so it appears in recent trades
+    if (splitExecuted && splitBaseAcquired) {
+      this._logTrade(
+        "buy",
+        currentPrice.toString(),
+        splitBaseAcquired.toString(),
+        "split-init",
+      );
+    } else if (config.splitInvestment && config.dryRun && sellLevelIndices.size > 0) {
+      const dryRunBase = quotePerLevel
+        .times(sellLevelIndices.size)
+        .div(currentPrice)
+        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+      this._logTrade(
+        "buy",
+        currentPrice.toString(),
+        dryRunBase.toString(),
+        "split-init",
+      );
+    }
+
     // --- Place initial buy orders ---
     const buyLevels = levels.filter((l) =>
       config.splitInvestment
