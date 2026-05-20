@@ -357,7 +357,6 @@ export function renderDashboard(data: DashboardData): string {
     let barStr: string;
 
     const hasBuy = level.buyOrderIds.length > 0;
-    const hasPos = level.positions.length > 0;
     const buyBelow = level.index > 0 ? state.levels[level.index - 1] : null;
     const sellPosBelow =
       buyBelow?.positions.filter((p) => !!p.sellOrderId) ?? [];
@@ -371,14 +370,18 @@ export function renderDashboard(data: DashboardData): string {
         0,
       );
       const baseAmt = totalBase > 0 ? totalBase.toFixed(5) : "";
+      const sellCount = sellPosBelow.length;
+      const sellCountStr = sellCount > 1 ? chalk.dim(` (${sellCount})`) : "";
       barStr = chalk.red("\u2592\u2592\u2592\u2592\u2592");
       statusStr = baseAmt
-        ? `${chalk.red("SELL")}  ${chalk.dim(baseAmt)}`
-        : chalk.red("SELL");
+        ? `${chalk.red("SELL")}${sellCountStr}  ${chalk.dim(baseAmt)}`
+        : `${chalk.red("SELL")}${sellCountStr}`;
       if (hasBuy) statusStr += `  +${chalk.green("BUY")}`;
     } else if (hasBuy) {
+      const buyCount = level.buyOrderIds.length;
+      const buyCountStr = buyCount > 1 ? chalk.dim(` (${buyCount})`) : "";
       barStr = chalk.green("\u2592\u2592\u2592\u2592\u2592");
-      statusStr = chalk.green("BUY");
+      statusStr = chalk.green("BUY") + buyCountStr;
       if (isHeld) {
         const base = posUnsold
           .reduce((s, p) => s + parseFloat(p.baseHeld), 0)
@@ -391,13 +394,9 @@ export function renderDashboard(data: DashboardData): string {
         .toFixed(5);
       barStr = chalk.yellow("\u2588\u2588\u2588\u2588\u2588");
       statusStr = `${chalk.yellow("HELD")}  ${chalk.dim(totalBase)}`;
-    } else if (hasPos) {
-      const totalBase = level.positions
-        .reduce((s, p) => s + parseFloat(p.baseHeld), 0)
-        .toFixed(5);
-      barStr = chalk.green("\u2588\u2588\u2588\u2588\u2588");
-      statusStr = `${chalk.dim("POS")}   ${chalk.dim(totalBase)}`;
     } else {
+      // levels with only sold positions show as idle \u2014 their sell orders
+      // are already represented on the target level above
       barStr = chalk.dim("\u00B7\u00B7\u00B7\u00B7\u00B7");
       statusStr = chalk.dim("\u2014");
     }
