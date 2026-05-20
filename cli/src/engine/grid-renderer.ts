@@ -288,7 +288,6 @@ export function renderDashboard(data: DashboardData): string {
 
   let activeBuys = 0;
   let activeSells = 0;
-  let posLevels = 0;
   let heldLevels = 0;
   let idleLevels = 0;
   for (const lv of state.levels) {
@@ -298,12 +297,11 @@ export function renderDashboard(data: DashboardData): string {
       lv.index > 0 &&
       state.levels[lv.index - 1].positions.some((p) => !!p.sellOrderId);
     const hasUnsoldPos = hasPos && lv.positions.some((p) => !p.sellOrderId);
-    const hasSoldPos = hasPos && lv.positions.some((p) => !!p.sellOrderId);
 
-    if (isSellTarget) activeSells++;
-    if (hasBuy) activeBuys++;
+    // Count individual buy orders and sell orders (not levels)
+    activeBuys += lv.buyOrderIds.length;
+    activeSells += lv.positions.filter((p) => !!p.sellOrderId).length;
     if (hasUnsoldPos) heldLevels++;
-    if (hasSoldPos && !hasUnsoldPos) posLevels++;
     if (!hasBuy && !hasPos && !isSellTarget) idleLevels++;
   }
 
@@ -315,7 +313,6 @@ export function renderDashboard(data: DashboardData): string {
     chalk.green(`${activeBuys} buys`),
     chalk.red(`${activeSells} sells`),
   ];
-  if (posLevels > 0) summaryParts.push(chalk.dim(`${posLevels} pos`));
   if (heldLevels > 0) summaryParts.push(chalk.yellow(`${heldLevels} held`));
   if (idleLevels > 0) summaryParts.push(chalk.dim(`${idleLevels} idle`));
   lines.push(

@@ -574,6 +574,34 @@ export class ForegroundGridBot {
             `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
+      } else if (this._config.dryRun) {
+        // Simulate the market sell in dry-run mode
+        const costBasis = allPositions
+          .filter((p) => new Decimal(p.baseHeld).gt(0))
+          .reduce(
+            (sum, p) =>
+              sum.plus(
+                p.fillCost && p.fillCost !== "0"
+                  ? p.fillCost
+                  : state.quotePerLevel,
+              ),
+            new Decimal(0),
+          );
+        const revenue = totalBase
+          .times(currentPrice)
+          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const pnl = revenue.minus(costBasis);
+        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+          .plus(pnl)
+          .toString();
+        state.stats.totalSells++;
+        this._logTrade(
+          "sell",
+          currentPrice.toString(),
+          totalBase.toString(),
+          "stop-loss",
+          pnl.toFixed(2),
+        );
       }
 
       // Clear positions regardless of whether real sell succeeded
@@ -1604,7 +1632,7 @@ export class ForegroundGridBot {
           level.buyOrderIds.length === 0 &&
           level.positions.length === 0 &&
           new Decimal(level.price).lt(currentPrice) &&
-          level.index + 1 < state.levels.length
+          new Decimal(level.price).lt(new Decimal(state.gridPrice))
         ) {
           await this._replaceGridBuy(level);
         }
@@ -1742,7 +1770,7 @@ export class ForegroundGridBot {
         level.buyOrderIds.length === 0 &&
         level.positions.length === 0 &&
         new Decimal(level.price).lt(currentPrice) &&
-        level.index + 1 < state.levels.length
+        new Decimal(level.price).lt(new Decimal(state.gridPrice))
       ) {
         level.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
       }
