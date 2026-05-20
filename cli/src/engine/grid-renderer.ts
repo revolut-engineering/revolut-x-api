@@ -371,7 +371,8 @@ export function renderDashboard(data: DashboardData): string {
       );
       const baseAmt = totalBase > 0 ? totalBase.toFixed(5) : "";
       const sellCount = sellPosBelow.length;
-      const sellCountStr = sellCount > 1 ? chalk.dim(` (${sellCount})`) : "    ";
+      const sellCountStr =
+        sellCount > 1 ? chalk.dim(` (${sellCount})`) : "    ";
       barStr = chalk.red("\u2592\u2592\u2592\u2592\u2592");
       statusStr = baseAmt
         ? `${chalk.red("SELL")}${sellCountStr}  ${chalk.dim(baseAmt)}`

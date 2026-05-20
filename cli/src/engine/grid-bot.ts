@@ -880,7 +880,11 @@ export class ForegroundGridBot {
         splitBaseAcquired.toString(),
         "split-init",
       );
-    } else if (config.splitInvestment && config.dryRun && sellLevelIndices.size > 0) {
+    } else if (
+      config.splitInvestment &&
+      config.dryRun &&
+      sellLevelIndices.size > 0
+    ) {
       const dryRunBase = quotePerLevel
         .times(sellLevelIndices.size)
         .div(currentPrice)
