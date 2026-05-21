@@ -265,13 +265,13 @@ export function registerMarketDataTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Start of UTC time range. Accepts ISO format (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago).",
+            "Start of the time range, in your local timezone. Accepts ISO format (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago).",
           ),
         end_date: z
           .string()
           .optional()
           .describe(
-            "End of UTC time range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
+            "End of the time range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
           ),
       },
       annotations: {
@@ -385,13 +385,13 @@ export function registerMarketDataTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Start of UTC date range. Accepts ISO format (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days before end_date if omitted.",
+            "Start of the date range, in your local timezone. Accepts ISO format (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days before end_date if omitted.",
           ),
         end_date: z
           .string()
           .optional()
           .describe(
-            "End of UTC date range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
+            "End of the date range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
           ),
         totalLimit: z
           .number()
