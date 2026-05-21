@@ -207,8 +207,8 @@ async function handleBacktest(
   pair = validatePair(pair);
 
   const levelsPerSide = parseInt(opts.levels, 10);
-  if (isNaN(levelsPerSide) || levelsPerSide < 2 || levelsPerSide > 25) {
-    printError("--levels must be between 2 and 25 (per side).");
+  if (isNaN(levelsPerSide) || levelsPerSide < 1 || levelsPerSide > 25) {
+    printError("--levels must be between 1 and 25 (per side).");
     process.exit(1);
   }
   const gridLevels = levelsPerSide * 2;
@@ -538,12 +538,12 @@ async function handleOptimize(
       .filter((x) => x)
       .map((x) => {
         const n = parseInt(x, 10);
-        if (isNaN(n) || n < 2 || n > 25) throw new Error();
+        if (isNaN(n) || n < 1 || n > 25) throw new Error();
         return n * 2;
       });
   } catch {
     printError(
-      "--levels must be comma-separated integers between 2 and 25 (per side).",
+      "--levels must be comma-separated integers between 1 and 25 (per side).",
     );
     process.exit(1);
   }
@@ -737,8 +737,8 @@ async function handleRun(
   pair = validatePair(pair);
 
   const levelsPerSide = parseInt(opts.levels, 10);
-  if (isNaN(levelsPerSide) || levelsPerSide < 2 || levelsPerSide > 25) {
-    printError("--levels must be between 2 and 25 (per side).");
+  if (isNaN(levelsPerSide) || levelsPerSide < 1 || levelsPerSide > 25) {
+    printError("--levels must be between 1 and 25 (per side).");
     process.exit(1);
   }
   const gridLevels = levelsPerSide * 2;

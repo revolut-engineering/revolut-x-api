@@ -380,7 +380,12 @@ export class ForegroundGridBot {
     const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
     const cs = this._cs;
 
-    if (this._config.trailingUp && currentPrice.gt(upper.times(ratio))) {
+    if (
+      this._config.trailingUp &&
+      currentPrice.gte(
+        upper.times(ratio).plus(upper.times(ratio.pow(2))).div(2),
+      )
+    ) {
       this._shouldRebuildUp = true;
       this._boundaryAlerted = false;
       return;
@@ -412,6 +417,10 @@ export class ForegroundGridBot {
     const state = this._state!;
     const client = this._client;
     const cs = this._cs;
+    const N = state.levels.length;
+
+    // Save per-level buy order counts before clearing (used for split mode)
+    const savedCounts = state.levels.map((l) => l.buyOrderIds.length);
 
     if (!this._config.dryRun && client) {
       const cancels: Promise<void>[] = [];
@@ -441,26 +450,51 @@ export class ForegroundGridBot {
       level.positions = [];
     }
 
-    const rangePct = new Decimal(this._config.rangePct);
-    const lower = currentPrice.times(new Decimal(1).minus(rangePct));
-    const upper = currentPrice.times(new Decimal(1).plus(rangePct));
-    const ratio = upper
-      .div(lower)
-      .pow(new Decimal(1).div(state.levels.length - 1));
+    // Compute ratio from existing level prices (before shift)
+    const lower = new Decimal(state.levels[0].price);
+    const upper = new Decimal(state.levels[N - 1].price);
+    const ratio = upper.div(lower).pow(new Decimal(1).div(N - 1));
     const quoteStep = this._getQuoteStep();
 
-    for (let i = 0; i < state.levels.length; i++) {
-      state.levels[i].price = lower
-        .times(ratio.pow(i))
+    // Shift amount:
+    //   split:    find smallest k such that new upper (old_upper × ratio^k) > currentPrice
+    //             buy counts come from savedCounts; intermediate empty levels are acceptable
+    //   no-split: find smallest k such that levels[N/2] (first sell-destination) > currentPrice
+    //             this guarantees exactly N/2 buy levels below price after the shift
+    let k: number;
+    if (this._config.splitInvestment) {
+      k = 1;
+      while (upper.times(ratio.pow(k)).lte(currentPrice)) {
+        k++;
+      }
+    } else {
+      const sellBoundaryPrice = new Decimal(
+        state.levels[Math.floor(N / 2)].price,
+      );
+      k = Math.floor(N / 2) + 1;
+      while (sellBoundaryPrice.times(ratio.pow(k)).lte(currentPrice)) {
+        k++;
+      }
+    }
+    const ratioK = ratio.pow(k);
+
+    for (let i = 0; i < N; i++) {
+      state.levels[i].price = new Decimal(state.levels[i].price)
+        .times(ratioK)
         .toDecimalPlaces(quoteStep.decimalPlaces(), Decimal.ROUND_DOWN)
         .toString();
-      state.levels[i].index = i;
     }
 
     state.gridPrice = currentPrice.toString();
 
-    for (const level of state.levels) {
-      if (new Decimal(level.price).lt(currentPrice)) {
+    for (let i = 0; i < N; i++) {
+      const level = state.levels[i];
+      if (!new Decimal(level.price).lt(currentPrice)) continue;
+
+      // split: restore savedCounts per level; no-split: exactly 1 buy per level below price
+      const count = this._config.splitInvestment ? savedCounts[i] : 1;
+
+      for (let j = 0; j < count; j++) {
         try {
           const orderId = await this._placeBuyOrder(
             level,
@@ -1876,7 +1910,7 @@ export class ForegroundGridBot {
     quoteSize: Decimal,
   ): Promise<string> {
     if (this._config.dryRun) {
-      return `dry-buy-${level.index}`;
+      return `dry-buy-${randomUUID().slice(0, 8)}`;
     }
 
     const resp = await this._client!.placeOrder({
