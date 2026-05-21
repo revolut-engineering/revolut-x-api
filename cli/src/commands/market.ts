@@ -9,6 +9,8 @@ import {
   printJson,
   printTable,
   printKeyValue,
+  formatLocalDateTime,
+  LOCAL_TIME_NOTE,
   type ColumnDef,
 } from "../output/formatter.js";
 
@@ -297,11 +299,11 @@ Examples:
     )
     .option(
       "--since <date>",
-      "Start time (ISO date, epoch ms, or relative: 7d, 1w, 4h, today)",
+      "Start time in local time (ISO date, epoch ms, or relative: 7d, 1w, 4h, today)",
     )
     .option(
       "--until <date>",
-      "End time (ISO date, epoch ms, or relative: today, yesterday)",
+      "End time in local time (ISO date, epoch ms, or relative: today, yesterday)",
     )
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
@@ -382,7 +384,7 @@ Examples:
             const columns: ColumnDef<Candle>[] = [
               {
                 header: "Time",
-                accessor: (c) => new Date(c.start).toISOString(),
+                accessor: (c) => formatLocalDateTime(c.start),
               },
               { header: "Open", key: "open", align: "right" },
               { header: "High", key: "high", align: "right" },
@@ -390,6 +392,9 @@ Examples:
               { header: "Close", key: "close", align: "right" },
               { header: "Volume", key: "volume", align: "right" },
             ];
+            if (result.data.length > 0) {
+              console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
+            }
             printTable(result.data, columns);
           }
         } catch (err) {

@@ -3,14 +3,14 @@ export function parseTimestamp(value: string): number {
 
   if (trimmed === "today") {
     const d = new Date();
-    d.setUTCHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
     return d.getTime();
   }
 
   if (trimmed === "yesterday") {
     const d = new Date();
-    d.setUTCHours(0, 0, 0, 0);
-    d.setUTCDate(d.getUTCDate() - 1);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 1);
     return d.getTime();
   }
 
@@ -29,6 +29,11 @@ export function parseTimestamp(value: string): number {
 
   const num = Number(value);
   if (!isNaN(num)) return num;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split("-").map(Number);
+    return new Date(y, m - 1, d).getTime();
+  }
 
   const date = new Date(value);
   if (isNaN(date.getTime())) {

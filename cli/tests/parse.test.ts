@@ -12,8 +12,8 @@ describe("parseTimestamp", () => {
     expect(parseTimestamp("1700000000000")).toBe(1700000000000);
   });
 
-  it("parses ISO date strings", () => {
-    expect(parseTimestamp("2025-01-01")).toBe(new Date("2025-01-01").getTime());
+  it("parses bare date strings as local midnight", () => {
+    expect(parseTimestamp("2025-01-01")).toBe(new Date(2025, 0, 1).getTime());
   });
 
   it("parses ISO datetime strings", () => {
@@ -22,20 +22,23 @@ describe("parseTimestamp", () => {
     );
   });
 
-  it("today returns midnight UTC of current day", () => {
+  it("today returns local midnight of current day", () => {
     vi.useFakeTimers();
     vi.setSystemTime(FIXED_NOW);
     const result = parseTimestamp("today");
-    const expected = new Date("2025-06-15T00:00:00.000Z").getTime();
-    expect(result).toBe(expected);
+    const expected = new Date(FIXED_NOW);
+    expected.setHours(0, 0, 0, 0);
+    expect(result).toBe(expected.getTime());
   });
 
-  it("yesterday returns midnight UTC of previous day", () => {
+  it("yesterday returns local midnight of previous day", () => {
     vi.useFakeTimers();
     vi.setSystemTime(FIXED_NOW);
     const result = parseTimestamp("yesterday");
-    const expected = new Date("2025-06-14T00:00:00.000Z").getTime();
-    expect(result).toBe(expected);
+    const expected = new Date(FIXED_NOW);
+    expected.setHours(0, 0, 0, 0);
+    expected.setDate(expected.getDate() - 1);
+    expect(result).toBe(expected.getTime());
   });
 
   it("7d returns 7 days ago from now", () => {

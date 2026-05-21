@@ -54,7 +54,7 @@ revx market candles ETH-USD --interval 4h --since 30d
 
 **Intervals:** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `2d`, `4d`, `1w`, `2w`, `4w` (or raw minutes)
 
-**Time formats:** Relative (`7d`, `1w`, `4h`, `30m`, `5m`, `today`, `yesterday`), ISO date (`2025-04-14`), Unix epoch ms
+**Time formats:** Relative (`7d`, `1w`, `4h`, `30m`, `5m`, `today`, `yesterday`), ISO date (`2025-04-14`), Unix epoch ms. Date/time inputs are interpreted in your local timezone, and output timestamps are shown in local time.
 
 **Default behavior:** When `--since` and `--until` are omitted, fetches the maximum available history for the given interval (up to 50,000 candles).
 

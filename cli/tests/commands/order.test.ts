@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 import { registerOrderCommand } from "../../src/commands/order.js";
+import { formatLocalDateTime } from "../../src/output/formatter.js";
 
 const mockPlaceOrder = vi.fn();
 const mockGetActiveOrders = vi.fn();
@@ -375,7 +376,7 @@ describe("order open", () => {
   it("displays created timestamp in the output", async () => {
     await program.parseAsync(["node", "revx", "order", "open"]);
     const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("2023-11-14T22:13:20");
+    expect(output).toContain(formatLocalDateTime(1700000000000));
   });
 });
 
@@ -546,7 +547,7 @@ describe("order history", () => {
   it("displays created timestamp in the output", async () => {
     await program.parseAsync(["node", "revx", "order", "history"]);
     const output = logSpy.mock.calls.flat().join(" ");
-    expect(output).toContain("2023-11-14T22:13:20");
+    expect(output).toContain(formatLocalDateTime(1700000000000));
   });
 });
 
