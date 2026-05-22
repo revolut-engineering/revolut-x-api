@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerTradingTools } from "../../src/tools/trading.js";
+import { formatDate } from "../../src/shared/_helpers.js";
 import { vi, describe, beforeEach, it, expect } from "vitest";
 
 const mockClient = {
@@ -577,7 +578,7 @@ describe("get_order_fills", () => {
     expect(text).toContain("95000");
     expect(text).toContain("0.001");
     expect(text).toContain("false");
-    expect(text).toContain("2023-11-14 22:13:20 UTC");
+    expect(text).toContain(formatDate(1700000000000));
   });
 
   it("returns empty message when no fills", async () => {

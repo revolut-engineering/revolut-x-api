@@ -31,7 +31,7 @@ const SERVER_INSTRUCTIONS = `Revolut X read-only data, account state, historical
 
 Data hygiene (apply to every reply):
 - Always show the currency or unit next to a numeric amount (e.g., "USD 45,000", "0.5 BTC", "12 USD/BTC").
-- All dates and timestamps are UTC unless the tool output says otherwise; preserve that in your reply.
+- All date/time inputs and outputs are in the user's local machine timezone; output timestamps are suffixed "(local)". Preserve local time in your reply — do not convert to UTC.
 - Use only values that appear in tool results. If a tool returns no data for a requested time window, state explicitly "I do not have data for that time" and stop — do NOT fall back on prior knowledge, training-data estimates, or "approximately X" guesses. Inventing a price you believe to be right is fabrication and is not allowed.
 
 Safety:

@@ -219,7 +219,7 @@ export function registerTradingTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Start of UTC date range. Accepts ISO format (e.g. '2024-05-07') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
+            "Start of the date range, in your local timezone. Accepts ISO format (e.g. '2024-05-07') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
               "Earliest supported date is 2024-05-07. " +
               "If only start_date is provided, all orders from this date until now are returned. " +
               "If omitted, defaults to 30 days before end_date (or 30 days ago when both dates are omitted).",
@@ -228,7 +228,7 @@ export function registerTradingTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "End of UTC date range. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
+            "End of the date range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). " +
               "If omitted, defaults to the current timestamp.",
           ),
         totalLimit: z

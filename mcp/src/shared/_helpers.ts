@@ -95,12 +95,17 @@ function parseRelativeDate(value: string): number | null {
 function parseDate(value: string): number | { error: string } {
   const relative = parseRelativeDate(value);
   if (relative !== null) return relative;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split("-").map(Number);
+    return new Date(y, m - 1, d).getTime();
+  }
   const d = new Date(value);
   if (isNaN(d.getTime())) {
     return {
       error:
         `Invalid date format: '${value}'. ` +
-        "Use ISO 8601 (e.g. '2024-01-15') or relative (e.g. '1h', '30m', '7d').",
+        "Use a local date (e.g. '2024-01-15'), local date-time (e.g. '2024-01-15T14:30'), or relative (e.g. '1h', '30m', '7d').",
     };
   }
   return d.getTime();
@@ -153,7 +158,7 @@ export function formatDate(value: number | string | Date): string {
   const d = new Date(value);
   const pad = (n: number) => String(n).padStart(2, "0");
   return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
-    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} (local)`
   );
 }
