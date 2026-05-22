@@ -25,23 +25,17 @@ revx strategy grid backtest BTC-USD
 revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
 revx strategy grid backtest ETH-USD --days 60 --interval 4h
 revx strategy grid backtest BTC-USD --split
-revx strategy grid backtest BTC-USD --trailing-up --stop-loss 85000
 revx strategy grid backtest BTC-USD --json
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--levels <n>` | 5 | Grid levels per side (1-25) |
+| `--levels <n>` | 5 | Grid levels per side (2-25) |
 | `--range <pct>` | 10 | Grid range +/- % from mid price |
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
-| `--trailing-up` | off | Simulate grid rebuild when price exits the upper boundary |
-| `--stop-loss <price>` | off | Stop backtest when price reaches this absolute value (must be below the lowest grid level) |
-| `--prices <spec>` | api | Drive the backtest with a synthetic price sequence instead of fetching real candles. Sources: `api` (default), `file:<path>`, `stdin`, `inline:<csv>` (e.g. `inline:100,102,98`), `gen:<type>?<params>` (`linear`, `sine`, `walk`, `steps`). |
-| `--trace` | off | Emit a per-tick trace of strategy reaction (price, fills, position, P&L). With `--json`, emits NDJSON. |
-| `--json` | off | Output as JSON |
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
 
@@ -58,7 +52,6 @@ revx strategy grid optimize BTC-USD
 revx strategy grid optimize BTC-USD --investment 5000 --days 60
 revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 revx strategy grid optimize BTC-USD --split
-revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 ```
 
 | Flag | Default | Description |
@@ -70,10 +63,6 @@ revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
-| `--trailing-up` | off | Simulate grid rebuild when price exits the upper boundary |
-| `--stop-loss <price>` | off | Skip combinations where the stop-loss sits inside the grid; stop each backtest run when price reaches this absolute value |
-| `--prices <spec>` | api | Sweep parameters against a synthetic price sequence instead of fetching real candles. Sources: `api` (default), `file:<path>`, `stdin`, `inline:<csv>`, `gen:<type>?<params>`. |
-| `--json` | off | Output as JSON |
 
 Max 200 parameter combinations. **Not long-running** — completes and returns results.
 
@@ -133,23 +122,17 @@ revx strategy grid run BTC-USD --levels 10 --range 5 --investment 1000 --interva
 revx strategy grid run BTC-USD --investment 500 --split
 revx strategy grid run BTC-USD --investment 100 --dry-run
 revx strategy grid run BTC-USD --investment 500 --reset
-revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--investment <amount>` | **required** | Capital in quote currency |
-| `--levels <n>` | 5 | Grid levels per side (1-25) |
+| `--levels <n>` | 5 | Grid levels per side (2-25) |
 | `--range <pct>` | 5 | Grid range +/- % from mid |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above current price) |
 | `--interval <sec>` | 10 | Polling interval in seconds |
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
-| `--trailing-up` | off | Rebuild grid around current price when upper boundary is breached |
-| `--stop-loss <price>` | off | Stop bot when price reaches this absolute value (must be below the lowest grid level) |
-| `--prices <spec>` | api | **Dry-run only.** Drive the bot with a synthetic price sequence instead of polling the live order book. Sources: `api` (default), `file:<path>`, `stdin`, `inline:<csv>`, `gen:<type>?<params>`, `interactive` (prompt for each tick). Rejected unless `--dry-run` is also set. |
-| `--trace` | off | **Dry-run only.** Per-tick trace of the bot's reaction (price, fills, position, open orders, P&L). With `--json`, emits NDJSON. |
-| `--json` | off | Output as JSON. Combined with `--trace`, emits NDJSON per-tick records. |
 
 Ctrl+C for graceful shutdown (cancels open orders, prints summary).
 
