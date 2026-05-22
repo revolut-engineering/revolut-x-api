@@ -156,7 +156,7 @@ function formatBacktestResult(
     : netReturn.div(investment).times(100);
 
   const levels = createGrid(startPrice, gridLevels, rangePct);
-  const buyLevels = levels.filter((lv) => lv.hasBuyOrder).length;
+  const buyLevels = levels.filter((lv) => lv.buyCount > 0).length;
   const sellLevels = split
     ? levels.filter((lv) => lv.price.gt(startPrice)).length
     : 0;
@@ -323,7 +323,7 @@ export function registerBacktestTools(server: McpServer): void {
           .number()
           .default(5)
           .describe(
-            "Grid levels per side (default 5, range 2-25). Total orders = 2 × levels.",
+            "Grid levels per side (default 5, range 1-25). Total orders = 2 × levels.",
           ),
         range_pct: z
           .string()
@@ -351,6 +351,18 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Split investment across buy and sell levels. When true, market-buys base for sell levels above the starting price — best for ranging/sideways markets. When false (default), all capital funds buy levels only — best for trending markets.",
           ),
+        trailing_up: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Simulate trailing up: rebuild the grid when price exits the upper boundary. Best for trending markets.",
+          ),
+        stop_loss_price: z
+          .number()
+          .default(0)
+          .describe(
+            "Absolute price at which stop-loss triggers. Must be below the lowest grid level. 0 disables stop-loss (default). Does not change when trailing-up shifts the grid.",
+          ),
       },
       annotations: {
         title: "Run Grid Backtest",
@@ -367,6 +379,8 @@ export function registerBacktestTools(server: McpServer): void {
       resolution,
       days,
       split_investment,
+      trailing_up,
+      stop_loss_price,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -374,9 +388,9 @@ export function registerBacktestTools(server: McpServer): void {
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      if (grid_levels < 2 || grid_levels > 25) {
+      if (grid_levels < 1 || grid_levels > 25) {
         return textResult(
-          `grid_levels must be between 2 and 25 (per side), got ${grid_levels}.`,
+          `grid_levels must be between 1 and 25 (per side), got ${grid_levels}.`,
         );
       }
       const totalLevels = grid_levels * 2;
@@ -411,6 +425,8 @@ export function registerBacktestTools(server: McpServer): void {
         rangeDec,
         investDec!,
         split_investment,
+        trailing_up,
+        stop_loss_price,
       );
 
       return textResult(
@@ -476,6 +492,18 @@ export function registerBacktestTools(server: McpServer): void {
           .describe(
             "Split investment across buy and sell levels. When true, market-buys base for sell levels above the starting price — best for ranging/sideways markets. When false (default), all capital funds buy levels only — best for trending markets.",
           ),
+        trailing_up: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Simulate trailing up: rebuild grid when price exits upper boundary. Best for trending markets.",
+          ),
+        stop_loss_price: z
+          .number()
+          .default(0)
+          .describe(
+            "Absolute price at which stop-loss triggers. Must be below the lowest grid level. 0 disables stop-loss (default).",
+          ),
       },
       annotations: {
         title: "Optimize Grid Parameters",
@@ -493,6 +521,8 @@ export function registerBacktestTools(server: McpServer): void {
       range_pct_options,
       top_n,
       split_investment,
+      trailing_up,
+      stop_loss_price,
     }) => {
       const { getRevolutXClient, SETUP_GUIDE } = await import("../server.js");
 
@@ -518,12 +548,12 @@ export function registerBacktestTools(server: McpServer): void {
           .filter((x) => x)
           .map((x) => {
             const n = parseInt(x, 10);
-            if (isNaN(n) || n < 2 || n > 25) throw new Error();
+            if (isNaN(n) || n < 1 || n > 25) throw new Error();
             return n * 2;
           });
       } catch {
         return textResult(
-          "grid_levels_options must be comma-separated integers between 2 and 25 (per side).",
+          "grid_levels_options must be comma-separated integers between 1 and 25 (per side).",
         );
       }
 
@@ -572,6 +602,8 @@ export function registerBacktestTools(server: McpServer): void {
         investDec!,
         actualDays,
         split_investment,
+        trailing_up,
+        stop_loss_price,
       );
 
       return textResult(
