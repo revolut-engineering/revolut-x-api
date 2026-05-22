@@ -383,7 +383,10 @@ export class ForegroundGridBot {
     if (
       this._config.trailingUp &&
       currentPrice.gte(
-        upper.times(ratio).plus(upper.times(ratio.pow(2))).div(2),
+        upper
+          .times(ratio)
+          .plus(upper.times(ratio.pow(2)))
+          .div(2),
       )
     ) {
       this._shouldRebuildUp = true;
@@ -493,6 +496,7 @@ export class ForegroundGridBot {
 
       // split: restore savedCounts per level; no-split: exactly 1 buy per level below price
       const count = this._config.splitInvestment ? savedCounts[i] : 1;
+      level.expectedBuys = count;
 
       for (let j = 0; j < count; j++) {
         try {
@@ -1688,12 +1692,15 @@ export class ForegroundGridBot {
     if (canPlaceBuys) {
       for (const level of state.levels) {
         if (
-          level.buyOrderIds.length === 0 &&
           level.positions.length === 0 &&
           new Decimal(level.price).lt(currentPrice) &&
           new Decimal(level.price).lt(new Decimal(state.gridPrice))
         ) {
-          await this._replaceGridBuy(level);
+          const expected = level.expectedBuys ?? 1;
+          const missing = expected - level.buyOrderIds.length;
+          for (let i = 0; i < missing; i++) {
+            await this._replaceGridBuy(level);
+          }
         }
       }
     }

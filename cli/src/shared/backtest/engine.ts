@@ -21,9 +21,8 @@ export interface BacktestCandle {
 interface GridLevel {
   price: Decimal;
   index: number;
-  hasBuyOrder: boolean;
-  hasPosition: boolean;
-  baseHeld: Decimal;
+  buyCount: number; // pending buy orders at this level
+  positions: Decimal[]; // baseHeld for each open position
 }
 
 interface BacktestResult {
@@ -110,9 +109,8 @@ export function createGrid(
     const level: GridLevel = {
       price,
       index: i,
-      hasBuyOrder: price.lt(startPrice),
-      hasPosition: false,
-      baseHeld: new Decimal(0),
+      buyCount: price.lt(startPrice) ? 1 : 0,
+      positions: [],
     };
     levels.push(level);
   }
@@ -123,7 +121,9 @@ export function createGrid(
 function sumBaseHeld(levels: GridLevel[]): Decimal {
   let total = new Decimal(0);
   for (const lv of levels) {
-    total = total.plus(lv.baseHeld);
+    for (const baseHeld of lv.positions) {
+      total = total.plus(baseHeld);
+    }
   }
   return total;
 }
@@ -145,10 +145,9 @@ function emitTick(
   let position = new Decimal(0);
   let costBasis = new Decimal(0);
   for (const lv of levels) {
-    if (lv.baseHeld.gt(0)) {
-      position = position.plus(lv.baseHeld);
-      const buyPrice = lv.index > 0 ? levels[lv.index].price : lv.price;
-      costBasis = costBasis.plus(lv.baseHeld.times(buyPrice));
+    for (const baseHeld of lv.positions) {
+      position = position.plus(baseHeld);
+      costBasis = costBasis.plus(baseHeld.times(lv.price));
     }
   }
   const markPrice = candle.close;
@@ -181,37 +180,37 @@ function runBuyPass(
   tickFills: BacktestFill[],
 ): Decimal {
   for (const level of levels) {
-    if (level.hasBuyOrder && low.lte(level.price)) {
+    if (level.buyCount > 0 && low.lte(level.price)) {
       const baseBought = quotePerLevel
         .div(level.price)
         .toDecimalPlaces(5, Decimal.ROUND_DOWN);
 
-      level.hasBuyOrder = false;
-      level.hasPosition = true;
-      level.baseHeld = baseBought;
+      for (let i = 0; i < level.buyCount; i++) {
+        level.positions.push(baseBought);
+        quoteBalance = quoteBalance.minus(quotePerLevel);
+        result.totalBuys += 1;
+        result.totalTrades += 1;
 
-      quoteBalance = quoteBalance.minus(quotePerLevel);
-      result.totalBuys += 1;
-      result.totalTrades += 1;
+        const totalPnl = quoteBalance
+          .plus(sumBaseHeld(levels).times(level.price))
+          .minus(investment);
+        const roiPct = investment.isZero()
+          ? new Decimal(0)
+          : totalPnl.div(investment).times(100);
 
-      const totalPnl = quoteBalance
-        .plus(sumBaseHeld(levels).times(level.price))
-        .minus(investment);
-      const roiPct = investment.isZero()
-        ? new Decimal(0)
-        : totalPnl.div(investment).times(100);
-
-      result.tradeLog.push(
-        `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel} | ` +
-          `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
-      );
-      tickFills.push({
-        side: "buy",
-        price: level.price,
-        quantity: baseBought,
-        quoteValue: quotePerLevel,
-        trigger: "grid",
-      });
+        result.tradeLog.push(
+          `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel} | ` +
+            `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
+        );
+        tickFills.push({
+          side: "buy",
+          price: level.price,
+          quantity: baseBought,
+          quoteValue: quotePerLevel,
+          trigger: "grid",
+        });
+      }
+      level.buyCount = 0;
     }
   }
   return quoteBalance;
@@ -227,45 +226,45 @@ function runSellPass(
   tickFills: BacktestFill[],
 ): Decimal {
   for (const level of levels) {
-    if (level.hasPosition && level.index + 1 < levels.length) {
+    if (level.positions.length > 0 && level.index + 1 < levels.length) {
       const sellLevel = levels[level.index + 1];
       if (high.gte(sellLevel.price)) {
-        const baseToSell = level.baseHeld;
-        const quoteReceived = baseToSell
-          .times(sellLevel.price)
-          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const positionsToSell = level.positions.splice(0);
 
-        const profit = quoteReceived.minus(quotePerLevel);
+        for (const baseHeld of positionsToSell) {
+          const quoteReceived = baseHeld
+            .times(sellLevel.price)
+            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+          const profit = quoteReceived.minus(quotePerLevel);
 
-        level.hasPosition = false;
-        level.baseHeld = new Decimal(0);
-        level.hasBuyOrder = true;
+          level.buyCount++;
+          quoteBalance = quoteBalance.plus(quoteReceived);
+          result.totalSells += 1;
+          result.totalTrades += 1;
+          result.realizedPnl = result.realizedPnl.plus(profit);
 
-        quoteBalance = quoteBalance.plus(quoteReceived);
-        result.totalSells += 1;
-        result.totalTrades += 1;
-        tickFills.push({
-          side: "sell",
-          price: sellLevel.price,
-          quantity: baseToSell,
-          quoteValue: quoteReceived,
-          profit,
-          trigger: "grid",
-        });
-        result.realizedPnl = result.realizedPnl.plus(profit);
+          tickFills.push({
+            side: "sell",
+            price: sellLevel.price,
+            quantity: baseHeld,
+            quoteValue: quoteReceived,
+            profit,
+            trigger: "grid",
+          });
 
-        const totalPnl = quoteBalance
-          .plus(sumBaseHeld(levels).times(sellLevel.price))
-          .minus(investment);
-        const roiPct = investment.isZero()
-          ? new Decimal(0)
-          : totalPnl.div(investment).times(100);
+          const totalPnl = quoteBalance
+            .plus(sumBaseHeld(levels).times(sellLevel.price))
+            .minus(investment);
+          const roiPct = investment.isZero()
+            ? new Decimal(0)
+            : totalPnl.div(investment).times(100);
 
-        result.tradeLog.push(
-          `#${result.totalTrades}  SELL @ ${sellLevel.price} | qty ${baseToSell} | ` +
-            `+${quoteReceived} | profit=${profit.toFixed(2)} | ` +
-            `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
-        );
+          result.tradeLog.push(
+            `#${result.totalTrades}  SELL @ ${sellLevel.price} | qty ${baseHeld} | ` +
+              `+${quoteReceived} | profit=${profit.toFixed(2)} | ` +
+              `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
+          );
+        }
       }
     }
   }
@@ -347,7 +346,7 @@ export function runBacktest(
 
   let buyLevelCount = 0;
   for (const lv of levels) {
-    if (lv.hasBuyOrder) buyLevelCount++;
+    if (lv.buyCount > 0) buyLevelCount++;
   }
 
   const sellLevelIndices: number[] = [];
@@ -363,7 +362,7 @@ export function runBacktest(
     ? buyLevelCount + sellLevelIndices.length
     : buyLevelCount;
 
-  let quotePerLevel = investment
+  const quotePerLevel = investment
     .div(Math.max(totalCapitalLevels, 1))
     .toDecimalPlaces(2, Decimal.ROUND_DOWN);
 
@@ -379,9 +378,8 @@ export function runBacktest(
     for (const sellIdx of sellLevelIndices) {
       const buyLevel = levels[sellIdx - 1];
       if (buyLevel) {
-        buyLevel.hasPosition = true;
-        // buyLevel.hasBuyOrder = false;
-        buyLevel.baseHeld = basePerLevel;
+        buyLevel.positions.push(basePerLevel);
+        // NOTE: buyCount NOT cleared — split init does not consume the buy slot
       }
     }
 
@@ -404,8 +402,9 @@ export function runBacktest(
     if (fixedSlPrice && candle.low.lte(fixedSlPrice)) {
       // Simulate market sell of all held positions at the stop-loss price
       for (const level of levels) {
-        if (level.hasPosition && level.baseHeld.gt(0)) {
-          const quoteReceived = level.baseHeld
+        while (level.positions.length > 0) {
+          const baseHeld = level.positions.pop()!;
+          const quoteReceived = baseHeld
             .times(fixedSlPrice)
             .toDecimalPlaces(2, Decimal.ROUND_DOWN);
           const profit = quoteReceived.minus(quotePerLevel);
@@ -414,20 +413,17 @@ export function runBacktest(
           result.totalSells++;
           result.totalTrades++;
           result.tradeLog.push(
-            `#${result.totalTrades}  STOP-LOSS SELL @ ${fixedSlPrice.toFixed(2)} | qty ${level.baseHeld.toFixed(5)} | ` +
+            `#${result.totalTrades}  STOP-LOSS SELL @ ${fixedSlPrice.toFixed(2)} | qty ${baseHeld.toFixed(5)} | ` +
               `+${quoteReceived.toFixed(2)} | profit=${profit.toFixed(2)}`,
           );
           tickFills.push({
             side: "sell",
             price: fixedSlPrice,
-            quantity: level.baseHeld,
+            quantity: baseHeld,
             quoteValue: quoteReceived,
             profit,
             trigger: "stop-loss",
           });
-          level.hasPosition = false;
-          level.baseHeld = new Decimal(0);
-          level.hasBuyOrder = true;
         }
       }
       result.stopLossTriggered = true;
@@ -463,13 +459,24 @@ export function runBacktest(
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
       const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
-      if (candle.high.gt(upper.times(ratio))) {
+      if (
+        candle.high.gte(
+          upper
+            .times(ratio)
+            .plus(upper.times(ratio.pow(2)))
+            .div(2),
+        )
+      ) {
         const rebuildPrice = candle.close;
+
+        // Save buyCount before sell pass clears things (used to restore split slots)
+        const savedBuyCounts = levels.map((l) => l.buyCount);
 
         // Sell all held positions at the rebuild price
         for (const level of levels) {
-          if (level.hasPosition && level.baseHeld.gt(0)) {
-            const quoteReceived = level.baseHeld
+          while (level.positions.length > 0) {
+            const baseHeld = level.positions.pop()!;
+            const quoteReceived = baseHeld
               .times(rebuildPrice)
               .toDecimalPlaces(2, Decimal.ROUND_DOWN);
             const profit = quoteReceived.minus(quotePerLevel);
@@ -484,26 +491,42 @@ export function runBacktest(
             tickFills.push({
               side: "sell",
               price: rebuildPrice,
-              quantity: level.baseHeld,
+              quantity: baseHeld,
               quoteValue: quoteReceived,
               profit,
               trigger: "trailing-up",
             });
-            level.hasPosition = false;
-            level.baseHeld = new Decimal(0);
           }
         }
 
-        // Rebuild grid around the close price
-        const newLevels = createGrid(rebuildPrice, levels.length, rangePct);
-        levels.length = 0;
-        levels.push(...newLevels);
+        // Shift the grid by ratio^k steps (preserves geometric spacing)
+        let k: number;
+        if (split) {
+          k = 1;
+          while (upper.times(ratio.pow(k)).lte(rebuildPrice)) k++;
+        } else {
+          const sellBoundary = levels[Math.floor(levels.length / 2)].price;
+          k = Math.floor(levels.length / 2) + 1;
+          while (sellBoundary.times(ratio.pow(k)).lte(rebuildPrice)) k++;
+        }
+        const ratioK = ratio.pow(k);
+        for (let i = 0; i < levels.length; i++) {
+          levels[i].price = levels[i].price
+            .times(ratioK)
+            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        }
 
-        // Recalculate quotePerLevel from available quote balance
-        const newBuyCount = levels.filter((l) => l.hasBuyOrder).length;
-        quotePerLevel = quoteBalance
-          .div(Math.max(newBuyCount, 1))
-          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        // Reset buy counts and positions based on new prices
+        for (let i = 0; i < levels.length; i++) {
+          const level = levels[i];
+          if (level.price.lt(rebuildPrice)) {
+            level.buyCount = split ? savedBuyCounts[i] : 1;
+          } else {
+            level.buyCount = 0;
+          }
+          level.positions = [];
+        }
+        // quotePerLevel is preserved (not recalculated), matching CLI bot behaviour
 
         result.trailingUpShifts++;
         result.tradeLog.push(
@@ -512,13 +535,9 @@ export function runBacktest(
       }
     }
 
-    let totalBaseHeld = new Decimal(0);
-    for (const lv of levels) {
-      totalBaseHeld = totalBaseHeld.plus(lv.baseHeld);
-    }
-    const highValue = quoteBalance.plus(totalBaseHeld.times(candle.high));
+    const highValue = quoteBalance.plus(sumBaseHeld(levels).times(candle.high));
     peakValue = Decimal.max(peakValue, highValue);
-    const lowValue = quoteBalance.plus(totalBaseHeld.times(candle.low));
+    const lowValue = quoteBalance.plus(sumBaseHeld(levels).times(candle.low));
     if (peakValue.gt(0)) {
       const drawdown = peakValue.minus(lowValue).div(peakValue);
       result.maxDrawdown = Decimal.max(result.maxDrawdown, drawdown);
@@ -537,11 +556,7 @@ export function runBacktest(
     }
   }
 
-  let finalBase = new Decimal(0);
-  for (const lv of levels) {
-    finalBase = finalBase.plus(lv.baseHeld);
-  }
-  result.finalBase = finalBase;
+  result.finalBase = sumBaseHeld(levels);
   result.finalQuote = quoteBalance;
 
   return result;

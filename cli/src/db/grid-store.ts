@@ -20,6 +20,7 @@ export interface GridLevelState {
   price: string;
   buyOrderIds: string[];
   positions: GridLevelPosition[];
+  expectedBuys?: number;
 }
 
 export interface GridTradeEntry {

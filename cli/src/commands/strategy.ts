@@ -342,7 +342,7 @@ async function handleBacktest(
     : netReturn.div(investment).times(100);
 
   const levels = createGrid(startPrice, gridLevels, rangePct);
-  const buyLevels = levels.filter((lv) => lv.hasBuyOrder).length;
+  const buyLevels = levels.filter((lv) => lv.buyCount > 0).length;
   const sellLevels = useSplit
     ? levels.filter((lv) => lv.price.gt(startPrice)).length
     : 0;
