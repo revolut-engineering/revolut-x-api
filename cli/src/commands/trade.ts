@@ -12,6 +12,8 @@ import {
   isJsonOutput,
   printJson,
   printTable,
+  formatLocalDateTime,
+  LOCAL_TIME_NOTE,
   type ColumnDef,
 } from "../output/formatter.js";
 
@@ -25,13 +27,13 @@ type PublicTrade = {
 
 function formatPeriod(start?: number, end?: number): string {
   if (start && end) {
-    return `Period: ${new Date(start).toISOString()} to ${new Date(end).toISOString()}`;
+    return `Period: ${formatLocalDateTime(start)} to ${formatLocalDateTime(end)}`;
   }
   if (start) {
-    return `Period: Since ${new Date(start).toISOString()}`;
+    return `Period: Since ${formatLocalDateTime(start)}`;
   }
   if (end) {
-    return `Period: Up to ${new Date(end).toISOString()}`;
+    return `Period: Up to ${formatLocalDateTime(end)}`;
   }
   return "Period: Default / Recent";
 }
@@ -71,11 +73,11 @@ Examples:
     .description("Get your private trade history for a pair")
     .option(
       "--start-date <date>",
-      "Start date (ISO, epoch ms, or relative: 7d, 1w, today)",
+      "Start date in local time (ISO, epoch ms, or relative: 7d, 1w, today)",
     )
     .option(
       "--end-date <date>",
-      "End date (ISO, epoch ms, or relative: today, yesterday)",
+      "End date in local time (ISO, epoch ms, or relative: today, yesterday)",
     )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
@@ -132,6 +134,7 @@ Examples:
             if (allTrades.length === 0) {
               console.log(chalk.gray("No private trades found.\n"));
             } else {
+              console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
               printTable(allTrades, [
                 { header: "Trade ID", key: "id" },
                 { header: "Order ID", key: "orderId" },
@@ -148,7 +151,7 @@ Examples:
                 { header: "Maker", key: "maker" },
                 {
                   header: "Time",
-                  accessor: (t) => new Date(t.timestamp).toISOString(),
+                  accessor: (t) => formatLocalDateTime(t.timestamp),
                 },
               ]);
             }
@@ -165,11 +168,11 @@ Examples:
     .description("Get all public trades for a pair")
     .option(
       "--start-date <date>",
-      "Start date (ISO, epoch ms, or relative: 7d, 1w, today)",
+      "Start date in local time (ISO, epoch ms, or relative: 7d, 1w, today)",
     )
     .option(
       "--end-date <date>",
-      "End date (ISO, epoch ms, or relative: today, yesterday)",
+      "End date in local time (ISO, epoch ms, or relative: today, yesterday)",
     )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
@@ -226,6 +229,7 @@ Examples:
             if (allTrades.length === 0) {
               console.log(chalk.gray("No public trades found.\n"));
             } else {
+              console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
               const columns: ColumnDef<PublicTrade>[] = [
                 { header: "Trade ID", key: "id" },
                 { header: "Symbol", key: "symbol" },
@@ -233,7 +237,7 @@ Examples:
                 { header: "Qty", key: "quantity", align: "right" },
                 {
                   header: "Time",
-                  accessor: (t) => new Date(t.timestamp).toISOString(),
+                  accessor: (t) => formatLocalDateTime(t.timestamp),
                 },
               ];
               printTable(allTrades, columns);

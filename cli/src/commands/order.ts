@@ -15,19 +15,20 @@ import {
   printTable,
   printKeyValue,
   printSuccess,
+  formatLocalDateTime,
+  LOCAL_TIME_NOTE,
   type ColumnDef,
 } from "../output/formatter.js";
 
-// --- NEW/MODIFIED: Helper to format the period string ---
 function formatPeriod(start?: number, end?: number): string {
   if (start && end) {
-    return `Period: ${new Date(start).toISOString()} to ${new Date(end).toISOString()}`;
+    return `Period: ${formatLocalDateTime(start)} to ${formatLocalDateTime(end)}`;
   }
   if (start) {
-    return `Period: Since ${new Date(start).toISOString()}`;
+    return `Period: Since ${formatLocalDateTime(start)}`;
   }
   if (end) {
-    return `Period: Up to ${new Date(end).toISOString()}`;
+    return `Period: Up to ${formatLocalDateTime(end)}`;
   }
   return "Period: Default / Recent";
 }
@@ -123,7 +124,7 @@ const OPEN_ORDER_COLUMNS: ColumnDef<Order>[] = [
   },
   {
     header: "Created",
-    accessor: (o) => new Date(o.created_date).toISOString(),
+    accessor: (o) => formatLocalDateTime(o.created_date),
   },
 ];
 
@@ -131,7 +132,7 @@ const HISTORY_ORDER_COLUMNS: ColumnDef<Order>[] = [
   ...COMMON_ORDER_COLUMNS,
   {
     header: "Created",
-    accessor: (o) => new Date(o.created_date).toISOString(),
+    accessor: (o) => formatLocalDateTime(o.created_date),
   },
 ];
 
@@ -317,6 +318,7 @@ Examples:
             if (result.data.length === 0) {
               console.log(chalk.gray("No open orders found.\n"));
             } else {
+              console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
               printTable(result.data, OPEN_ORDER_COLUMNS);
             }
           }
@@ -343,11 +345,11 @@ Examples:
     )
     .option(
       "--start-date <date>",
-      "Start date (ISO, epoch ms, or relative: 7d, 1w, today)",
+      "Start date in local time (ISO, epoch ms, or relative: 7d, 1w, today)",
     )
     .option(
       "--end-date <date>",
-      "End date (ISO, epoch ms, or relative: today, yesterday)",
+      "End date in local time (ISO, epoch ms, or relative: today, yesterday)",
     )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
@@ -417,6 +419,7 @@ Examples:
             if (allOrders.length === 0) {
               console.log(chalk.gray("No order history found.\n"));
             } else {
+              console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
               printTable(allOrders, HISTORY_ORDER_COLUMNS);
             }
           }
@@ -442,6 +445,7 @@ Examples:
           } else {
             const o = result.data;
             printSectionHeader(`Order Details`);
+            console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
 
             const rows: [string, string][] = [
               ["ID", chalk.white.bold(o.id)],
@@ -491,8 +495,8 @@ Examples:
                     ],
                   ]
                 : []),
-              ["Created", new Date(o.created_date).toISOString()],
-              ["Updated", new Date(o.updated_date).toISOString()],
+              ["Created", formatLocalDateTime(o.created_date)],
+              ["Updated", formatLocalDateTime(o.updated_date)],
               ...(o.previous_order_id
                 ? [
                     ["Previous Order ID", o.previous_order_id] as [
@@ -662,6 +666,7 @@ Examples:
             if (result.data.length === 0) {
               console.log(chalk.gray("No fills found for this order.\n"));
             } else {
+              console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
               printTable(result.data, [
                 { header: "Trade ID", key: "id" },
                 { header: "Symbol", key: "symbol" },
@@ -677,7 +682,7 @@ Examples:
                 { header: "Maker", key: "maker" },
                 {
                   header: "Time",
-                  accessor: (t) => new Date(t.timestamp).toISOString(),
+                  accessor: (t) => formatLocalDateTime(t.timestamp),
                 },
               ]);
             }

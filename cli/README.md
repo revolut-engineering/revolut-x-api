@@ -4,7 +4,7 @@ Command-line interface for [Revolut X Public Trading API](https://developer.revo
 
 [![npm](https://img.shields.io/npm/v/revolutx-cli)](https://www.npmjs.com/package/@revolut/revolut-x-cli)
 [![Node.js](https://img.shields.io/node/v/revolutx-cli)](https://nodejs.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 
 ---
 
@@ -117,8 +117,8 @@ revx market tickers --symbols BTC-USD,ETH-USD  # Filter by pairs
 revx market ticker BTC-USD              # Single pair ticker
 revx market candles BTC-USD             # OHLCV candles (default 1h)
   --interval 1h                         # Resolution: 1m 5m 15m 30m 1h 4h 1d 2d 4d 1w 2w 4w
-  --since 7d                            # Start (relative: 7d 1w 4h 30m today yesterday; ISO; epoch ms)
-  --until today                         # End (same formats)
+  --since 7d                            # Start, local time (relative: 7d 1w 4h 30m today yesterday; ISO; epoch ms)
+  --until today                         # End, local time (same formats)
 revx market orderbook BTC-USD           # Order book snapshot (top 10)
   --limit 20                            # Depth (1–20)
 ```
@@ -145,8 +145,8 @@ revx order history                      # Historical orders
   --symbols BTC-USD,ETH-USD             # Filter by pairs
   --order-states filled,cancelled       # States: filled cancelled rejected replaced partially_filled
   --order-types market,limit            # Types: market limit
-  --start-date 7d                       # Start (relative: 7d 1w today; ISO; epoch ms)
-  --end-date today                      # End
+  --start-date 7d                       # Start, local time (relative: 7d 1w today; ISO; epoch ms)
+  --end-date today                      # End, local time
   --limit 50                            # Max results
 revx order get <order-id>               # Get specific order details
 revx order fills <order-id>             # Get fills for an order
@@ -162,8 +162,8 @@ revx order cancel --all                 # Cancel all open orders
 
 ```bash
 revx trade private BTC-USD              # My private trade history (alias: history)
-  --start-date 7d                       # Start (relative: 7d 1w today; ISO; epoch ms)
-  --end-date today                      # End
+  --start-date 7d                       # Start, local time (relative: 7d 1w today; ISO; epoch ms)
+  --end-date today                      # End, local time
   --limit 50                            # Max results
 revx trade public BTC-USD               # All public trades for a pair (alias: all)
   --start-date 7d
