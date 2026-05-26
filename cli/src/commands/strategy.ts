@@ -10,6 +10,7 @@ import {
   printKeyValue,
 } from "../output/formatter.js";
 import {
+  runBacktest,
   runBacktestBot,
   optimizeGridParams,
   createGrid,
@@ -286,16 +287,27 @@ async function handleBacktest(
     console.log(chalk.dim("─".repeat(50)));
   }
 
-  const result = await runBacktestBot(
-    candles,
-    gridLevels,
-    rangePct,
-    investment,
-    useSplit,
-    useTrailingUp,
-    stopLossPrice,
-    onTick,
-  );
+  const result = isScenarioSpec(spec)
+    ? await runBacktestBot(
+        candles,
+        gridLevels,
+        rangePct,
+        investment,
+        useSplit,
+        useTrailingUp,
+        stopLossPrice,
+        onTick,
+      )
+    : runBacktest(
+        candles,
+        gridLevels,
+        rangePct,
+        investment,
+        useSplit,
+        useTrailingUp,
+        stopLossPrice,
+        onTick,
+      );
 
   if (traceJson) {
     return;
