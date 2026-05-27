@@ -10,4 +10,5 @@ export type {
   BacktestOnTick,
   BacktestFill,
   BacktestFillTrigger,
+  BacktestTrade,
 } from "./engine.js";

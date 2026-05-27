@@ -34,11 +34,24 @@ interface BacktestResult {
   finalQuote: Decimal;
   maxDrawdown: Decimal;
   tradeLog: string[];
+  trades: BacktestTrade[];
   trailingUpShifts: number;
   stopLossTriggered: boolean;
 }
 
 export type BacktestFillTrigger = "grid" | "stop-loss" | "trailing-up";
+
+export interface BacktestTrade {
+  index: number;
+  side: "buy" | "sell";
+  trigger: BacktestFillTrigger;
+  price: Decimal;
+  quantity: Decimal;
+  quoteValue: Decimal;
+  profit?: Decimal;
+  realizedPnl: Decimal;
+  roiPct: Decimal;
+}
 
 export interface BacktestFill {
   side: "buy" | "sell";
@@ -89,6 +102,7 @@ function createEmptyResult(): BacktestResult {
     finalQuote: new Decimal(0),
     maxDrawdown: new Decimal(0),
     tradeLog: [],
+    trades: [],
     trailingUpShifts: 0,
     stopLossTriggered: false,
   };
@@ -202,6 +216,16 @@ function runBuyPass(
           `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel} | ` +
             `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
         );
+        result.trades.push({
+          index: result.totalTrades,
+          side: "buy",
+          trigger: "grid",
+          price: level.price,
+          quantity: baseBought,
+          quoteValue: quotePerLevel,
+          realizedPnl: result.realizedPnl,
+          roiPct,
+        });
         tickFills.push({
           side: "buy",
           price: level.price,
@@ -264,6 +288,17 @@ function runSellPass(
               `+${quoteReceived} | profit=${profit.toFixed(2)} | ` +
               `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
           );
+          result.trades.push({
+            index: result.totalTrades,
+            side: "sell",
+            trigger: "grid",
+            price: sellLevel.price,
+            quantity: baseHeld,
+            quoteValue: quoteReceived,
+            profit,
+            realizedPnl: result.realizedPnl,
+            roiPct,
+          });
         }
       }
     }
@@ -416,6 +451,24 @@ export function runBacktest(
             `#${result.totalTrades}  STOP-LOSS SELL @ ${fixedSlPrice.toFixed(2)} | qty ${baseHeld.toFixed(5)} | ` +
               `+${quoteReceived.toFixed(2)} | profit=${profit.toFixed(2)}`,
           );
+          {
+            const totalPnl = quoteBalance
+              .plus(sumBaseHeld(levels).times(fixedSlPrice))
+              .minus(investment);
+            result.trades.push({
+              index: result.totalTrades,
+              side: "sell",
+              trigger: "stop-loss",
+              price: fixedSlPrice,
+              quantity: baseHeld,
+              quoteValue: quoteReceived,
+              profit,
+              realizedPnl: result.realizedPnl,
+              roiPct: investment.isZero()
+                ? new Decimal(0)
+                : totalPnl.div(investment).times(100),
+            });
+          }
           tickFills.push({
             side: "sell",
             price: fixedSlPrice,
@@ -488,6 +541,24 @@ export function runBacktest(
               `#${result.totalTrades}  TRAILING-UP SELL @ ${rebuildPrice.toFixed(2)} | ` +
                 `profit=${profit.toFixed(2)}`,
             );
+            {
+              const totalPnl = quoteBalance
+                .plus(sumBaseHeld(levels).times(rebuildPrice))
+                .minus(investment);
+              result.trades.push({
+                index: result.totalTrades,
+                side: "sell",
+                trigger: "trailing-up",
+                price: rebuildPrice,
+                quantity: baseHeld,
+                quoteValue: quoteReceived,
+                profit,
+                realizedPnl: result.realizedPnl,
+                roiPct: investment.isZero()
+                  ? new Decimal(0)
+                  : totalPnl.div(investment).times(100),
+              });
+            }
             tickFills.push({
               side: "sell",
               price: rebuildPrice,
@@ -968,6 +1039,14 @@ export async function runBacktestBot(
 
     // Append new trade log entries as strings
     const newEntries = state.tradeLog.slice(prevTradeLogLen);
+    const tickBase = botTotalBaseHeld(state);
+    const tickTotalPnl = exchange.cashBalance
+      .plus(tickBase.times(candle.close))
+      .minus(investment);
+    const tickRoiPct = investment.isZero()
+      ? new Decimal(0)
+      : tickTotalPnl.div(investment).times(100);
+    let runningRealized = result.realizedPnl.minus(pnlDelta);
     for (const entry of newEntries) {
       const isStopLoss = entry.orderId === "stop-loss";
       const sign = isStopLoss
@@ -980,6 +1059,27 @@ export async function runBacktestBot(
       result.tradeLog.push(
         `${sign} @ ${entry.price} | qty ${entry.quantity}${profitStr}`,
       );
+      const price = new Decimal(entry.price);
+      const quantity = new Decimal(entry.quantity);
+      const profit =
+        entry.profit !== undefined ? new Decimal(entry.profit) : undefined;
+      if (profit !== undefined) runningRealized = runningRealized.plus(profit);
+      const trigger: BacktestFillTrigger = isStopLoss
+        ? "stop-loss"
+        : shiftDelta > 0
+          ? "trailing-up"
+          : "grid";
+      result.trades.push({
+        index: result.trades.length + 1,
+        side: entry.side,
+        trigger,
+        price,
+        quantity,
+        quoteValue: price.times(quantity),
+        profit,
+        realizedPnl: runningRealized,
+        roiPct: tickRoiPct,
+      });
     }
 
     if (shiftDelta > 0) {

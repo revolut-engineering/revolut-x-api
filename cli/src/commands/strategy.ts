@@ -463,47 +463,70 @@ async function handleBacktest(
   }
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
 
-  if (result.tradeLog.length > 0) {
-    console.log(chalk.dim(`\u2560${h.repeat(w)}\u2563`));
-    console.log(
-      `${dimV}${chalk.bold.cyan("  LAST TRADES")}${" ".repeat(w - 13)}${dimV}`,
-    );
-    console.log(chalk.dim(`\u2560${h.repeat(w)}\u2563`));
-    const lastN = result.tradeLog.slice(-10);
-    // eslint-disable-next-line no-control-regex
-    const stripAnsi = (s: string) => s.replace(/\u001B\[[0-9;]*m/g, "");
-    const padRow = (content: string) => {
-      const vis = stripAnsi(content).length;
-      const right = Math.max(0, w - vis);
-      return `${dimV}${content}${" ".repeat(right)}${dimV}`;
-    };
-    const indent = "      ";
-    const maxFieldWidth = w - indent.length;
-    for (const trade of lastN) {
-      let splitIdx = trade.indexOf(" | profit=");
-      if (splitIdx === -1) splitIdx = trade.indexOf(" | realized=");
-      if (splitIdx !== -1) {
-        console.log(padRow(`   ${chalk.gray(trade.slice(0, splitIdx))}`));
-        const fields = trade.slice(splitIdx + 3).split(" | ");
-        let line = "";
-        for (const field of fields) {
-          const next = line ? `${line} | ${field}` : field;
-          if (next.length > maxFieldWidth && line) {
-            console.log(padRow(`${indent}${chalk.gray(line)}`));
-            line = field;
-          } else {
-            line = next;
-          }
-        }
-        if (line) console.log(padRow(`${indent}${chalk.gray(line)}`));
-      } else {
-        console.log(padRow(`   ${chalk.gray(trade)}`));
-      }
-    }
-    console.log(`${dimV}${" ".repeat(w)}${dimV}`);
-  }
-
   console.log(chalk.dim(`\u255A${h.repeat(w)}\u255D`));
+
+  if (result.trades.length > 0) {
+    console.log("");
+    console.log(chalk.bold.cyan(`  Trades (${result.trades.length})`));
+    printTable(result.trades, [
+      { header: "#", accessor: (t) => String(t.index), align: "right" },
+      {
+        header: "Side",
+        accessor: (t) => {
+          const label =
+            t.trigger === "stop-loss"
+              ? `${t.side.toUpperCase()} (SL)`
+              : t.trigger === "trailing-up"
+                ? `${t.side.toUpperCase()} (TU)`
+                : t.side.toUpperCase();
+          return t.side === "buy" ? chalk.green(label) : chalk.red(label);
+        },
+      },
+      {
+        header: "Price",
+        accessor: (t) => `${cs}${t.price.toFixed(2)}`,
+        align: "right",
+      },
+      {
+        header: "Qty",
+        accessor: (t) => t.quantity.toFixed(5),
+        align: "right",
+      },
+      {
+        header: "Quote",
+        accessor: (t) =>
+          t.side === "buy"
+            ? `-${cs}${t.quoteValue.toFixed(2)}`
+            : `+${cs}${t.quoteValue.toFixed(2)}`,
+        align: "right",
+      },
+      {
+        header: "Profit",
+        accessor: (t) => {
+          if (t.profit === undefined) return "";
+          const v = `${cs}${t.profit.toFixed(2)}`;
+          return t.profit.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+      {
+        header: "Realized",
+        accessor: (t) => {
+          const v = `${cs}${t.realizedPnl.toFixed(2)}`;
+          return t.realizedPnl.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+      {
+        header: "ROI",
+        accessor: (t) => {
+          const v = `${t.roiPct.toFixed(2)}%`;
+          return t.roiPct.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+    ]);
+  }
   console.log(
     chalk.gray(
       "\n  ↳ Note: Backtest does not model spread/slippage or post_only rejections.\n" +
