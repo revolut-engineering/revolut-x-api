@@ -211,9 +211,8 @@ function formatBacktestResult(
 
   if (result.tradeLog.length) {
     lines.push("");
-    const lastN = result.tradeLog.slice(-10);
-    lines.push(`Last ${lastN.length} trades:`);
-    for (const trade of lastN) {
+    lines.push(`Trades (${result.tradeLog.length}):`);
+    for (const trade of result.tradeLog) {
       lines.push(`  ${trade}`);
     }
   }
