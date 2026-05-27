@@ -25,17 +25,32 @@ revx strategy grid backtest BTC-USD
 revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
 revx strategy grid backtest ETH-USD --days 60 --interval 4h
 revx strategy grid backtest BTC-USD --split
+revx strategy grid backtest BTC-USD --trailing-up --stop-loss 85000
 revx strategy grid backtest BTC-USD --json
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--levels <n>` | 5 | Grid levels per side (2-25) |
+| `--levels <n>` | 5 | Grid levels per side (1-25) |
 | `--range <pct>` | 10 | Grid range +/- % from mid price |
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
+| `--trailing-up` | off | Simulate grid rebuild when price exits the upper boundary |
+| `--stop-loss <price>` | off | Stop backtest when price reaches this absolute value (must be below the lowest grid level) |
+| `--prices <spec>` | api | Drive the backtest with a synthetic price sequence instead of fetching real candles. Sources: `api` (default), `file:<path>`, `stdin`, `inline:<csv>` (e.g. `inline:100,102,98`), `gen:<type>?<params>` (`linear`, `sine`, `walk`, `steps`). |
+| `--trace` | off | Emit a per-tick trace of strategy reaction (price, fills, position, P&L). With `--json`, emits NDJSON. |
+| `--json` | off | Output as JSON |
+
+**Backtest engine assumptions (without `--prices`):** The engine runs on OHLC candles and has no access to intra-candle tick data. Order execution order within each candle is determined by the direction of the candle:
+
+| Candle type | Condition | Assumed price path | Execution order |
+|---|---|---|---|
+| Bullish | `open <= close` | open → low → high → close | All BUY orders at levels ≥ low, then all SELL orders at levels ≤ high |
+| Bearish | `open > close` | open → high → low → close | All SELL orders at levels ≤ high, then all BUY orders at levels ≥ low |
+
+Limitation: real intra-candle price action may be more complex (e.g. multiple touches of high/low), which the backtest does not reproduce. With `--prices` (synthetic source), each price drives the real bot engine tick-by-tick using close price only.
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
 
@@ -52,6 +67,7 @@ revx strategy grid optimize BTC-USD
 revx strategy grid optimize BTC-USD --investment 5000 --days 60
 revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 revx strategy grid optimize BTC-USD --split
+revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 ```
 
 | Flag | Default | Description |
@@ -63,6 +79,10 @@ revx strategy grid optimize BTC-USD --split
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
+| `--trailing-up` | off | Simulate grid rebuild when price exits the upper boundary |
+| `--stop-loss <price>` | off | Skip combinations where the stop-loss sits inside the grid; stop each backtest run when price reaches this absolute value |
+| `--prices <spec>` | api | Sweep parameters against a synthetic price sequence instead of fetching real candles. Sources: `api` (default), `file:<path>`, `stdin`, `inline:<csv>`, `gen:<type>?<params>`. |
+| `--json` | off | Output as JSON |
 
 Max 200 parameter combinations. **Not long-running** — completes and returns results.
 
@@ -122,17 +142,23 @@ revx strategy grid run BTC-USD --levels 10 --range 5 --investment 1000 --interva
 revx strategy grid run BTC-USD --investment 500 --split
 revx strategy grid run BTC-USD --investment 100 --dry-run
 revx strategy grid run BTC-USD --investment 500 --reset
+revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--investment <amount>` | **required** | Capital in quote currency |
-| `--levels <n>` | 5 | Grid levels per side (2-25) |
+| `--levels <n>` | 5 | Grid levels per side (1-25) |
 | `--range <pct>` | 5 | Grid range +/- % from mid |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above current price) |
 | `--interval <sec>` | 10 | Polling interval in seconds |
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
+| `--trailing-up` | off | Rebuild grid around current price when upper boundary is breached |
+| `--stop-loss <price>` | off | Stop bot when price reaches this absolute value (must be below the lowest grid level) |
+| `--prices <spec>` | api | **Dry-run only.** Drive the bot with a synthetic price sequence instead of polling the live order book. Sources: `api` (default), `file:<path>`, `stdin`, `inline:<csv>`, `gen:<type>?<params>`, `interactive` (prompt for each tick). Rejected unless `--dry-run` is also set. |
+| `--trace` | off | **Dry-run only.** Per-tick trace of the bot's reaction (price, fills, position, open orders, P&L). With `--json`, emits NDJSON. |
+| `--json` | off | Output as JSON. Combined with `--trace`, emits NDJSON per-tick records. |
 
 Ctrl+C for graceful shutdown (cancels open orders, prints summary).
 
@@ -167,6 +193,67 @@ Response to user:
 > revx strategy grid run BTC-USD --investment 500 --levels 10 --range 5
 > ```
 > Press Ctrl+C to stop (gracefully cancels open orders).
+
+---
+
+## Mock Price Sources (`--prices`)
+
+The `--prices <spec>` flag replaces the live API price stream with a hand-crafted or synthetic sequence. Everything downstream (simulator, order logic, dashboard) is unchanged — only the price source differs.
+
+### Six sources
+
+| Source | Spec | Use |
+|---|---|---|
+| **Live API** (default) | `api` | Real candles from Revolut X. Honours `--days` and `--interval`. |
+| **Inline** | `inline:100,102,98,…` | Comma-separated prices — quickest scenario experiment. |
+| **File** | `file:./path.csv` | CSV / JSON / NDJSON file, format auto-detected. |
+| **Stdin** | `stdin` | Pipe prices from another process (`seq 100 -1 90 \| revx … --prices stdin`). |
+| **Generator** | `gen:walk?…`, `gen:sine?…`, `gen:linear?…`, `gen:steps?…` | Procedurally generated path. Seeded variants are deterministic. |
+| **Interactive** | `interactive` | Prompts for each price one at a time — step-debugger for the live bot. `--dry-run` only. |
+
+### Where each source is accepted
+
+| Command | Accepted sources |
+|---|---|
+| `grid backtest` | `api`, `inline`, `file`, `stdin`, `gen` (`interactive` rejected) |
+| `grid optimize` | `api`, `inline`, `file`, `stdin`, `gen` (`--trace` not supported here) |
+| `grid run --dry-run` | all six, including `interactive` |
+| `grid run` (real orders) | **`api` only** — any other spec is rejected at startup |
+
+### Safety rule
+
+**A synthetic price stream can never drive real orders.** `grid run` rejects any non-`api` spec unless `--dry-run` is also set. This is a hard error, not a warning.
+
+### Synthetic generators (`gen:`)
+
+| Generator | Shape | Required params | Optional params |
+|---|---|---|---|
+| `gen:linear` | Straight ramp from start to end | `start`, `end`, `steps` | — |
+| `gen:sine` | Centre ± amplitude, oscillating | `start`, `amp`, `steps` | `period` (default 24) |
+| `gen:walk` | Seeded Gaussian random walk | `start`, `steps` | `sigma` (default 1), `seed` (default 1) |
+| `gen:steps` | Step function — each value held for N ticks | `values` (comma-separated, URL-encoded as `%2C`) | `hold` (default 1) |
+
+Examples:
+```bash
+# Reproducible random walk
+revx strategy grid backtest BTC-USD --investment 1000 --prices 'gen:walk?start=100&sigma=2&seed=7&steps=500'
+
+# Regime shift test
+revx strategy grid backtest BTC-USD --investment 1000 --prices 'gen:steps?values=100%2C110%2C90%2C105&hold=10'
+
+# Oscillating market
+revx strategy grid backtest BTC-USD --investment 1000 --prices 'gen:sine?start=100&amp=10&steps=200'
+
+# Inline crash scenario with trace
+revx strategy grid backtest BTC-USD --investment 1000 --prices 'inline:50000,49000,47000,42000,40000,45000' --trace
+
+# Step-by-step dry run
+revx strategy grid run BTC-USD --investment 500 --dry-run --prices interactive --trace
+```
+
+### Reproducibility
+
+`inline`, `file`, `stdin` — trivially reproducible (fixed input). `gen:linear`, `gen:sine`, `gen:steps` — deterministic by construction. `gen:walk` — deterministic given the same `seed` (mulberry32 PRNG).
 
 ---
 
