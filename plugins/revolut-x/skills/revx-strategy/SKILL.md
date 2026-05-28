@@ -153,7 +153,6 @@ revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 | `--reset` | off | Discard saved state, start fresh |
 | `--trailing-up` | off | Rebuild grid around current price when upper boundary is breached |
 | `--stop-loss <price>` | off | Stop bot when price reaches this absolute value (must be below the lowest grid level) |
-| `--json` | off | Output as JSON. Combined with `--trace`, emits NDJSON per-tick records. |
 
 Ctrl+C for graceful shutdown (cancels open orders, prints summary).
 
