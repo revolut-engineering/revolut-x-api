@@ -53,7 +53,8 @@ vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerBacktestTools(server);
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -94,7 +95,10 @@ describe("grid_backtest — stop-loss validation", () => {
 
   it("MCP-B1: SL=0 (disabled) → backtest runs, no validation error", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_backtest", arguments: { ...BASE, stop_loss_price: 0 } }),
+      await client.callTool({
+        name: "grid_backtest",
+        arguments: { ...BASE, stop_loss_price: 0 },
+      }),
     );
     expect(text).not.toContain("must be strictly below");
     expect(text).toContain("Grid Backtest Results");
@@ -102,7 +106,10 @@ describe("grid_backtest — stop-loss validation", () => {
 
   it("MCP-B2: SL=94_000 (< lowestLevel=95k) → valid, backtest runs", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_backtest", arguments: { ...BASE, stop_loss_price: 94_000 } }),
+      await client.callTool({
+        name: "grid_backtest",
+        arguments: { ...BASE, stop_loss_price: 94_000 },
+      }),
     );
     expect(text).not.toContain("must be strictly below");
     expect(text).toContain("Grid Backtest Results");
@@ -110,21 +117,30 @@ describe("grid_backtest — stop-loss validation", () => {
 
   it("MCP-B3: SL=95_000 (= lowestLevel) → error: must be strictly below", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_backtest", arguments: { ...BASE, stop_loss_price: 95_000 } }),
+      await client.callTool({
+        name: "grid_backtest",
+        arguments: { ...BASE, stop_loss_price: 95_000 },
+      }),
     );
     expect(text).toContain("must be strictly below the lowest grid level");
   });
 
   it("MCP-B4: SL=97_000 (> lowestLevel, < startPrice) → error", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_backtest", arguments: { ...BASE, stop_loss_price: 97_000 } }),
+      await client.callTool({
+        name: "grid_backtest",
+        arguments: { ...BASE, stop_loss_price: 97_000 },
+      }),
     );
     expect(text).toContain("must be strictly below the lowest grid level");
   });
 
   it("MCP-B5: SL=101_000 (> startPrice) → error", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_backtest", arguments: { ...BASE, stop_loss_price: 101_000 } }),
+      await client.callTool({
+        name: "grid_backtest",
+        arguments: { ...BASE, stop_loss_price: 101_000 },
+      }),
     );
     expect(text).toContain("must be strictly below the lowest grid level");
   });
@@ -156,28 +172,40 @@ describe("grid_optimize — stop-loss validation", () => {
 
   it("MCP-O1: SL=0 (disabled) → optimize runs, no validation error", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_optimize", arguments: { ...BASE, stop_loss_price: 0 } }),
+      await client.callTool({
+        name: "grid_optimize",
+        arguments: { ...BASE, stop_loss_price: 0 },
+      }),
     );
     expect(text).not.toContain("must be below the backtest start price");
   });
 
   it("MCP-O2: SL=80_000 (< startPrice=100k) → valid, optimize runs", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_optimize", arguments: { ...BASE, stop_loss_price: 80_000 } }),
+      await client.callTool({
+        name: "grid_optimize",
+        arguments: { ...BASE, stop_loss_price: 80_000 },
+      }),
     );
     expect(text).not.toContain("must be below the backtest start price");
   });
 
   it("MCP-O3: SL=100_000 (= startPrice) → error: must be below start price", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_optimize", arguments: { ...BASE, stop_loss_price: 100_000 } }),
+      await client.callTool({
+        name: "grid_optimize",
+        arguments: { ...BASE, stop_loss_price: 100_000 },
+      }),
     );
     expect(text).toContain("must be below the backtest start price");
   });
 
   it("MCP-O4: SL=101_000 (> startPrice) → error", async () => {
     const text = getText(
-      await client.callTool({ name: "grid_optimize", arguments: { ...BASE, stop_loss_price: 101_000 } }),
+      await client.callTool({
+        name: "grid_optimize",
+        arguments: { ...BASE, stop_loss_price: 101_000 },
+      }),
     );
     expect(text).toContain("must be below the backtest start price");
   });

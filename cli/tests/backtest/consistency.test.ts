@@ -23,7 +23,9 @@ vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   return {
     ...actual,
     InsecureKeyPermissionsError,
-    RevolutXClient: vi.fn().mockImplementation(() => ({ isAuthenticated: true })),
+    RevolutXClient: vi
+      .fn()
+      .mockImplementation(() => ({ isAuthenticated: true })),
     getConfigDir: () => "/tmp/revx-v2-consistency-test",
     ensureConfigDir: vi.fn(),
   };
@@ -94,7 +96,15 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
       flat(93_000),
     ];
     const bt = runBacktest(candles, LEVELS, RANGE, INVEST, true, false, 0);
-    const bot = await runBacktestBot(candles, LEVELS, RANGE, INVEST, true, false, 0);
+    const bot = await runBacktestBot(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      true,
+      false,
+      0,
+    );
 
     expect(bt.totalBuys).toBe(6);
     expect(bt.totalSells).toBe(3);
@@ -120,7 +130,15 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
     const candles = [flat(100_000), flat(88_000), flat(80_000)];
     const SL = 82_000;
     const bt = runBacktest(candles, LEVELS, RANGE, INVEST, false, false, SL);
-    const bot = await runBacktestBot(candles, LEVELS, RANGE, INVEST, false, false, SL);
+    const bot = await runBacktestBot(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      false,
+      SL,
+    );
 
     expect(bt.stopLossTriggered).toBe(true);
     expect(bt.totalBuys).toBe(3);
@@ -135,8 +153,24 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
   // A.3: stop-loss does NOT fire when price stays above threshold
   it("A.3: stop-loss: does not trigger when price stays above threshold", async () => {
     const candles = [flat(100_000), flat(88_000)];
-    const bt = runBacktest(candles, LEVELS, RANGE, INVEST, false, false, 82_000);
-    const bot = await runBacktestBot(candles, LEVELS, RANGE, INVEST, false, false, 82_000);
+    const bt = runBacktest(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      false,
+      82_000,
+    );
+    const bot = await runBacktestBot(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      false,
+      82_000,
+    );
 
     expect(bt.stopLossTriggered).toBe(false);
     expect(bt.totalBuys).toBeGreaterThan(0);
@@ -169,7 +203,15 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
       flat(108_000),
     ];
     const bt = runBacktest(candles, LEVELS, RANGE, INVEST, true, true, 0);
-    const bot = await runBacktestBot(candles, LEVELS, RANGE, INVEST, true, true, 0);
+    const bot = await runBacktestBot(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      true,
+      true,
+      0,
+    );
 
     expect(bt.totalBuys).toBe(7);
     expect(bt.totalSells).toBe(4);
@@ -188,7 +230,15 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
   it("A.5: split basic: both engines produce sells from split init positions", async () => {
     const candles = [flat(100_000), flat(104_000)];
     const bt = runBacktest(candles, LEVELS, RANGE, INVEST, true, false, 0);
-    const bot = await runBacktestBot(candles, LEVELS, RANGE, INVEST, true, false, 0);
+    const bot = await runBacktestBot(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      true,
+      false,
+      0,
+    );
 
     expect(bt.totalSells).toBe(2);
     expect(bt.realizedPnl.gt(0)).toBe(true);
@@ -228,14 +278,28 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
   it("B.2: optimizeGridParams returns identical top result", () => {
     const ranges = [d("0.05"), d("0.08")];
     const levelsList = [6, 8];
-    const cliResults = optimizeGridParams(candles, levelsList, ranges, INVEST, 1);
-    const mcpResults = optimizeGridParamsMcp(candles, levelsList, ranges, INVEST, 1);
+    const cliResults = optimizeGridParams(
+      candles,
+      levelsList,
+      ranges,
+      INVEST,
+      1,
+    );
+    const mcpResults = optimizeGridParamsMcp(
+      candles,
+      levelsList,
+      ranges,
+      INVEST,
+      1,
+    );
 
     expect(cliResults.length).toBe(mcpResults.length);
     if (cliResults.length > 0) {
       expect(cliResults[0].gridLevels).toBe(mcpResults[0].gridLevels);
       expect(cliResults[0].rangePct.eq(mcpResults[0].rangePct)).toBe(true);
-      expect(cliResults[0].totalReturn.eq(mcpResults[0].totalReturn)).toBe(true);
+      expect(cliResults[0].totalReturn.eq(mcpResults[0].totalReturn)).toBe(
+        true,
+      );
       expect(cliResults[0].totalTrades).toBe(mcpResults[0].totalTrades);
     }
   });

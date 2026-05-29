@@ -133,7 +133,9 @@ describe("Grid bot scenarios (runBacktest)", () => {
     ];
     const { result: r, tickFills } = collectFills(candles, true, true, 0);
 
-    expect(tickFills[5].filter((f) => f.trigger === "trailing-up").length).toBe(0);
+    expect(tickFills[5].filter((f) => f.trigger === "trailing-up").length).toBe(
+      0,
+    );
     expect(tickFills[6].filter((f) => f.side === "buy").length).toBe(6);
 
     expect(r.totalBuys).toBe(7);

@@ -970,9 +970,7 @@ export class ForegroundGridBot {
     console.log(
       chalk.dim(
         `  Buy orders placed: ${buysPlaced}/${buyLevels.length}` +
-          (errors.length > 0
-            ? chalk.yellow(` (${errors.length} failed)`)
-            : ""),
+          (errors.length > 0 ? chalk.yellow(` (${errors.length} failed)`) : ""),
       ),
     );
 
