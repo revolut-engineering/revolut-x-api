@@ -211,8 +211,9 @@ function formatBacktestResult(
 
   if (result.tradeLog.length) {
     lines.push("");
-    lines.push(`Trades (${result.tradeLog.length}):`);
-    for (const trade of result.tradeLog) {
+    const lastN = result.tradeLog.slice(-10);
+    lines.push(`Last ${lastN.length} trades:`);
+    for (const trade of lastN) {
       lines.push(`  ${trade}`);
     }
   }
@@ -418,6 +419,18 @@ export function registerBacktestTools(server: McpServer): void {
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
 
+      if (stop_loss_price > 0) {
+        const startPrice = candles[0].open;
+        const lowestLevel = startPrice.times(new Decimal(1).minus(rangeDec));
+        if (new Decimal(stop_loss_price).gte(lowestLevel)) {
+          return textResult(
+            `stop_loss_price ${stop_loss_price} must be strictly below the lowest grid level ` +
+              `(~${lowestLevel.toFixed(2)} for ±${rangeDec.times(100).toFixed(1)}% range around ` +
+              `start price ${startPrice.toFixed(2)}). Try a lower value.`,
+          );
+        }
+      }
+
       const result = runBacktest(
         candles,
         totalLevels,
@@ -593,6 +606,16 @@ export function registerBacktestTools(server: McpServer): void {
       );
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
+
+      if (stop_loss_price > 0) {
+        const startPrice = candles[0].open;
+        if (new Decimal(stop_loss_price).gte(startPrice)) {
+          return textResult(
+            `stop_loss_price ${stop_loss_price} must be below the backtest start price ` +
+              `(${startPrice.toFixed(2)}). Try a lower value.`,
+          );
+        }
+      }
 
       const results = optimizeGridParams(
         candles,
