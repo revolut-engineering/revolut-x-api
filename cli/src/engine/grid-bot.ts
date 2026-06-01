@@ -747,19 +747,9 @@ export class ForegroundGridBot {
 
     const quoteCurrency = config.pair.split("-")[1] ?? "";
     const investment = new Decimal(config.investment);
-    let insufficientBalance = false;
-    if (!config.dryRun) {
-      const available = await this._checkBalance(quoteCurrency);
-      if (available !== null && available.lt(investment)) {
-        console.log(
-          chalk.yellow(
-            `  Warning: Available ${quoteCurrency} balance (${available.toFixed(2)}) ` +
-              `is less than investment (${investment.toFixed(2)}). Skipping order placement.`,
-          ),
-        );
-        insufficientBalance = true;
-      }
-    }
+    const available = config.dryRun
+      ? null
+      : await this._checkBalance(quoteCurrency);
 
     const minQuote = this._getMinOrderQuote();
     const minBase = this._getMinOrderBase();
@@ -828,11 +818,23 @@ export class ForegroundGridBot {
       .div(Math.max(totalCapitalLevels, 1))
       .toDecimalPlaces(2, Decimal.ROUND_DOWN);
 
+    if (available !== null && available.lt(investment)) {
+      const maxInvestment = available.toDecimalPlaces(2, Decimal.ROUND_DOWN);
+      throw new Error(
+        `Available ${quoteCurrency} balance (${available.toFixed(2)}) is less than ` +
+          `the configured investment (${investment.toFixed(2)}). ` +
+          `With ${totalCapitalLevels} capital level${totalCapitalLevels === 1 ? "" : "s"}, ` +
+          `each level requires ${quotePerLevel.toFixed(2)} ${quoteCurrency}. ` +
+          `Use --investment ${maxInvestment.toFixed(2)} to invest your full available balance, ` +
+          `or deposit funds and retry.`,
+      );
+    }
+
     let splitExecuted = false;
     let splitBaseAcquired: Decimal | null = null;
     let splitFilledAmount: Decimal | null = null;
     let splitFeeQuote = new Decimal(0);
-    if (config.splitInvestment && !config.dryRun && !insufficientBalance) {
+    if (config.splitInvestment && !config.dryRun) {
       const marketBuyQuote = quotePerLevel
         .times(sellLevelIndices.size)
         .toFixed(2);
@@ -943,46 +945,38 @@ export class ForegroundGridBot {
     );
     let buysPlaced = 0;
     const errors: string[] = [];
-    if (!insufficientBalance) {
-      console.log(
-        chalk.dim(`  Placing ${buyLevels.length} initial buy orders...`),
-      );
-      for (const level of buyLevels) {
-        try {
-          const orderId = await this._placeBuyOrder(level, quotePerLevel);
-          level.buyOrderIds.push(orderId);
-          buysPlaced++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`buy @${level.price}: ${msg}`);
-        }
-        await sleep(ORDER_DELAY_MS);
+    console.log(
+      chalk.dim(`  Placing ${buyLevels.length} initial buy orders...`),
+    );
+    for (const level of buyLevels) {
+      try {
+        const orderId = await this._placeBuyOrder(level, quotePerLevel);
+        level.buyOrderIds.push(orderId);
+        buysPlaced++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`buy @${level.price}: ${msg}`);
       }
+      await sleep(ORDER_DELAY_MS);
+    }
 
-      if (buysPlaced === 0 && buyLevels.length > 0) {
-        const detail = errors.length > 0 ? `\n  First error: ${errors[0]}` : "";
-        throw new Error(
-          `Failed to place any initial buy orders (0/${buyLevels.length}).${detail}`,
-        );
-      }
-
-      console.log(
-        chalk.dim(
-          `  Buy orders placed: ${buysPlaced}/${buyLevels.length}` +
-            (errors.length > 0
-              ? chalk.yellow(` (${errors.length} failed)`)
-              : ""),
-        ),
+    if (buysPlaced === 0 && buyLevels.length > 0) {
+      const detail = errors.length > 0 ? `\n  First error: ${errors[0]}` : "";
+      throw new Error(
+        `Failed to place any initial buy orders (0/${buyLevels.length}).${detail}`,
       );
     }
 
+    console.log(
+      chalk.dim(
+        `  Buy orders placed: ${buysPlaced}/${buyLevels.length}` +
+          (errors.length > 0 ? chalk.yellow(` (${errors.length} failed)`) : ""),
+      ),
+    );
+
     // --- Place initial sell orders for split mode ---
     let sellsPlaced = 0;
-    if (
-      config.splitInvestment &&
-      sellLevelIndices.size > 0 &&
-      !insufficientBalance
-    ) {
+    if (config.splitInvestment && sellLevelIndices.size > 0) {
       const totalBase =
         splitBaseAcquired ??
         quotePerLevel
