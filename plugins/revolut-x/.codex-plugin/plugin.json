@@ -1,6 +1,6 @@
 {
   "name": "revolut-x",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "description": "Revolut X CLI skills only — auth, market, account, trading, monitoring, Telegram, and grid trading via the revx CLI.",
   "author": {
     "name": "Revolut X",
