@@ -22,7 +22,7 @@ export interface RequestOptions {
   enforceKeyPermissions?: boolean;
   timeout: number;
   maxRetries: number;
-  isAgent: boolean;
+  generatedBy?: string;
   logger: Logger;
 }
 
@@ -122,8 +122,8 @@ export async function makeRequest(
     Accept: "application/json",
   };
 
-  if (options.isAgent) {
-    headers["X-GENERATED-BY"] = "AGENT";
+  if (options.generatedBy) {
+    headers["X-GENERATED-BY"] = options.generatedBy;
   }
 
   applyAuthHeaders(options, headers, method, fullPath, queryString, bodyString);

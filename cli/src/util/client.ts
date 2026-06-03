@@ -6,7 +6,7 @@ export function getClient(opts?: { requireAuth?: boolean }): RevolutXClient {
   if (cachedClient) return cachedClient;
 
   cachedClient = new RevolutXClient({
-    isAgent: true,
+    generatedBy: "CLI",
     enforceKeyPermissions: true,
   });
 

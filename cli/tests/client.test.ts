@@ -17,11 +17,11 @@ beforeEach(async () => {
 });
 
 describe("getClient", () => {
-  it("creates client with isAgent and enforceKeyPermissions", async () => {
+  it("creates client with generatedBy and enforceKeyPermissions", async () => {
     const { getClient } = await import("../src/util/client.js");
     getClient();
     expect(mockRevolutXClient).toHaveBeenCalledWith({
-      isAgent: true,
+      generatedBy: "CLI",
       enforceKeyPermissions: true,
     });
   });
