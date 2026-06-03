@@ -93,7 +93,7 @@ export class ForegroundMonitor {
   async run(): Promise<void> {
     this._running = true;
     this._client = new RevolutXClient({
-      isAgent: true,
+      generatedBy: "CLI",
       enforceKeyPermissions: true,
     });
     if (!this._client.isAuthenticated) {

@@ -16,7 +16,7 @@ let _client: RevolutXClient | null = null;
 export function getRevolutXClient(): RevolutXClient {
   if (_client === null) {
     _client = new RevolutXClient({
-      isAgent: true,
+      generatedBy: "MCP",
       enforceKeyPermissions: true,
     });
   }

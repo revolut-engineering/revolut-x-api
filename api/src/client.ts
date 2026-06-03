@@ -71,7 +71,7 @@ export interface RevolutXClientOptions {
   timeout?: number;
   maxRetries?: number;
   autoLoadCredentials?: boolean;
-  isAgent?: boolean;
+  generatedBy?: string;
   logger?: LogCallback;
   enforceKeyPermissions?: boolean;
 }
@@ -117,7 +117,7 @@ export class RevolutXClient {
       timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
       maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
       logger: this.logger,
-      isAgent: !!options.isAgent,
+      generatedBy: options.generatedBy,
     };
   }
 

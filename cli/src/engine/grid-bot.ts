@@ -120,7 +120,7 @@ export class ForegroundGridBot {
     this._running = true;
     this._startTime = Date.now();
     this._client = new RevolutXClient({
-      isAgent: true,
+      generatedBy: "CLI",
       enforceKeyPermissions: true,
     });
     this._connections = loadConnections().filter((c) => c.enabled);

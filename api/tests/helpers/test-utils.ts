@@ -7,7 +7,7 @@ interface TestClientOptions {
   maxRetries?: number;
   timeout?: number;
   authenticated?: boolean;
-  isAgent?: boolean;
+  generatedBy?: string;
 }
 
 export function createTestClient(
@@ -17,7 +17,7 @@ export function createTestClient(
     authenticated = true,
     maxRetries = 0,
     timeout = 30_000,
-    isAgent,
+    generatedBy,
   } = options;
 
   if (!authenticated) {
@@ -26,7 +26,7 @@ export function createTestClient(
       maxRetries,
       timeout,
       autoLoadCredentials: false,
-      isAgent,
+      generatedBy,
     });
   }
 
@@ -42,7 +42,7 @@ export function createTestClient(
     maxRetries,
     timeout,
     autoLoadCredentials: false,
-    isAgent,
+    generatedBy,
   });
 }
 
