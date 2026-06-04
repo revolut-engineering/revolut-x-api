@@ -23,11 +23,17 @@ import {
 } from "../db/grid-store.js";
 import { loadConnections, type TelegramConnection } from "../db/store.js";
 import { sendWithRetries } from "./notify.js";
+import { LiveStatusReporter } from "./live-status.js";
 import {
   renderDashboard,
   renderShutdownSummary,
   renderReconciliationSummary,
   getCurrSymbol,
+  fmtUptime,
+  fmtPrice,
+  fmtSignedPnl,
+  fmtMoney,
+  renderOrderLadder,
   type DashboardData,
 } from "./grid-renderer.js";
 
@@ -64,9 +70,22 @@ export interface GridBotOptions {
 const FILLED_STATUSES = new Set(["filled"]);
 const DEAD_STATUSES = new Set(["cancelled", "rejected", "replaced"]);
 const ORDER_DELAY_MS = 200;
+const LADDER_MAX_ROWS = 80;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mdV2CodeEscape(text: string): string {
+  return text.replace(/([\\`])/g, "\\$1");
+}
+
+function fmtLocalDateTime(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
 }
 
 export class ForegroundGridBot {
@@ -91,6 +110,8 @@ export class ForegroundGridBot {
   private _onTick: ((event: GridBotTickEvent) => void) | null = null;
   private _tradeLogStart = 0;
   private _suppressDashboard = false;
+  private _statusReporter: LiveStatusReporter | null = null;
+  private _lifecycle: "running" | "finished" | "stopped" = "running";
 
   constructor(config: GridBotConfig, options: GridBotOptions = {}) {
     this._config = config;
@@ -187,6 +208,15 @@ export class ForegroundGridBot {
         `${activeConfig.levels} levels | ±${rangePctDisplay}% | ` +
         `${activeConfig.investment} ${this._state!.pair.split("-")[1] ?? ""}`,
     );
+    this._statusReporter = new LiveStatusReporter({
+      connections: this._connections,
+      refs: this._state!.statusMessages,
+      minIntervalMs: Math.max(5000, this._config.intervalSec * 1000),
+      parseMode: "MarkdownV2",
+    });
+    await this._statusReporter.flush(this._renderStatusCard());
+    this._state!.statusMessages = this._statusReporter.snapshot();
+    saveGridState(this._state!);
     await this._loop();
   }
 
@@ -249,40 +279,23 @@ export class ForegroundGridBot {
     console.log(renderShutdownSummary(this._state, currentPrice, remaining));
 
     const s = this._state.stats;
-    let totalBaseHeld = new Decimal(0);
-    let costBasis = new Decimal(0);
-    for (const lv of this._state.levels) {
-      for (const pos of lv.positions) {
-        const held = new Decimal(pos.baseHeld);
-        if (held.lte(0)) continue;
-        totalBaseHeld = totalBaseHeld.plus(held);
-        const cost =
-          pos.fillCost && pos.fillCost !== "0"
-            ? new Decimal(pos.fillCost)
-            : held.times(new Decimal(lv.price));
-        costBasis = costBasis.plus(cost);
-      }
-    }
-    const realizedPnl = new Decimal(s.realizedPnl);
-    const unrealized = totalBaseHeld.times(currentPrice).minus(costBasis);
-    const totalPnl = realizedPnl.plus(unrealized);
-    const investment = new Decimal(this._state.config.investment);
-    const netValue = investment.plus(totalPnl);
+    this._currentPrice = currentPrice;
+    const { realizedPnl, unrealized, totalPnl, netValue } =
+      this._computePnl(currentPrice);
 
     const cs = this._cs;
-    const fmtSigned = (v: Decimal) => {
-      const sign = v.gte(0) ? "+" : "";
-      return `${sign}${cs}${v.toFixed(2)}`;
-    };
 
     await this._notifyAndWait(
       `Grid Bot stopped: ${this._state.pair}\n` +
         `${s.totalBuys} buys, ${s.totalSells} sells\n` +
-        `Realized P&L: ${fmtSigned(realizedPnl)}\n` +
-        `Unrealized: ${fmtSigned(unrealized)}\n` +
-        `Total P&L: ${fmtSigned(totalPnl)}\n` +
-        `Net Value: ${cs}${netValue.toFixed(2)}`,
+        `Realized P&L: ${fmtSignedPnl(realizedPnl, cs)}\n` +
+        `Unrealized: ${fmtSignedPnl(unrealized, cs)}\n` +
+        `Total P&L: ${fmtSignedPnl(totalPnl, cs)}\n` +
+        `Net Value: ${fmtMoney(netValue, cs)}`,
     );
+
+    if (this._lifecycle === "running") this._lifecycle = "finished";
+    await this._statusReporter?.flush(this._renderStatusCard());
   }
 
   // --------------- helpers ---------------
@@ -653,6 +666,12 @@ export class ForegroundGridBot {
         `Sold ${totalBase} base. Realized P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
     );
 
+    this._lifecycle = "stopped";
+    this._currentPrice = currentPrice;
+    if (this._statusReporter) {
+      await this._statusReporter.flush(this._renderStatusCard());
+      state.statusMessages = this._statusReporter.snapshot();
+    }
     saveGridState(state);
     this.stop();
   }
@@ -1414,6 +1433,7 @@ export class ForegroundGridBot {
 
       this._render();
       this._emitTickEvent(tick.price, tick.timestamp);
+      this._statusReporter?.update(this._renderStatusCard());
 
       if (!this._running) break;
       await this._paceSleep(cycleStart, source.paceIntervalSec);
@@ -1437,18 +1457,19 @@ export class ForegroundGridBot {
     });
   }
 
-  private _emitTickEvent(price: Decimal, timestamp: number): void {
-    if (!this._onTick || !this._state) return;
-    const fills: string[] = [];
-    const newEntries = this._state.tradeLog.slice(this._tradeLogStart);
-    for (const e of newEntries) {
-      const sign = e.side === "buy" ? "BUY" : "SELL";
-      fills.push(`${sign} ${e.quantity}@${e.price}`);
-    }
+  private _computePnl(currentPrice: Decimal): {
+    position: Decimal;
+    realizedPnl: Decimal;
+    unrealized: Decimal;
+    totalPnl: Decimal;
+    netValue: Decimal;
+    openOrders: number;
+  } {
+    const state = this._state!;
     let position = new Decimal(0);
     let costBasis = new Decimal(0);
     let openOrders = 0;
-    for (const lv of this._state.levels) {
+    for (const lv of state.levels) {
       openOrders += lv.buyOrderIds.length;
       for (const pos of lv.positions) {
         const held = new Decimal(pos.baseHeld);
@@ -1463,17 +1484,92 @@ export class ForegroundGridBot {
         if (pos.sellOrderId) openOrders++;
       }
     }
-    const unrealized = position.times(price).minus(costBasis);
+    const realizedPnl = new Decimal(state.stats.realizedPnl ?? "0");
+    const unrealized = position.times(currentPrice).minus(costBasis);
+    const totalPnl = realizedPnl.plus(unrealized);
+    const netValue = new Decimal(state.config.investment).plus(totalPnl);
+    return {
+      position,
+      realizedPnl,
+      unrealized,
+      totalPnl,
+      netValue,
+      openOrders,
+    };
+  }
+
+  private _emitTickEvent(price: Decimal, timestamp: number): void {
+    if (!this._onTick || !this._state) return;
+    const fills: string[] = [];
+    const newEntries = this._state.tradeLog.slice(this._tradeLogStart);
+    for (const e of newEntries) {
+      const sign = e.side === "buy" ? "BUY" : "SELL";
+      fills.push(`${sign} ${e.quantity}@${e.price}`);
+    }
+    const { position, realizedPnl, unrealized, openOrders } =
+      this._computePnl(price);
     this._onTick({
       index: this._tickCount,
       timestamp,
       price,
       fills,
       position,
-      realizedPnl: new Decimal(this._state.stats.realizedPnl ?? "0"),
+      realizedPnl,
       unrealizedPnl: unrealized,
       openOrders,
     });
+  }
+
+  private _saveRunningState(): void {
+    const state = this._state!;
+    if (this._statusReporter) {
+      state.statusMessages = this._statusReporter.snapshot();
+    }
+    saveGridState(state);
+  }
+
+  private _renderStatusCard(): string {
+    const state = this._state!;
+    const cs = this._cs;
+    const price = this._currentPrice ?? new Decimal(state.gridPrice);
+    const { position, realizedPnl, unrealized, totalPnl, netValue } =
+      this._computePnl(price);
+    const investment = new Decimal(state.config.investment);
+    const totalPct = investment.gt(0)
+      ? totalPnl.div(investment).times(100)
+      : new Decimal(0);
+
+    let glyph: string;
+    let label: string;
+    if (this._lifecycle === "finished") {
+      glyph = "✅";
+      label = "Finished";
+    } else if (this._lifecycle === "stopped") {
+      glyph = "\u{1f534}";
+      label = "Stopped (stop-loss)";
+    } else {
+      glyph = "\u{1f7e2}";
+      const dir = totalPnl.gt(0) ? "▲" : totalPnl.lt(0) ? "▼" : "━";
+      label = `Running ${dir} ${totalPct.gte(0) ? "+" : ""}${totalPct.toFixed(2)}%`;
+    }
+
+    const mode = state.config.dryRun ? " [DRY RUN]" : "";
+    const base = state.pair.split("-")[0] ?? "";
+    const s = state.stats;
+    const ladder = renderOrderLadder(state, price, {
+      maxRows: LADDER_MAX_ROWS,
+    });
+    const body = [
+      `${glyph} Grid ${state.pair}${mode}  ${label}`,
+      `Price ${fmtPrice(price, cs)} · Pos ${position.toFixed()} ${base}`,
+      `Realized ${fmtSignedPnl(realizedPnl, cs)} · Unreal ${fmtSignedPnl(unrealized, cs)}`,
+      `Total ${fmtSignedPnl(totalPnl, cs)} · Net ${fmtMoney(netValue, cs)}`,
+      `Fills ${s.totalBuys} buys · ${s.totalSells} sells · Up ${fmtUptime(Date.now() - this._startTime)}`,
+      ...(ladder.length > 0 ? ["", ...ladder] : []),
+      "",
+      `Updated ${fmtLocalDateTime()}`,
+    ].join("\n");
+    return "```\n" + mdV2CodeEscape(body) + "\n```";
   }
 
   private async _tick(currentPrice: Decimal): Promise<void> {
@@ -1713,7 +1809,7 @@ export class ForegroundGridBot {
       }
     }
 
-    saveGridState(state);
+    this._saveRunningState();
     this._tickCount++;
 
     if (this._shouldRebuildUp) {
@@ -1847,7 +1943,7 @@ export class ForegroundGridBot {
       }
     }
 
-    saveGridState(state);
+    this._saveRunningState();
   }
 
   // --------------- order placement ---------------

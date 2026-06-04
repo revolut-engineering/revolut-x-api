@@ -1,6 +1,6 @@
 import { Decimal } from "decimal.js";
 import chalk from "chalk";
-import type { GridState } from "../db/grid-store.js";
+import type { GridState, GridLevelPosition } from "../db/grid-store.js";
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: "$",
@@ -62,7 +62,118 @@ export function getCurrSymbol(pair: string): string {
   return CURRENCY_SYMBOLS[quote] ?? "";
 }
 
-function fmtPrice(price: Decimal | string, cs: string): string {
+export function renderOrderLadder(
+  state: GridState,
+  currentPrice: Decimal,
+  opts?: { maxRows?: number },
+): string[] {
+  const cs = getCurrSymbol(state.pair);
+  const sumBase = (ps: GridLevelPosition[]) =>
+    ps.reduce((s, p) => s.plus(p.baseHeld), new Decimal(0));
+
+  let activeBuys = 0;
+  let activeSells = 0;
+  for (const lv of state.levels) {
+    activeBuys += lv.buyOrderIds.length;
+    for (const p of lv.positions) {
+      if (p.sellOrderId) activeSells++;
+    }
+  }
+
+  const sorted = [...state.levels].sort(
+    (a, b) => parseFloat(b.price) - parseFloat(a.price),
+  );
+
+  type Row = { idx: string; price: string; status: string };
+  const entries: ({ marker: string } | { row: Row })[] = [];
+  let markerInserted = false;
+
+  for (const level of sorted) {
+    const hasBuy = level.buyOrderIds.length > 0;
+    const buyBelow = level.index > 0 ? state.levels[level.index - 1] : null;
+    const sellPosBelow =
+      buyBelow?.positions.filter((p) => !!p.sellOrderId) ?? [];
+    const isSellTarget = sellPosBelow.length > 0;
+    if (!isSellTarget && !hasBuy) continue;
+
+    if (!markerInserted && currentPrice.gte(new Decimal(level.price))) {
+      entries.push({ marker: `──── ${fmtPrice(currentPrice, cs)} ◄ ────` });
+      markerInserted = true;
+    }
+
+    let status: string;
+    if (isSellTarget) {
+      const count = sellPosBelow.length > 1 ? ` (${sellPosBelow.length})` : "";
+      status = `SELL${count}  ${sumBase(sellPosBelow).toFixed(5)}`;
+      if (hasBuy) {
+        const bc =
+          level.buyOrderIds.length > 1 ? ` (${level.buyOrderIds.length})` : "";
+        status += `  +BUY${bc}`;
+      }
+    } else {
+      const count =
+        level.buyOrderIds.length > 1 ? ` (${level.buyOrderIds.length})` : "";
+      status = `BUY${count}`;
+    }
+
+    entries.push({
+      row: {
+        idx: `#${level.index + 1}`,
+        price: fmtPrice(new Decimal(level.price), cs),
+        status,
+      },
+    });
+  }
+
+  const allRows = entries.flatMap((e) => ("row" in e ? [e.row] : []));
+  if (allRows.length === 0) return [];
+
+  type Item = { marker: string } | { row: Row } | { more: number };
+  let display: Item[] = entries;
+  const maxRows = opts?.maxRows;
+  if (maxRows && allRows.length > maxRows) {
+    const above: Row[] = [];
+    const below: Row[] = [];
+    let markerText: string | null = null;
+    for (const e of entries) {
+      if ("marker" in e) {
+        markerText = e.marker;
+      } else {
+        (markerText === null ? above : below).push(e.row);
+      }
+    }
+    const half = Math.max(1, Math.floor(maxRows / 2));
+    const aboveHidden = Math.max(0, above.length - half);
+    const belowHidden = Math.max(0, below.length - half);
+    display = [];
+    if (aboveHidden > 0) display.push({ more: aboveHidden });
+    for (const r of above.slice(aboveHidden)) display.push({ row: r });
+    if (markerText !== null) display.push({ marker: markerText });
+    for (const r of below.slice(0, below.length - belowHidden))
+      display.push({ row: r });
+    if (belowHidden > 0) display.push({ more: belowHidden });
+  }
+
+  const shownRows = display.flatMap((e) => ("row" in e ? [e.row] : []));
+  const idxW = shownRows.reduce((m, r) => Math.max(m, r.idx.length), 0);
+  const priceW = shownRows.reduce((m, r) => Math.max(m, r.price.length), 0);
+
+  const lines = [`Open orders: ${activeBuys} buys · ${activeSells} sells`];
+  for (const e of display) {
+    if ("more" in e) {
+      lines.push(` … +${e.more} more`);
+    } else if ("marker" in e) {
+      lines.push(` ${e.marker}`);
+    } else {
+      lines.push(
+        ` ${e.row.idx.padEnd(idxW)}  ${e.row.price.padStart(priceW)}  ${e.row.status}`,
+      );
+    }
+  }
+  return lines;
+}
+
+export function fmtPrice(price: Decimal | string, cs: string): string {
   const num = typeof price === "string" ? parseFloat(price) : price.toNumber();
   if (isNaN(num)) return `${cs}0.00`;
   const formatted =
@@ -92,6 +203,16 @@ function fmtPnl(value: string, cs: string): string {
   return chalk.dim(str);
 }
 
+export function fmtSignedPnl(value: Decimal, cs: string): string {
+  const abs = value.abs().toFixed(2);
+  const sign = abs === "0.00" ? "" : value.lt(0) ? "-" : "+";
+  return `${sign}${cs}${abs}`;
+}
+
+export function fmtMoney(value: Decimal, cs: string): string {
+  return `${value.lt(0) ? "-" : ""}${cs}${value.abs().toFixed(2)}`;
+}
+
 function fmtDelta(current: Decimal, reference: Decimal): string {
   if (reference.isZero()) return "";
   const pct = current.minus(reference).div(reference).times(100);
@@ -102,7 +223,7 @@ function fmtDelta(current: Decimal, reference: Decimal): string {
   return chalk.dim(`= ${str}`);
 }
 
-function fmtUptime(ms: number): string {
+export function fmtUptime(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
