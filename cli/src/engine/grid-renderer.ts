@@ -142,15 +142,21 @@ export function renderOrderLadder(
         (markerText === null ? above : below).push(e.row);
       }
     }
-    const half = Math.max(1, Math.floor(maxRows / 2));
-    const aboveHidden = Math.max(0, above.length - half);
-    const belowHidden = Math.max(0, below.length - half);
+    const half = Math.floor(maxRows / 2);
+    let keepAbove = Math.min(above.length, half);
+    let keepBelow = Math.min(below.length, half);
+    let leftover = maxRows - keepAbove - keepBelow;
+    const addAbove = Math.min(leftover, above.length - keepAbove);
+    keepAbove += addAbove;
+    leftover -= addAbove;
+    keepBelow += Math.min(leftover, below.length - keepBelow);
+    const aboveHidden = above.length - keepAbove;
+    const belowHidden = below.length - keepBelow;
     display = [];
     if (aboveHidden > 0) display.push({ more: aboveHidden });
     for (const r of above.slice(aboveHidden)) display.push({ row: r });
     if (markerText !== null) display.push({ marker: markerText });
-    for (const r of below.slice(0, below.length - belowHidden))
-      display.push({ row: r });
+    for (const r of below.slice(0, keepBelow)) display.push({ row: r });
     if (belowHidden > 0) display.push({ more: belowHidden });
   }
 

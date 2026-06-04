@@ -208,15 +208,17 @@ export class ForegroundGridBot {
         `${activeConfig.levels} levels | ±${rangePctDisplay}% | ` +
         `${activeConfig.investment} ${this._state!.pair.split("-")[1] ?? ""}`,
     );
-    this._statusReporter = new LiveStatusReporter({
-      connections: this._connections,
-      refs: this._state!.statusMessages,
-      minIntervalMs: Math.max(5000, this._config.intervalSec * 1000),
-      parseMode: "MarkdownV2",
-    });
-    await this._statusReporter.flush(this._renderStatusCard());
-    this._state!.statusMessages = this._statusReporter.snapshot();
-    saveGridState(this._state!);
+    if (this._connections.length > 0) {
+      this._statusReporter = new LiveStatusReporter({
+        connections: this._connections,
+        refs: this._state!.statusMessages,
+        minIntervalMs: Math.max(5000, this._config.intervalSec * 1000),
+        parseMode: "MarkdownV2",
+      });
+      await this._statusReporter.flush(this._renderStatusCard());
+      this._state!.statusMessages = this._statusReporter.snapshot();
+      saveGridState(this._state!);
+    }
     await this._loop();
   }
 

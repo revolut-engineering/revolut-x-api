@@ -156,6 +156,46 @@ describe("renderOrderLadder", () => {
     expect(rowLines.some((l) => l.includes("$2,000.00"))).toBe(false);
     expect(rowLines.some((l) => l.includes("$100.00"))).toBe(false);
   });
+
+  it("keeps the highest rows when the price is above the whole grid", () => {
+    const state = makeState("BTC-USD");
+    state.levels = [];
+    for (let i = 0; i < 20; i++) {
+      state.levels.push({
+        index: i,
+        price: String((i + 1) * 100),
+        buyOrderIds: [`b${i}`],
+        positions: [],
+      });
+    }
+    const lines = renderOrderLadder(state, new Decimal("9999"), { maxRows: 6 });
+    const rowLines = lines.filter((l) => /^ #\d/.test(l));
+    expect(rowLines.length).toBe(6);
+    expect(rowLines.some((l) => l.includes("$2,000.00"))).toBe(true);
+    expect(rowLines.some((l) => l.includes("$1,900.00"))).toBe(true);
+    expect(rowLines.some((l) => l.includes("$100.00"))).toBe(false);
+    expect(lines[lines.length - 1]).toContain("… +");
+  });
+
+  it("keeps the lowest rows when the price is below the whole grid", () => {
+    const state = makeState("BTC-USD");
+    state.levels = [];
+    for (let i = 0; i < 20; i++) {
+      state.levels.push({
+        index: i,
+        price: String((i + 1) * 100),
+        buyOrderIds: [`b${i}`],
+        positions: [],
+      });
+    }
+    const lines = renderOrderLadder(state, new Decimal("1"), { maxRows: 6 });
+    const rowLines = lines.filter((l) => /^ #\d/.test(l));
+    expect(rowLines.length).toBe(6);
+    expect(rowLines.some((l) => l.includes("$100.00"))).toBe(true);
+    expect(rowLines.some((l) => l.includes("$200.00"))).toBe(true);
+    expect(rowLines.some((l) => l.includes("$2,000.00"))).toBe(false);
+    expect(lines[1]).toContain("… +");
+  });
 });
 
 describe("fmtSignedPnl", () => {
