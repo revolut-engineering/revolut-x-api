@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir, ensureConfigDir } from "@revolut/revolut-x-api";
+import type { StatusMessageRefs } from "./store.js";
 
 export interface GridLevelPosition {
   id: string;
@@ -63,6 +64,7 @@ export interface GridState {
     totalFees: string;
   };
   tradeLog: GridTradeEntry[];
+  statusMessages?: StatusMessageRefs;
 }
 
 const STATE_PREFIX = "grid_state_";

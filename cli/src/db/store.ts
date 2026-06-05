@@ -24,6 +24,14 @@ export interface TelegramConnection {
   updated_at: string;
 }
 
+export interface StatusMessageRef {
+  messageId: number;
+  chatId: string;
+  pinned?: boolean;
+}
+
+export type StatusMessageRefs = Record<string, StatusMessageRef>;
+
 interface Event {
   id: string;
   ts: string;
