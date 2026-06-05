@@ -194,6 +194,51 @@ export class ForegroundGridBot {
         );
       }
 
+      if (
+        !new Decimal(existingState.config.investment).eq(
+          this._config.investment,
+        )
+      ) {
+        throw new Error(
+          `Saved grid was started with investment ${existingState.config.investment} ` +
+            `but you requested ${this._config.investment}. ` +
+            `Use --reset to discard saved state and start fresh.`,
+        );
+      }
+
+      if (existingState.config.dryRun !== this._config.dryRun) {
+        throw new Error(
+          `Saved grid was started in ${existingState.config.dryRun ? "dry-run" : "live"} mode ` +
+            `but you requested ${this._config.dryRun ? "dry-run" : "live"} mode. ` +
+            `Use --reset to discard saved state and start fresh.`,
+        );
+      }
+
+      if (
+        Boolean(existingState.config.trailingUp) !== this._config.trailingUp
+      ) {
+        throw new Error(
+          `Saved grid was started ${existingState.config.trailingUp ? "with" : "without"} --trailing-up ` +
+            `but you requested ${this._config.trailingUp ? "with" : "without"} --trailing-up. ` +
+            `Use --reset to discard saved state and start fresh.`,
+        );
+      }
+
+      const savedStopLoss = existingState.config.stopLoss;
+      const newStopLoss = this._config.stopLoss;
+      const stopLossMismatch =
+        (savedStopLoss == null) !== (newStopLoss == null) ||
+        (savedStopLoss != null &&
+          newStopLoss != null &&
+          !new Decimal(savedStopLoss).eq(newStopLoss));
+      if (stopLossMismatch) {
+        throw new Error(
+          `Saved grid was started with stop-loss ${savedStopLoss ?? "(none)"} ` +
+            `but you requested ${newStopLoss ?? "(none)"}. ` +
+            `Use --reset to discard saved state and start fresh.`,
+        );
+      }
+
       await this._reconcileAndInit(existingState);
     } else {
       await this._initNewGrid();
@@ -1079,16 +1124,13 @@ export class ForegroundGridBot {
     // Phase 1: Adopt saved state as-is
     this._state = savedState;
 
-    // Update mutable config fields (geometry + split validated in run())
+    // Update mutable config fields (everything else validated in run())
     this._state.config.intervalSec = config.intervalSec;
-    this._state.config.dryRun = config.dryRun;
 
     const quoteStep = this._getQuoteStep();
     const baseStep = this._getBaseStep();
     this._state.quotePrecision = quoteStep.toString();
     this._state.basePrecision = baseStep.toString();
-
-    const newInvestment = new Decimal(config.investment);
 
     // Phase 2: Verify each saved order against the exchange
     let buysFilled = 0;
@@ -1208,27 +1250,6 @@ export class ForegroundGridBot {
         }
         await sleep(ORDER_DELAY_MS);
       }
-    }
-
-    // Recalculate quotePerLevel if investment changed
-    if (config.investment !== this._state.config.investment) {
-      const midPrice = await this._getMidPrice();
-      const totalActiveLevels = this._state.levels.filter(
-        (l) =>
-          l.buyOrderIds.length > 0 ||
-          l.positions.length > 0 ||
-          new Decimal(l.price).lte(midPrice),
-      ).length;
-      const quotePerLevel = newInvestment
-        .div(Math.max(totalActiveLevels, 1))
-        .toDecimalPlaces(2, Decimal.ROUND_DOWN);
-      this._state.quotePerLevel = quotePerLevel.toString();
-      this._state.config.investment = config.investment;
-      console.log(
-        chalk.dim(
-          `  Investment changed: quote per level recalculated to ${quotePerLevel}`,
-        ),
-      );
     }
 
     // Phase 3: Handle split mode
