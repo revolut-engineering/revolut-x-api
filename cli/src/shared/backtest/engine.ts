@@ -112,6 +112,7 @@ export function createGrid(
   startPrice: Decimal,
   gridLevels: number,
   rangePct: Decimal,
+  quoteDp = 2,
 ): GridLevel[] {
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
   const upper = startPrice.times(new Decimal(1).plus(rangePct));
@@ -119,7 +120,7 @@ export function createGrid(
 
   const levels: GridLevel[] = [];
   for (let i = 0; i < gridLevels; i++) {
-    const price = lower.times(ratio.pow(i)).toDecimalPlaces(2);
+    const price = lower.times(ratio.pow(i)).toDecimalPlaces(quoteDp);
     const level: GridLevel = {
       price,
       index: i,
@@ -192,12 +193,13 @@ function runBuyPass(
   quoteBalance: Decimal,
   investment: Decimal,
   tickFills: BacktestFill[],
+  baseDp = 5,
 ): Decimal {
   for (const level of levels) {
     if (level.buyCount > 0 && low.lte(level.price)) {
       const baseBought = quotePerLevel
         .div(level.price)
-        .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+        .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
 
       for (let i = 0; i < level.buyCount; i++) {
         level.positions.push(baseBought);
@@ -248,6 +250,7 @@ function runSellPass(
   quoteBalance: Decimal,
   investment: Decimal,
   tickFills: BacktestFill[],
+  quoteDp = 2,
 ): Decimal {
   for (const level of levels) {
     if (level.positions.length > 0 && level.index + 1 < levels.length) {
@@ -258,7 +261,7 @@ function runSellPass(
         for (const baseHeld of positionsToSell) {
           const quoteReceived = baseHeld
             .times(sellLevel.price)
-            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
           const profit = quoteReceived.minus(quotePerLevel);
 
           level.buyCount++;
@@ -317,6 +320,8 @@ function simulateCandle(
   quoteBalance: Decimal,
   investment: Decimal,
   tickFills: BacktestFill[],
+  baseDp = 5,
+  quoteDp = 2,
 ): Decimal {
   const bearish = open.gt(close);
   if (bearish) {
@@ -328,6 +333,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
+      quoteDp,
     );
     quoteBalance = runBuyPass(
       levels,
@@ -337,6 +343,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
+      baseDp,
     );
   } else {
     quoteBalance = runBuyPass(
@@ -347,6 +354,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
+      baseDp,
     );
     quoteBalance = runSellPass(
       levels,
@@ -356,6 +364,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
+      quoteDp,
     );
   }
 
@@ -371,13 +380,17 @@ export function runBacktest(
   trailingUp = false,
   stopLossPrice = 0,
   onTick?: BacktestOnTick,
+  baseStep = new Decimal("0.00001"),
+  quoteStep = new Decimal("0.01"),
 ): BacktestResult {
+  const baseDp = baseStep.decimalPlaces() ?? 5;
+  const quoteDp = quoteStep.decimalPlaces() ?? 2;
   if (candles.length === 0) {
     return createEmptyResult();
   }
 
   const startPrice = candles[0].open;
-  const levels = createGrid(startPrice, gridLevels, rangePct);
+  const levels = createGrid(startPrice, gridLevels, rangePct, quoteDp);
 
   let buyLevelCount = 0;
   for (const lv of levels) {
@@ -408,7 +421,7 @@ export function runBacktest(
   if (split && sellLevelIndices.length > 0) {
     const basePerLevel = quotePerLevel
       .div(startPrice)
-      .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+      .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
 
     for (const sellIdx of sellLevelIndices) {
       const buyLevel = levels[sellIdx - 1];
@@ -441,7 +454,7 @@ export function runBacktest(
           const baseHeld = level.positions.pop()!;
           const quoteReceived = baseHeld
             .times(fixedSlPrice)
-            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
           const profit = quoteReceived.minus(quotePerLevel);
           quoteBalance = quoteBalance.plus(quoteReceived);
           result.realizedPnl = result.realizedPnl.plus(profit);
@@ -505,6 +518,8 @@ export function runBacktest(
       quoteBalance,
       investment,
       tickFills,
+      baseDp,
+      quoteDp,
     );
 
     // Trailing up check: did the candle's high breach the upper boundary + one step?
@@ -531,7 +546,7 @@ export function runBacktest(
             const baseHeld = level.positions.pop()!;
             const quoteReceived = baseHeld
               .times(rebuildPrice)
-              .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+              .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
             const profit = quoteReceived.minus(quotePerLevel);
             quoteBalance = quoteBalance.plus(quoteReceived);
             result.realizedPnl = result.realizedPnl.plus(profit);
@@ -584,7 +599,7 @@ export function runBacktest(
         for (let i = 0; i < levels.length; i++) {
           levels[i].price = levels[i].price
             .times(ratioK)
-            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
         }
 
         // Reset buy counts and positions based on new prices
@@ -642,6 +657,8 @@ export function optimizeGridParams(
   split = false,
   trailingUp = false,
   stopLossPrice = 0,
+  baseStep = new Decimal("0.00001"),
+  quoteStep = new Decimal("0.01"),
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
@@ -685,6 +702,9 @@ export function optimizeGridParams(
         split,
         trailingUp,
         stopLossPrice,
+        undefined,
+        baseStep,
+        quoteStep,
       );
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
@@ -767,6 +787,8 @@ function buildBotInitialState(
   trailingUp: boolean,
   stopLossPrice: number,
   exchange: SimulatedExchange,
+  baseDp = 5,
+  quoteDp = 2,
 ): { state: GridState; quotePerLevel: Decimal } {
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
   const upper = startPrice.times(new Decimal(1).plus(rangePct));
@@ -776,7 +798,7 @@ function buildBotInitialState(
   for (let i = 0; i < gridLevels; i++) {
     const price = lower
       .times(ratio.pow(i))
-      .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+      .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
     levels.push({
       index: i,
       price: price.toString(),
@@ -825,8 +847,8 @@ function buildBotInitialState(
     splitExecuted: false,
     shiftCount: 0,
     gridPrice: startPrice.toString(),
-    quotePrecision: "0.01",
-    basePrecision: "0.00001",
+    quotePrecision: new Decimal(10).pow(-quoteDp).toFixed(quoteDp),
+    basePrecision: new Decimal(10).pow(-baseDp).toFixed(baseDp),
     quotePerLevel: quotePerLevel.toString(),
     levels,
     stats: {
@@ -855,7 +877,7 @@ function buildBotInitialState(
   if (split && sellLevelIndices.length > 0) {
     const basePerLevel = quotePerLevel
       .div(startPrice)
-      .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+      .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
 
     for (const sellIdx of sellLevelIndices) {
       const buyLevel = levels[sellIdx - 1];
@@ -902,7 +924,11 @@ export async function runBacktestBot(
   trailingUp = false,
   stopLossPrice = 0,
   onTick?: BacktestOnTick,
+  baseStep = new Decimal("0.00001"),
+  quoteStep = new Decimal("0.01"),
 ): Promise<BacktestResult> {
+  const baseDp = baseStep.decimalPlaces() ?? 5;
+  const quoteDp = quoteStep.decimalPlaces() ?? 2;
   if (candles.length === 0) {
     return createEmptyResult();
   }
@@ -920,6 +946,8 @@ export async function runBacktestBot(
     trailingUp,
     stopLossPrice,
     exchange,
+    baseDp,
+    quoteDp,
   );
 
   // Compute initial cash balance

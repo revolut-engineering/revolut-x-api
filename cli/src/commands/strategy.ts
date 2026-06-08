@@ -256,6 +256,23 @@ async function handleBacktest(
     ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
     : 0;
 
+  // Fetch pair precision from exchange (base_step / quote_step).
+  // Falls back to 5dp/2dp defaults if not available (no auth or unknown pair).
+  let baseStep = new Decimal("0.00001");
+  let quoteStep = new Decimal("0.01");
+  try {
+    const pairClient = getClient({ requireAuth: false });
+    const pairs = await pairClient.getCurrencyPairs();
+    const slashPair = pair.replace("-", "/");
+    const pairInfo = pairs[slashPair];
+    if (pairInfo) {
+      baseStep = new Decimal(pairInfo.base_step);
+      quoteStep = new Decimal(pairInfo.quote_step);
+    }
+  } catch {
+    // use defaults
+  }
+
   if (stopLossPrice > 0) {
     const startPrice = candles[0].open;
     const lowestLevel = startPrice.times(new Decimal(1).minus(rangePct));
@@ -297,6 +314,8 @@ async function handleBacktest(
         useTrailingUp,
         stopLossPrice,
         onTick,
+        baseStep,
+        quoteStep,
       )
     : runBacktest(
         candles,
@@ -307,6 +326,8 @@ async function handleBacktest(
         useTrailingUp,
         stopLossPrice,
         onTick,
+        baseStep,
+        quoteStep,
       );
 
   if (traceJson) {
@@ -646,6 +667,21 @@ async function handleOptimize(
     }
   }
 
+  let optBaseStep = new Decimal("0.00001");
+  let optQuoteStep = new Decimal("0.01");
+  try {
+    const pairClient = getClient({ requireAuth: false });
+    const pairs = await pairClient.getCurrencyPairs();
+    const slashPair = pair.replace("-", "/");
+    const pairInfo = pairs[slashPair];
+    if (pairInfo) {
+      optBaseStep = new Decimal(pairInfo.base_step);
+      optQuoteStep = new Decimal(pairInfo.quote_step);
+    }
+  } catch {
+    // use defaults
+  }
+
   const results = optimizeGridParams(
     candles,
     levelsList,
@@ -655,6 +691,8 @@ async function handleOptimize(
     useSplit,
     useTrailingUp,
     stopLossPrice,
+    optBaseStep,
+    optQuoteStep,
   );
 
   if (isJsonOutput(opts)) {

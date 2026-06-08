@@ -143,6 +143,7 @@ function formatBacktestResult(
   investment: Decimal,
   days: number,
   split = false,
+  quoteStep = new Decimal("0.01"),
 ): string {
   const startPrice = candles[0].open;
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
@@ -155,7 +156,8 @@ function formatBacktestResult(
     ? new Decimal(0)
     : netReturn.div(investment).times(100);
 
-  const levels = createGrid(startPrice, gridLevels, rangePct);
+  const quoteDp = quoteStep.decimalPlaces() ?? 2;
+  const levels = createGrid(startPrice, gridLevels, rangePct, quoteDp);
   const buyLevels = levels.filter((lv) => lv.buyCount > 0).length;
   const sellLevels = split
     ? levels.filter((lv) => lv.price.gt(startPrice)).length
@@ -431,6 +433,20 @@ export function registerBacktestTools(server: McpServer): void {
         }
       }
 
+      let baseStep = new Decimal("0.00001");
+      let quoteStep = new Decimal("0.01");
+      try {
+        const pairs = await getRevolutXClient().getCurrencyPairs();
+        const slashSymbol = symbol.replace("-", "/");
+        const pairInfo = pairs[slashSymbol];
+        if (pairInfo) {
+          baseStep = new Decimal(pairInfo.base_step);
+          quoteStep = new Decimal(pairInfo.quote_step);
+        }
+      } catch {
+        // use defaults
+      }
+
       const result = runBacktest(
         candles,
         totalLevels,
@@ -439,6 +455,8 @@ export function registerBacktestTools(server: McpServer): void {
         split_investment,
         trailing_up,
         stop_loss_price,
+        baseStep,
+        quoteStep,
       );
 
       return textResult(
@@ -452,6 +470,7 @@ export function registerBacktestTools(server: McpServer): void {
           investDec!,
           actualDays,
           split_investment,
+          quoteStep,
         ) + llmNotice,
       );
     },
@@ -617,6 +636,20 @@ export function registerBacktestTools(server: McpServer): void {
         }
       }
 
+      let optBaseStep = new Decimal("0.00001");
+      let optQuoteStep = new Decimal("0.01");
+      try {
+        const pairs = await getRevolutXClient().getCurrencyPairs();
+        const slashSymbol = symbol.replace("-", "/");
+        const pairInfo = pairs[slashSymbol];
+        if (pairInfo) {
+          optBaseStep = new Decimal(pairInfo.base_step);
+          optQuoteStep = new Decimal(pairInfo.quote_step);
+        }
+      } catch {
+        // use defaults
+      }
+
       const results = optimizeGridParams(
         candles,
         levelsList,
@@ -626,6 +659,8 @@ export function registerBacktestTools(server: McpServer): void {
         split_investment,
         trailing_up,
         stop_loss_price,
+        optBaseStep,
+        optQuoteStep,
       );
 
       return textResult(
