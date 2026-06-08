@@ -1,6 +1,6 @@
 {
   "name": "@revolut/revolut-x-cli",
-  "version": "1.0.44",
+  "version": "1.0.45",
   "description": "Command-line interface for crypto exchange trading",
   "keywords": [
     "cli",
