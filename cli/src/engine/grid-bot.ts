@@ -459,7 +459,7 @@ export class ForegroundGridBot {
       const direction = below ? "below" : "above";
       const boundary = below ? lower : upper;
       this._warnings.push(
-        `Price ${direction} grid range (${cs}${boundary.toFixed(2)})`,
+        `Price ${direction} grid range (${fmtPrice(boundary, cs)})`,
       );
       if (!this._boundaryAlerted) {
         this._boundaryAlerted = true;
@@ -467,8 +467,8 @@ export class ForegroundGridBot {
           ? "Buy orders may keep filling without matching sells — accumulating inventory."
           : "Price is above all grid levels — bot is idle with no active orders.";
         this._notify(
-          `Grid Bot ${state.pair}: Price exited grid range (${direction} ${cs}${boundary.toFixed(2)}). ` +
-            `Current: ${cs}${currentPrice.toFixed(2)}. ${risk}`,
+          `Grid Bot ${state.pair}: Price exited grid range (${direction} ${fmtPrice(boundary, cs)}). ` +
+            `Current: ${fmtPrice(currentPrice, cs)}. ${risk}`,
         );
       }
     } else {
@@ -579,7 +579,7 @@ export class ForegroundGridBot {
     saveGridState(state);
 
     this._notify(
-      `Grid Bot ${state.pair}: trailing up — grid rebuilt around ${cs}${currentPrice.toFixed(2)} ` +
+      `Grid Bot ${state.pair}: trailing up — grid rebuilt around ${fmtPrice(currentPrice, cs)} ` +
         `(shift #${state.shiftCount})`,
     );
   }
@@ -848,8 +848,8 @@ export class ForegroundGridBot {
       const lowestLevel = new Decimal(levels[0].price);
       if (slPrice.gte(lowestLevel)) {
         throw new Error(
-          `Stop-loss price (${slPrice.toFixed(2)}) must be strictly below ` +
-            `the lowest grid level (${lowestLevel.toFixed(2)}). `,
+          `Stop-loss price (${fmtPrice(slPrice, this._cs)}) must be strictly below ` +
+            `the lowest grid level (${fmtPrice(lowestLevel, this._cs)}). `,
         );
       }
     }

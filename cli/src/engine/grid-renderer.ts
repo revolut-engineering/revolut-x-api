@@ -180,19 +180,25 @@ export function renderOrderLadder(
 }
 
 export function fmtPrice(price: Decimal | string, cs: string): string {
-  const num = typeof price === "string" ? parseFloat(price) : price.toNumber();
-  if (isNaN(num)) return `${cs}0.00`;
-  const formatted =
-    num < 1
-      ? num.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 8,
-        })
-      : num.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
-  return `${cs}${formatted}`;
+  let d: Decimal;
+  try {
+    d = price instanceof Decimal ? price : new Decimal(price);
+  } catch {
+    return `${cs}0.00`;
+  }
+  if (!d.isFinite()) return `${cs}0.00`;
+  const abs = d.abs();
+  // Prices below 1 (e.g. PEPE at ~0.0000027) need more fractional digits;
+  // a flat 2dp would floor any sub-cent price to 0.00.
+  const maxFractionDigits = abs.gte(1) ? 2 : 8;
+  const num = abs
+    .toDecimalPlaces(maxFractionDigits, Decimal.ROUND_HALF_UP)
+    .toNumber();
+  const formatted = num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: maxFractionDigits,
+  });
+  return `${d.isNegative() ? "-" : ""}${cs}${formatted}`;
 }
 
 function fmtPnl(value: string, cs: string): string {

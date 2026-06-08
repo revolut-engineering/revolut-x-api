@@ -30,6 +30,28 @@ function getCurrSymbol(symbol: string): string {
   return CURRENCY_SYMBOLS[quote] ?? "";
 }
 
+function fmtPrice(price: Decimal | string, cs: string): string {
+  let d: Decimal;
+  try {
+    d = price instanceof Decimal ? price : new Decimal(price);
+  } catch {
+    return `${cs}0.00`;
+  }
+  if (!d.isFinite()) return `${cs}0.00`;
+  const abs = d.abs();
+  // Prices below 1 (e.g. PEPE at ~0.0000027) need more fractional digits;
+  // a flat 2dp would floor any sub-cent price to 0.00.
+  const maxFractionDigits = abs.gte(1) ? 2 : 8;
+  const num = abs
+    .toDecimalPlaces(maxFractionDigits, Decimal.ROUND_HALF_UP)
+    .toNumber();
+  const formatted = num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: maxFractionDigits,
+  });
+  return `${d.isNegative() ? "-" : ""}${cs}${formatted}`;
+}
+
 function parseDecimal(
   value: string,
   name: string,
@@ -187,9 +209,9 @@ function formatBacktestResult(
     `Grid Backtest Results for ${symbol}`,
     "=".repeat(50),
     `Data: ${candles.length} candles (${resolution} resolution, ${days} days)`,
-    `Price range: ${cs}${priceLow.toFixed(2)} - ${cs}${priceHigh.toFixed(2)}`,
-    `Start price: ${cs}${startPrice.toFixed(2)}`,
-    `Grid range: ${cs}${lower.toFixed(2)} - ${cs}${upper.toFixed(2)} (±${rangePct.times(100).toFixed(1)}%)`,
+    `Price range: ${fmtPrice(priceLow, cs)} - ${fmtPrice(priceHigh, cs)}`,
+    `Start price: ${fmtPrice(startPrice, cs)}`,
+    `Grid range: ${fmtPrice(lower, cs)} - ${fmtPrice(upper, cs)} (±${rangePct.times(100).toFixed(1)}%)`,
     `Grid levels: ${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell) | ${quote}/level: ${cs}${quotePerLevel}`,
     (() => {
       const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
@@ -427,8 +449,8 @@ export function registerBacktestTools(server: McpServer): void {
         if (new Decimal(stop_loss_price).gte(lowestLevel)) {
           return textResult(
             `stop_loss_price ${stop_loss_price} must be strictly below the lowest grid level ` +
-              `(~${lowestLevel.toFixed(2)} for ±${rangeDec.times(100).toFixed(1)}% range around ` +
-              `start price ${startPrice.toFixed(2)}). Try a lower value.`,
+              `(~${fmtPrice(lowestLevel, getCurrSymbol(symbol))} for ±${rangeDec.times(100).toFixed(1)}% range around ` +
+              `start price ${fmtPrice(startPrice, getCurrSymbol(symbol))}). Try a lower value.`,
           );
         }
       }
@@ -631,7 +653,7 @@ export function registerBacktestTools(server: McpServer): void {
         if (new Decimal(stop_loss_price).gte(startPrice)) {
           return textResult(
             `stop_loss_price ${stop_loss_price} must be below the backtest start price ` +
-              `(${startPrice.toFixed(2)}). Try a lower value.`,
+              `(${fmtPrice(startPrice, getCurrSymbol(symbol))}). Try a lower value.`,
           );
         }
       }
