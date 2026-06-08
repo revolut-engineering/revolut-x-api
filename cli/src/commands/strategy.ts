@@ -21,7 +21,7 @@ import {
   type GridBotConfig,
   type GridBotTickEvent,
 } from "../engine/grid-bot.js";
-import { getCurrSymbol } from "../engine/grid-renderer.js";
+import { getCurrSymbol, fmtPrice } from "../engine/grid-renderer.js";
 import {
   parseSpec,
   loadBatch,
@@ -279,8 +279,8 @@ async function handleBacktest(
     if (new Decimal(stopLossPrice).gte(lowestLevel)) {
       printError(
         `Stop-loss ${stopLossPrice} must be strictly below the lowest grid level ` +
-          `(~${lowestLevel.toFixed(2)} for ±${rangePct.times(100).toFixed(1)}% range around ` +
-          `start price ${startPrice.toFixed(2)}). Try a lower value.`,
+          `(~${fmtPrice(lowestLevel, getCurrSymbol(pair))} for ±${rangePct.times(100).toFixed(1)}% range around ` +
+          `start price ${fmtPrice(startPrice, getCurrSymbol(pair))}). Try a lower value.`,
       );
       process.exit(1);
     }
@@ -407,11 +407,11 @@ async function handleBacktest(
   const cs = getCurrSymbol(pair);
   console.log(pad("Pair", chalk.white(pair)));
   console.log(pad("Candles", `${candles.length} (${opts.interval})`));
-  console.log(pad("Start Price", `${cs}${startPrice.toFixed(2)}`));
+  console.log(pad("Start Price", fmtPrice(startPrice, cs)));
   console.log(
     pad(
       "Grid Range",
-      `${cs}${lower.toFixed(2)} \u2014 ${cs}${upper.toFixed(2)} (${chalk.yellow(`\u00B1${rangePct.times(100).toFixed(1)}%`)})`,
+      `${fmtPrice(lower, cs)} \u2014 ${fmtPrice(upper, cs)} (${chalk.yellow(`\u00B1${rangePct.times(100).toFixed(1)}%`)})`,
     ),
   );
   console.log(
@@ -505,7 +505,7 @@ async function handleBacktest(
       },
       {
         header: "Price",
-        accessor: (t) => `${cs}${t.price.toFixed(2)}`,
+        accessor: (t) => fmtPrice(t.price, cs),
         align: "right",
       },
       {
@@ -661,7 +661,7 @@ async function handleOptimize(
     if (new Decimal(stopLossPrice).gte(startPrice)) {
       printError(
         `Stop-loss ${stopLossPrice} must be below the backtest start price ` +
-          `(${startPrice.toFixed(2)}). Try a lower value.`,
+          `(${fmtPrice(startPrice, getCurrSymbol(pair))}). Try a lower value.`,
       );
       process.exit(1);
     }

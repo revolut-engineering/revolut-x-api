@@ -16,6 +16,7 @@ import {
 import type { TelegramConnection } from "../db/store.js";
 import { sendWithRetries, formatNotification } from "./notify.js";
 import { CandleCache } from "./candle-cache.js";
+import { fmtPrice } from "./grid-renderer.js";
 
 export interface MonitorSpec {
   pair: string;
@@ -318,18 +319,7 @@ export class ForegroundMonitor {
   }
 
   private _formatPrice(price: Decimal): string {
-    const num = price.toNumber();
-    const formatted =
-      num < 1
-        ? num.toLocaleString("en-US", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 8,
-          })
-        : num.toLocaleString("en-US", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          });
-    return `${this._currSymbol}${formatted}`;
+    return fmtPrice(price, this._currSymbol);
   }
 
   private _formatDelta(current: Decimal, previous: Decimal): string {

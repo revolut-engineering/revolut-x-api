@@ -4,6 +4,7 @@ import type {
   BacktestTickEvent,
 } from "../shared/backtest/index.js";
 import type { GridBotTickEvent } from "../engine/grid-bot.js";
+import { fmtPrice } from "../engine/grid-renderer.js";
 
 export function formatBacktestFills(fills: BacktestFill[]): string {
   if (fills.length === 0) return "—";
@@ -24,7 +25,7 @@ export function emitBacktestTracePlain(
   const idx = String(ev.index).padStart(6, "0");
   const fillsTxt = formatBacktestFills(ev.fills);
   out.write(
-    `[t=${idx}] price=${currencySymbol}${ev.close.toFixed(2)} pos=${ev.position.toFixed(5)} ` +
+    `[t=${idx}] price=${fmtPrice(ev.close, currencySymbol)} pos=${ev.position.toFixed(5)} ` +
       `cash=${currencySymbol}${ev.cash.toFixed(2)} realized=${ev.realizedPnl.toFixed(2)} ` +
       `unrealized=${signedFixed(ev.unrealizedPnl)} total=${currencySymbol}${ev.totalValue.toFixed(2)} | ${fillsTxt}\n`,
   );
@@ -67,7 +68,7 @@ export function emitGridBotTracePlain(
   const fills = ev.fills.length === 0 ? "—" : ev.fills.join("; ");
   out.write(
     chalk.dim(
-      `[t=${String(ev.index).padStart(6, "0")}] price=${currencySymbol}${ev.price.toFixed(2)} ` +
+      `[t=${String(ev.index).padStart(6, "0")}] price=${fmtPrice(ev.price, currencySymbol)} ` +
         `pos=${ev.position.toFixed(5)} orders=${ev.openOrders} ` +
         `realized=${ev.realizedPnl.toFixed(2)} unrealized=${signedFixed(ev.unrealizedPnl)} | ${fills}`,
     ) + "\n",
