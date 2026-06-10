@@ -291,7 +291,7 @@ export function registerMarketDataTools(server: McpServer): void {
       const resError = validateResolution(resolution);
       if (resError) return resError;
 
-      const dates = parseDateRange(start_date, end_date);
+      const dates = parseDateRange(start_date, end_date, { endDefaultsToNow: true });
       if ("error" in dates) return dates.error;
 
       const intervalMs = RESOLUTIONS_MAP[resolution] || 60 * 60 * 1000;
@@ -419,7 +419,7 @@ export function registerMarketDataTools(server: McpServer): void {
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      const dates = parseDateRange(start_date, end_date);
+      const dates = parseDateRange(start_date, end_date, { endDefaultsToNow: true });
       if ("error" in dates) return dates.error;
       const { parsedStartDate, parsedEndDate } = dates;
 
