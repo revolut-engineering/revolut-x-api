@@ -27,7 +27,7 @@ export function resetRevolutXClient(): void {
   _client = null;
 }
 
-const SERVER_INSTRUCTIONS = `Revolut X read-only data, account state, historical orders/fills, and grid-strategy backtests for crypto and fiat pairs. To place orders, run live bots, or set up alerts, route the user to \`get_trading_setup\` — this server cannot modify account state.
+export const SERVER_INSTRUCTIONS = `Revolut X read-only data, account state, historical orders/fills, and grid-strategy backtests for crypto and fiat pairs. To place orders, run live bots, or set up alerts, route the user to \`get_trading_setup\` — this server cannot modify account state.
 
 Data hygiene (apply to every reply):
 - Always show the currency or unit next to a numeric amount (e.g., "USD 45,000", "0.5 BTC", "12 USD/BTC").

@@ -15,7 +15,7 @@ import cryptoProviderContent from "../data/articles/revolut-x-crypto-services-pr
 
 type IntentEntry = { description: string; content: string };
 
-const INTENT_MAP: Record<string, IntentEntry> = {
+export const INTENT_MAP: Record<string, IntentEntry> = {
   get_started: {
     description:
       "User wants to sign up, create an account, learn what Revolut X is, or understand eligibility requirements.",
@@ -68,7 +68,7 @@ const INTENT_MAP: Record<string, IntentEntry> = {
   },
 };
 
-const INTENT_KEYS = Object.keys(INTENT_MAP) as [string, ...string[]];
+export const INTENT_KEYS = Object.keys(INTENT_MAP) as [string, ...string[]];
 
 const INTENT_LIST = INTENT_KEYS.map(
   (k) => `  ${k}: ${INTENT_MAP[k].description}`,
