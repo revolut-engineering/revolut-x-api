@@ -91,6 +91,7 @@ export type {
   LimitOrderConfig,
   MarketOrderConfig,
   PlaceOrderParams,
+  ReplaceOrderParams,
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
   Trade,

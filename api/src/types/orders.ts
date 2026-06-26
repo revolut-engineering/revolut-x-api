@@ -92,6 +92,7 @@ export interface LimitOrderConfig {
   price: string;
   baseSize?: string;
   quoteSize?: string;
+  timeInForce?: TimeInForce;
   executionInstructions?: ExecutionInstruction[];
 }
 
@@ -113,6 +114,7 @@ export interface ReplaceOrderParams {
   price?: string;
   baseSize?: string;
   quoteSize?: string;
+  timeInForce?: TimeInForce;
   executionInstructions?: ExecutionInstruction[];
 }
 

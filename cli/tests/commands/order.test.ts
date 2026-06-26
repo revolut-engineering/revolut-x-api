@@ -153,6 +153,28 @@ describe("order place", () => {
     });
   });
 
+  it("places a limit order with --time-in-force", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--qty",
+      "0.001",
+      "--limit",
+      "95000",
+      "--time-in-force",
+      "ioc",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      symbol: "BTC-USD",
+      side: "buy",
+      limit: { price: "95000", baseSize: "0.001", timeInForce: "ioc" },
+    });
+  });
+
   it("places a market buy order with quote amount", async () => {
     await program.parseAsync([
       "node",
@@ -789,6 +811,45 @@ describe("order replace", () => {
     expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
       clientOrderId: "client-new",
       executionInstructions: ["post_only"],
+    });
+  });
+
+  it("replaces order with --time-in-force alongside --price", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+      "--time-in-force",
+      "fok",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      price: "96000",
+      timeInForce: "fok",
+    });
+  });
+
+  it("replaces order with only --time-in-force", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--time-in-force",
+      "ioc",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      timeInForce: "ioc",
     });
   });
 

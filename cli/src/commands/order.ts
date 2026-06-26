@@ -158,10 +158,11 @@ Examples:
   $ revx order get <order-id>                                 Get order details
   $ revx order cancel <order-id>                              Cancel an order
   $ revx order cancel --all                                   Cancel all open orders
-  $ revx order replace <order-id> --price 96000               Replace order limit price
-  $ revx order replace <order-id> --qty 0.002                 Replace order qty (amount recalculated)
-  $ revx order replace <order-id> --quote 150                 Replace order quote amount
-  $ revx order replace <order-id> --allow-taker               Replace order to allow taker
+   $ revx order replace <order-id> --price 96000               Replace order limit price
+   $ revx order replace <order-id> --qty 0.002                 Replace order qty (amount recalculated)
+   $ revx order replace <order-id> --quote 150                 Replace order quote amount
+   $ revx order replace <order-id> --time-in-force ioc         Replace order time in force
+   $ revx order replace <order-id> --allow-taker               Replace order to allow taker
   $ revx order fills <order-id>                               Get order fills`,
     );
 
@@ -174,6 +175,10 @@ Examples:
     .option("--quote <amount>", "Amount in quote currency (e.g. 100 for USD)")
     .option("--limit <price>", "Limit order price (required unless --market)")
     .option("--market", "Market order (required unless --limit)")
+    .option(
+      "--time-in-force <value>",
+      "Time in force for limit orders (gtc|ioc|fok)",
+    )
     .option("--post-only", "Post-only execution instruction")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
@@ -186,6 +191,7 @@ Examples:
           quote?: string;
           limit?: string;
           market?: boolean;
+          timeInForce?: string;
           postOnly?: boolean;
           json?: boolean;
           output?: string;
@@ -230,6 +236,9 @@ Examples:
             params.limit = {
               price: opts.limit,
               ...sizeField,
+              ...(opts.timeInForce
+                ? { timeInForce: opts.timeInForce as "gtc" | "ioc" | "fok" }
+                : {}),
               ...(opts.postOnly
                 ? { executionInstructions: ["post_only"] }
                 : {}),
@@ -569,6 +578,7 @@ Examples:
       "--client-order-id <id>",
       "Client order ID for the replacement (auto-generated if omitted)",
     )
+    .option("--time-in-force <value>", "Time in force (gtc|ioc|fok)")
     .option("--post-only", "Set execution_instructions to [post_only]")
     .option(
       "--allow-taker",
@@ -584,6 +594,7 @@ Examples:
           qty?: string;
           quote?: string;
           clientOrderId?: string;
+          timeInForce?: string;
           postOnly?: boolean;
           allowTaker?: boolean;
           json?: boolean;
@@ -609,11 +620,12 @@ Examples:
             !opts.price &&
             !opts.qty &&
             !opts.quote &&
+            !opts.timeInForce &&
             !opts.postOnly &&
             !opts.allowTaker
           ) {
             console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --post-only, --allow-taker.")}`,
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker.")}`,
             );
             process.exit(1);
           }
@@ -626,6 +638,8 @@ Examples:
           if (opts.price) params.price = opts.price;
           if (opts.qty) params.baseSize = opts.qty;
           if (opts.quote) params.quoteSize = opts.quote;
+          if (opts.timeInForce)
+            params.timeInForce = opts.timeInForce as "gtc" | "ioc" | "fok";
           if (opts.postOnly) params.executionInstructions = ["post_only"];
           else if (opts.allowTaker)
             params.executionInstructions = ["allow_taker"];

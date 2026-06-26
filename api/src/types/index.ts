@@ -35,6 +35,7 @@ export type {
   LimitOrderConfig,
   MarketOrderConfig,
   PlaceOrderParams,
+  ReplaceOrderParams,
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
 } from "./orders.js";

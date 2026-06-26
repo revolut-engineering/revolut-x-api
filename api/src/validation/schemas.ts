@@ -31,6 +31,7 @@ export const placeOrderSchema = z
         price: priceSchema,
         baseSize: quantitySchema.optional(),
         quoteSize: quantitySchema.optional(),
+        timeInForce: z.enum(["gtc", "ioc", "fok"]).optional(),
         executionInstructions: z.array(z.string()).optional(),
       })
       .refine(
@@ -63,6 +64,7 @@ export const replaceOrderSchema = z
     price: priceSchema.optional(),
     baseSize: quantitySchema.optional(),
     quoteSize: quantitySchema.optional(),
+    timeInForce: z.enum(["gtc", "ioc", "fok"]).optional(),
     executionInstructions: z.array(z.string()).optional(),
   })
   .refine(
@@ -70,9 +72,10 @@ export const replaceOrderSchema = z
       data.price !== undefined ||
       data.baseSize !== undefined ||
       data.quoteSize !== undefined ||
+      data.timeInForce !== undefined ||
       data.executionInstructions !== undefined,
     {
       message:
-        "At least one of price, baseSize, quoteSize, or executionInstructions must be provided",
+        "At least one of price, baseSize, quoteSize, timeInForce, or executionInstructions must be provided",
     },
   );
