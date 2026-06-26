@@ -47,6 +47,12 @@ Operational rules:
 Routing hints (only the non-obvious cases — tool descriptions cover the rest):
 - For trading volume, P&L, or any "what did I do" question, call \`get_historical_orders\` once with \`order_states: ["filled","partially_filled"]\` and no symbols filter. The output already contains a pre-aggregated per-quote-currency totals block — quote it instead of re-summing.
 - For any fee-related question (fees paid on an order, fee currency), call \`get_order_by_id\` with the order ID — it is the only tool that returns per-order fees. \`get_historical_orders\` and \`get_order_fills\` do NOT include fee fields. For aggregate-fee questions (e.g. "how much in fees this week?") ask the user to confirm scope, since each order requires a separate call.
+- For "how does X work", "what is X", or any question about platform features, policies, fees, order types, deposits, withdrawals, or account issues: classify the user's question into an intent and call \`search_kb\` with that intent — the tool description lists every intent and what it covers. If unsure which intent applies, call \`list_kb_articles\` first. Do NOT answer these from training data alone.
+
+Knowledge base integrity (mandatory):
+- NEVER fabricate, infer, or paraphrase information about Revolut X platform features, fees, policies, limits, supported assets, or account rules from training data or general knowledge.
+- Every factual claim about how Revolut X works MUST come from a \`search_kb\` result in the current conversation. If no article covers the question, say so explicitly: "I don't have that information in the knowledge base" — do NOT fill the gap with guesses or prior knowledge.
+- This applies even when you are confident the answer is correct. Confidence is not a substitute for a KB lookup.
 
 \`get_instructions\` returns a categorized tool-name inventory.`;
 
@@ -54,7 +60,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: "Revolut X",
-      version: "1.0.40",
+      version: "1.0.46",
     },
     {
       instructions: SERVER_INSTRUCTIONS,

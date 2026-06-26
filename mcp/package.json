@@ -1,14 +1,14 @@
 {
   "name": "revolutx-mcp",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify",
-    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify",
+    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify --loader:.md=text",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify --loader:.md=text",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",

@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "Revolut X",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "display_name": "Revolut X",
   "description": "Check balances, view orders, analyze markets, and backtest trading strategies on Revolut X. All through natural language in Claude.",
   "author": {
@@ -114,6 +114,14 @@
     {
       "name": "get_order_by_id",
       "description": "Get the full details of a single order by its venue order ID. Supports market, limit, conditional, and tpsl orders. Includes total fees paid (`total_fee` and `fee_currency`) when the venue has reported them — this is the only tool that surfaces per-order fee data."
+    },
+    {
+      "name": "list_kb_articles",
+      "description": "List all available help articles in the Revolut X knowledge base, each with its id and a plain-English description of the user intent it covers. Call this before search_kb to identify the right article."
+    },
+    {
+      "name": "search_kb",
+      "description": "Find and return the most relevant Revolut X help article for a user's question. Pass the user's question directly — the tool matches it against article intents and returns the best result. Use this to answer questions about fees, order types, deposits, withdrawals, account restrictions, crypto safety, and other platform topics."
     }
   ],
   "user_config": {
