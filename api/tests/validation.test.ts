@@ -4,6 +4,7 @@ import {
   quantitySchema,
   symbolSchema,
   placeOrderSchema,
+  replaceOrderSchema,
 } from "../src/validation/schemas.js";
 
 describe("priceSchema", () => {
@@ -168,6 +169,87 @@ describe("placeOrderSchema", () => {
         price: "-100",
         baseSize: "0.001",
       },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts limit order with timeInForce", () => {
+    const result = placeOrderSchema.safeParse({
+      symbol: "BTC-USD",
+      side: "buy",
+      limit: {
+        price: "95000",
+        baseSize: "0.001",
+        timeInForce: "ioc",
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid timeInForce value in limit order", () => {
+    const result = placeOrderSchema.safeParse({
+      symbol: "BTC-USD",
+      side: "buy",
+      limit: {
+        price: "95000",
+        baseSize: "0.001",
+        timeInForce: "invalid",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects fok as timeInForce in limit order", () => {
+    const result = placeOrderSchema.safeParse({
+      symbol: "BTC-USD",
+      side: "buy",
+      limit: {
+        price: "95000",
+        baseSize: "0.001",
+        timeInForce: "fok",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("replaceOrderSchema", () => {
+  it("accepts replace with timeInForce alongside other fields", () => {
+    const result = replaceOrderSchema.safeParse({
+      clientOrderId: "client-123",
+      price: "95000",
+      timeInForce: "gtc",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts replace with only timeInForce", () => {
+    const result = replaceOrderSchema.safeParse({
+      clientOrderId: "client-123",
+      timeInForce: "ioc",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects fok as timeInForce for replace", () => {
+    const result = replaceOrderSchema.safeParse({
+      clientOrderId: "client-123",
+      timeInForce: "fok",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid timeInForce value", () => {
+    const result = replaceOrderSchema.safeParse({
+      clientOrderId: "client-123",
+      timeInForce: "invalid",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects replace with only clientOrderId", () => {
+    const result = replaceOrderSchema.safeParse({
+      clientOrderId: "client-123",
     });
     expect(result.success).toBe(false);
   });

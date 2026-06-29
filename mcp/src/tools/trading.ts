@@ -212,9 +212,11 @@ export function registerTradingTools(server: McpServer): void {
               "Omitting this filter returns ALL states including cancelled/rejected with zero filled_amount.",
           ),
         order_types: z
-          .array(z.enum(["market", "limit"]))
+          .array(z.enum(["market", "limit", "conditional", "tpsl"]))
           .optional()
-          .describe('Filter by order type: "market", "limit".'),
+          .describe(
+            'Filter by order type: "market", "limit", "conditional", "tpsl".',
+          ),
         start_date: z
           .string()
           .optional()
@@ -327,6 +329,15 @@ export function registerTradingTools(server: McpServer): void {
           ? `  Filled amount: ${o.filled_amount}${quote ? ` ${quote}` : ""}\n`
           : "";
         const amountLine = o.amount ? `  Amount: ${o.amount}\n` : "";
+        const conditionalLine = o.conditional
+          ? formatTrigger("Conditional trigger", o.conditional)
+          : "";
+        const takeProfitLine = o.take_profit
+          ? formatTrigger("Take profit", o.take_profit)
+          : "";
+        const stopLossLine = o.stop_loss
+          ? formatTrigger("Stop loss", o.stop_loss)
+          : "";
         lines.push(
           `  Order ID: ${o.id}\n` +
             `  Client Order ID: ${o.client_order_id}\n` +
@@ -335,6 +346,9 @@ export function registerTradingTools(server: McpServer): void {
             `  Type: ${o.type}\n` +
             priceLine +
             avgFillLine +
+            conditionalLine +
+            takeProfitLine +
+            stopLossLine +
             `  Quantity: ${o.quantity}\n` +
             amountLine +
             `  Filled: ${o.filled_quantity}\n` +
