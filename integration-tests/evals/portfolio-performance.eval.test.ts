@@ -247,11 +247,14 @@ describe("portfolio performance — P&L and return queries", () => {
           return days >= 150 && days <= 400;
         },
       },
+      a.finalTextMatches(/2[,\s]?500/),
+      a.finalTextMatches(/2[,\s]?000/),
+      a.finalTextMatches(/4[,\s]?700/),
       a.judge({
-        name: "summarises YTD realised P&L per symbol; does not fabricate unrealised gains",
+        name: "reports exact YTD realised P&L: BTC +2,500 · ETH +2,000 · SOL +200 · total +4,700 USD",
         criterion:
-          "Pass if: the answer summarises realised P&L from the order data broken down by symbol (BTC, ETH, SOL) and does not invent unrealised gains or portfolio valuations beyond what the tool returned. " +
-          "Fail if: any P&L figure is wrong by more than 10%, gains are extrapolated beyond filled trades, or the answer fabricates a portfolio value or percentage return not derivable from filled_amount fields.",
+          "Pass if: the answer states BTC realised P&L as exactly +2,500 USD, ETH as exactly +2,000 USD, SOL as exactly +200 USD, and total as exactly +4,700 USD; these figures must all be present and correct. " +
+          "Fail if: any figure differs from these exact values, unrealised gains are invented, or a portfolio percentage return is fabricated.",
       }),
     ],
   });
@@ -291,11 +294,14 @@ describe("portfolio performance — P&L and return queries", () => {
           return days >= 75 && days <= 120;
         },
       },
+      a.finalTextMatches(/\b800\b/),
+      a.finalTextMatches(/\b300\b/),
+      a.finalTextMatches(/1[,\s]?100/),
       a.judge({
-        name: "reports ~1100 USD total realised P&L from BTC and ETH trades; no fabrication",
+        name: "reports exact 3-month realised P&L: BTC +800 · ETH +300 · total +1,100 USD",
         criterion:
-          "Pass if: the answer reports approximately 1,100 USD total realised P&L (BTC ~+800 USD, ETH ~+300 USD) and does not invent figures beyond the filled_amount data. " +
-          "Fail if: any total is wrong by more than 10%, unrealised gains are invented, or the answer fabricates a return percentage not derivable from the order data.",
+          "Pass if: the answer states BTC realised P&L as exactly +800 USD, ETH as exactly +300 USD, and total as exactly +1,100 USD; all three figures must be present and correct. " +
+          "Fail if: any figure differs from these exact values, unrealised gains are invented, or a return percentage is fabricated.",
       }),
     ],
   });
@@ -317,10 +323,11 @@ describe("portfolio performance — P&L and return queries", () => {
     },
     assertions: [
       a.callsTool("get_historical_orders"),
+      a.finalTextMatches(/\b200\b/),
       a.judge({
-        name: "reports realised P&L or explains TWR limitation; does not fabricate a TWR percentage",
+        name: "reports exact +200 USD realised P&L and acknowledges TWR limitation",
         criterion:
-          "Pass if: the answer either (a) reports the ~200 USD realised P&L from BTC trades and explicitly notes that true time-weighted return cannot be computed without portfolio valuations at each cash-flow date, or (b) reports only the realised gain without claiming it is a TWR. " +
+          "Pass if: the answer states the realised P&L as exactly +200 USD from the BTC trade and explicitly notes that true time-weighted return cannot be computed without portfolio valuations at each cash-flow date. " +
           "Fail if: a specific TWR percentage is stated without noting the data limitation, or any figure is invented beyond what the filled_amount fields support.",
       }),
     ],

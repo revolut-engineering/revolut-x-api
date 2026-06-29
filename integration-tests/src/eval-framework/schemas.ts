@@ -136,9 +136,9 @@ export const EvalResultSchema = z.object({
   totalOutputTokens: NonNegativeFinite,
   assertionPassRates: z.record(Score),
   assertionMeanScores: z.record(Score.nullable()),
-  failureModes: z.array(FailureModeSchema).min(1).optional(),
-  granularity: GranularitySchema.optional(),
-  workflow: WorkflowSchema.optional(),
+  failureModes: z.array(FailureModeSchema).min(1).catch(undefined as never).optional(),
+  granularity: GranularitySchema.catch(undefined as never).optional(),
+  workflow: WorkflowSchema.catch(undefined as never).optional(),
 });
 export type EvalResult = z.infer<typeof EvalResultSchema>;
 
