@@ -70,6 +70,14 @@ const FACTUAL_ASSERTIONS: Array<{ intent: string; facts: string[] }> = [
     intent: "crypto_provider",
     facts: ["FRN 900562", "Financial Services Compensation Scheme"],
   },
+  {
+    intent: "legal_links",
+    facts: [
+      "crypto-exchange-trading-rules",
+      "crypto-exchange-fees",
+      "crypto-exchange-terms",
+    ],
+  },
 ];
 
 describe("search_kb — hallucination prevention", () => {
@@ -113,6 +121,10 @@ const PRECISION_CHECKS: Array<{ intent: string; topicTerms: string[] }> = [
   {
     intent: "crypto_provider",
     topicTerms: ["crypto", "service", "Revolut"],
+  },
+  {
+    intent: "legal_links",
+    topicTerms: ["legal", "trading rules", "terms"],
   },
 ];
 
@@ -162,6 +174,7 @@ const EVAL_CASES: Array<{ query: string; expectedIntent: string }> = [
   { query: "I cannot place trades on Revolut X", expectedIntent: "cant_trade" },
   { query: "Is my crypto stored safely?", expectedIntent: "crypto_safety" },
   { query: "Who provides Revolut crypto services in the UK?", expectedIntent: "crypto_provider" },
+  { query: "Where can I find the Revolut X terms and conditions?", expectedIntent: "legal_links" },
 ];
 
 describe("search_kb — recall (intent coverage)", () => {

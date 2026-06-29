@@ -12,6 +12,7 @@ import unifiedBalanceContent from "../data/articles/revolut-x-unified-balance.md
 import whyCantITradeContent from "../data/articles/revolut-x-why-cant-i-trade.md";
 import cryptoSafetyContent from "../data/articles/revolut-x-crypto-safety.md";
 import cryptoProviderContent from "../data/articles/revolut-x-crypto-services-provider.md";
+import legalContent from "../data/articles/revolut-x-legal.md";
 
 type IntentEntry = { description: string; content: string };
 
@@ -65,6 +66,11 @@ export const INTENT_MAP: Record<string, IntentEntry> = {
     description:
       "User asks who provides Revolut's crypto services in the UK, Revolut's regulatory status as a cryptoasset firm, FSCS coverage, or the legal entity behind Revolut crypto.",
     content: cryptoProviderContent,
+  },
+  legal_links: {
+    description:
+      "User asks for legal documents, terms and conditions, trading rules, fee schedules, T&Cs, or any official Revolut X legal page or policy link.",
+    content: legalContent,
   },
 };
 

@@ -21,7 +21,8 @@
     "tests/**/*.ts",
     "evals/**/*.ts",
     "vitest.config.ts",
-    "vitest.unit.config.ts"
+    "vitest.unit.config.ts",
+    "../mcp/src/markdown.d.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
