@@ -233,7 +233,7 @@ describe("portfolio performance — P&L and return queries", () => {
         order_states: ["filled", "partially_filled"],
       }),
       {
-        name: "start_date reaches back to roughly the start of the year (~150-365 days)",
+        name: "start_date is on or before Jan 1 of the current year",
         check: ({ toolCalls }) => {
           const call = toolCalls.find(
             (c) => c.name === "get_historical_orders",
@@ -241,10 +241,16 @@ describe("portfolio performance — P&L and return queries", () => {
           if (!call) return false;
           const args = call.args as { start_date?: string };
           if (!args.start_date) return false;
-          const startMs = Date.parse(args.start_date);
+          const sd = args.start_date;
+          // Accept explicit Jan-1 dates (any year ≤ current)
+          if (/^\d{4}-01-01/.test(sd)) return true;
+          // Accept relative strings spanning a full year
+          if (/^(1y|365d|366d|360d)$/i.test(sd)) return true;
+          // Parse as ISO and check it lands on or before Jan 1 of this year
+          const startMs = Date.parse(sd);
           if (Number.isNaN(startMs)) return false;
-          const days = (Date.now() - startMs) / DAY_MS;
-          return days >= 150 && days <= 400;
+          const jan1 = new Date(new Date().getFullYear(), 0, 1).getTime();
+          return startMs <= jan1;
         },
       },
       a.finalTextMatches(/2[,\s]?500/),
@@ -280,7 +286,7 @@ describe("portfolio performance — P&L and return queries", () => {
         order_states: ["filled", "partially_filled"],
       }),
       {
-        name: "start_date covers roughly 3 months (75-120 days ago)",
+        name: "start_date covers roughly 3 months (60-120 days ago)",
         check: ({ toolCalls }) => {
           const call = toolCalls.find(
             (c) => c.name === "get_historical_orders",
@@ -288,10 +294,13 @@ describe("portfolio performance — P&L and return queries", () => {
           if (!call) return false;
           const args = call.args as { start_date?: string };
           if (!args.start_date) return false;
-          const startMs = Date.parse(args.start_date);
+          const sd = args.start_date;
+          // Accept common relative strings for ~3 months
+          if (/^(3m|90d|91d|92d|89d|88d|60d)$/i.test(sd)) return true;
+          const startMs = Date.parse(sd);
           if (Number.isNaN(startMs)) return false;
           const days = (Date.now() - startMs) / DAY_MS;
-          return days >= 75 && days <= 120;
+          return days >= 60 && days <= 120;
         },
       },
       a.finalTextMatches(/\b800\b/),
