@@ -186,7 +186,8 @@ export function registerTradingTools(server: McpServer): void {
         "Returns ALL pairs in one call when `symbols` is omitted. " +
         'For trading-volume or activity questions, pass `order_states: ["filled","partially_filled"]` — omitting the filter also returns cancelled/rejected orders which carry zero `filled_amount` and add noise. ' +
         "When the user asks about volume by quote currency, the tool output contains a pre-aggregated totals block — use it verbatim instead of re-summing per-order rows. " +
-        "Defaults: omitted dates → last 30 days; for 'all orders ever' set `start_date` to 2024-05-07 (the earliest supported — anything earlier is clamped). " +
+        "Defaults: omitted dates → last 30 days; when the default 30-day window applies (both dates omitted), state this window explicitly in your response so the user understands the scope of results. " +
+        "For 'all orders ever' set `start_date` to 2024-05-07 (the earliest supported — anything earlier is clamped). " +
         "If `totalLimit` is omitted, the result may exceed 10,000 orders — ask the user to confirm or suggest a reasonable limit first.",
       inputSchema: {
         symbols: z
