@@ -68,6 +68,8 @@ const EXPECTED_TOOL_NAMES = [
   "get_order_fills",
   "grid_backtest",
   "grid_optimize",
+  "list_kb_articles",
+  "search_kb",
 ];
 
 describe("tool annotations", () => {
