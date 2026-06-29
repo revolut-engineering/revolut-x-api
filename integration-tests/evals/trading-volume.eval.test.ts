@@ -167,7 +167,7 @@ describe("trading volume — 30d grouped by quote currency", () => {
       "Agent fetches 30d historical orders (filled + partially_filled, no symbols filter) and reports volume grouped by quote currency.",
     failureModes: ["LLM Calculation"],
     granularity: "End-to-End",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt:
       "What's my trading volume for the last 30 days grouped by quote currency (USD, EUR, GBP, USDC)?",
     setup: () => {

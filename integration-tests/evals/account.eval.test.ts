@@ -106,7 +106,7 @@ describe("account state & single-record lookups", () => {
       "Natural-language order-ID extraction → get_order_by_id, not get_historical_orders.",
     failureModes: ["Bad tool resolution"],
     granularity: "Tool-specific",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "look up order f2b9c-447e for me, what happened with it",
     setup: () => {
       revolutXMockState.getOrder.mockResolvedValueOnce({ data: FILLED_ORDER });

@@ -112,7 +112,7 @@ describe("calculation — financial arithmetic on order data", () => {
       "Two symbols each with a matched buy/sell pair → P&L must be computed and reported per-symbol; cross-contamination (mixing BTC and ETH figures) is a failure.",
     failureModes: ["LLM Calculation"],
     granularity: "End-to-End",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "how much profit did I make this week across my BTC and ETH trades?",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValueOnce({
@@ -141,7 +141,7 @@ describe("calculation — financial arithmetic on order data", () => {
       "Partially-filled order where filled_amount (47 400) differs from filled_quantity * price (47 500) and quantity * price (95 000) → agent must report filled_amount, not a derived figure.",
     failureModes: ["LLM Calculation"],
     granularity: "Tool-specific",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "what was the USD value of my BTC-USD trade this week?",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValueOnce({

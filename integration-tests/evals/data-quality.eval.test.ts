@@ -154,7 +154,7 @@ describe("data quality — gaps, truncation, absent fields", () => {
       "Order lookup where the API returns no fee data → agent must state fee is unavailable; must not fabricate a fee amount.",
     failureModes: ["Hallucination"],
     granularity: "Tool-specific",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "what fee did I pay on order xyz-789?",
     setup: () => {
       revolutXMockState.getOrder.mockResolvedValueOnce({

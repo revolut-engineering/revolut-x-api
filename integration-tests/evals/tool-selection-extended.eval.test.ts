@@ -118,7 +118,7 @@ describe("tool selection — extended discrimination cases", () => {
       "Orders placed today (may already be filled) → get_historical_orders; get_active_orders alone would miss filled orders.",
     failureModes: ["Bad tool resolution"],
     granularity: "Tool-specific",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "show me the orders I placed earlier today",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValue({

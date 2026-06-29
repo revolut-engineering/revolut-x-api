@@ -158,7 +158,7 @@ describe("trading history — fills, P&L, multi-pair", () => {
       "'How did I do' phrasing routes to get_historical_orders (filled+partially_filled, 7d window).",
     failureModes: ["LLM Calculation"],
     granularity: "End-to-End",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "how did I do this past week, roughly?",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValueOnce({
@@ -206,7 +206,7 @@ describe("trading history — fills, P&L, multi-pair", () => {
       "Fills of one specific order → get_order_fills, not get_historical_orders.",
     failureModes: ["Bad tool resolution"],
     granularity: "Tool-specific",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "for order abc-123, how was it filled — one big chunk or pieces?",
     setup: () => {
       revolutXMockState.getOrderFills.mockResolvedValueOnce({
@@ -233,7 +233,7 @@ describe("trading history — fills, P&L, multi-pair", () => {
       "Unbounded 'all orders ever' query → agent should confirm scope OR set a totalLimit.",
     failureModes: ["Other"],
     granularity: "End-to-End",
-    workflow: "Account - Trading History",
+    workflow: "Account - Orders",
     prompt: "pull all my orders ever, complete history",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValue({
