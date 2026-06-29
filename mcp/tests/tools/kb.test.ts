@@ -1,7 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registerKbTools, INTENT_MAP, INTENT_KEYS } from "../../src/tools/kb.js";
+import {
+  registerKbTools,
+  INTENT_MAP,
+  INTENT_KEYS,
+} from "../../src/tools/kb.js";
 import { SERVER_INSTRUCTIONS } from "../../src/server.js";
 
 vi.mock("../../src/server.js", async (importOriginal) => {
@@ -17,7 +21,8 @@ function getText(result: unknown): string {
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerKbTools(server);
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   await client.connect(clientTransport);
@@ -113,9 +118,18 @@ const PRECISION_CHECKS: Array<{ intent: string; topicTerms: string[] }> = [
   { intent: "get_started", topicTerms: ["sign up", "account", "Revolut X"] },
   { intent: "order_types", topicTerms: ["order", "market", "limit"] },
   { intent: "failed_orders", topicTerms: ["cancelled", "rejected", "failed"] },
-  { intent: "locked_balance", topicTerms: ["locked", "unavailable", "balance"] },
-  { intent: "deposits_withdrawals", topicTerms: ["deposit", "withdraw", "fund"] },
-  { intent: "unified_balance", topicTerms: ["unified", "balance", "Revolut X"] },
+  {
+    intent: "locked_balance",
+    topicTerms: ["locked", "unavailable", "balance"],
+  },
+  {
+    intent: "deposits_withdrawals",
+    topicTerms: ["deposit", "withdraw", "fund"],
+  },
+  {
+    intent: "unified_balance",
+    topicTerms: ["unified", "balance", "Revolut X"],
+  },
   { intent: "cant_trade", topicTerms: ["trade", "order", "maintenance"] },
   { intent: "crypto_safety", topicTerms: ["crypto", "safe", "storage"] },
   {
@@ -166,15 +180,24 @@ const EVAL_CASES: Array<{ query: string; expectedIntent: string }> = [
   { query: "How does a stop loss order work?", expectedIntent: "order_types" },
   { query: "My order was cancelled, why?", expectedIntent: "failed_orders" },
   { query: "Part of my balance is locked", expectedIntent: "locked_balance" },
-  { query: "How do I add funds to my account?", expectedIntent: "deposits_withdrawals" },
+  {
+    query: "How do I add funds to my account?",
+    expectedIntent: "deposits_withdrawals",
+  },
   {
     query: "What happened to my crypto after the balance migration?",
     expectedIntent: "unified_balance",
   },
   { query: "I cannot place trades on Revolut X", expectedIntent: "cant_trade" },
   { query: "Is my crypto stored safely?", expectedIntent: "crypto_safety" },
-  { query: "Who provides Revolut crypto services in the UK?", expectedIntent: "crypto_provider" },
-  { query: "Where can I find the Revolut X terms and conditions?", expectedIntent: "legal_links" },
+  {
+    query: "Who provides Revolut crypto services in the UK?",
+    expectedIntent: "crypto_provider",
+  },
+  {
+    query: "Where can I find the Revolut X terms and conditions?",
+    expectedIntent: "legal_links",
+  },
 ];
 
 describe("search_kb — recall (intent coverage)", () => {
@@ -211,13 +234,22 @@ describe("search_kb — recall (intent coverage)", () => {
     'query "$query" has intent description overlap with $expectedIntent',
     ({ query, expectedIntent }) => {
       const entry = INTENT_MAP[expectedIntent];
-      expect(entry, `intent "${expectedIntent}" not found in INTENT_MAP`).toBeDefined();
+      expect(
+        entry,
+        `intent "${expectedIntent}" not found in INTENT_MAP`,
+      ).toBeDefined();
 
       const queryWords = new Set(
-        query.toLowerCase().split(/\W+/).filter((w) => w.length > 3),
+        query
+          .toLowerCase()
+          .split(/\W+/)
+          .filter((w) => w.length > 3),
       );
       const descWords = new Set(
-        entry.description.toLowerCase().split(/\W+/).filter((w) => w.length > 3),
+        entry.description
+          .toLowerCase()
+          .split(/\W+/)
+          .filter((w) => w.length > 3),
       );
       const overlap = [...queryWords].filter((w) => descWords.has(w));
       expect(
@@ -252,7 +284,9 @@ describe("search_kb — ungrounded claims prevention", () => {
     ];
     const lower = SERVER_INSTRUCTIONS.toLowerCase();
     for (const topic of topics) {
-      expect(lower, `server instructions don't mention "${topic}"`).toContain(topic);
+      expect(lower, `server instructions don't mention "${topic}"`).toContain(
+        topic,
+      );
     }
   });
 

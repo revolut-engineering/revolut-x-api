@@ -99,10 +99,7 @@ export const FailureModeSchema = z.enum([
 ]);
 export type FailureMode = z.infer<typeof FailureModeSchema>;
 
-export const GranularitySchema = z.enum([
-  "End-to-End",
-  "Tool-specific",
-]);
+export const GranularitySchema = z.enum(["End-to-End", "Tool-specific"]);
 export type Granularity = z.infer<typeof GranularitySchema>;
 
 export const WorkflowSchema = z.enum([
@@ -136,7 +133,11 @@ export const EvalResultSchema = z.object({
   totalOutputTokens: NonNegativeFinite,
   assertionPassRates: z.record(Score),
   assertionMeanScores: z.record(Score.nullable()),
-  failureModes: z.array(FailureModeSchema).min(1).catch(undefined as never).optional(),
+  failureModes: z
+    .array(FailureModeSchema)
+    .min(1)
+    .catch(undefined as never)
+    .optional(),
   granularity: GranularitySchema.catch(undefined as never).optional(),
   workflow: WorkflowSchema.catch(undefined as never).optional(),
 });

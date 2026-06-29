@@ -135,7 +135,8 @@ describe("data quality — gaps, truncation, absent fields", () => {
           const call = toolCalls.find((c) => c.name === "get_public_trades");
           if (!call) return true;
           return (
-            typeof (call.args as { totalLimit?: number }).totalLimit === "number"
+            typeof (call.args as { totalLimit?: number }).totalLimit ===
+            "number"
           );
         },
       },

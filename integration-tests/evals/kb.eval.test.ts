@@ -42,7 +42,8 @@ describe("kb — hallucination", () => {
     failureModes: ["Hallucination"],
     granularity: "Tool-specific",
     workflow: "Support",
-    prompt: "What is Revolut's regulatory registration number for crypto services?",
+    prompt:
+      "What is Revolut's regulatory registration number for crypto services?",
     trials: 3,
     passThreshold: 0.5,
     assertions: [

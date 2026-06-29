@@ -272,7 +272,8 @@ describe("portfolio performance — P&L and return queries", () => {
     failureModes: ["LLM Calculation"],
     granularity: "End-to-End",
     workflow: "Account - Portfolio Performance",
-    prompt: "How has my portfolio performed over the last 3 months on Revolut X?",
+    prompt:
+      "How has my portfolio performed over the last 3 months on Revolut X?",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValue({
         data: THREE_MONTH_ORDERS,

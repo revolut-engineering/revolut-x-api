@@ -113,7 +113,8 @@ describe("calculation — financial arithmetic on order data", () => {
     failureModes: ["LLM Calculation"],
     granularity: "End-to-End",
     workflow: "Account - Orders",
-    prompt: "how much profit did I make this week across my BTC and ETH trades?",
+    prompt:
+      "how much profit did I make this week across my BTC and ETH trades?",
     setup: () => {
       revolutXMockState.getHistoricalOrders.mockResolvedValueOnce({
         data: PNL_ORDERS,

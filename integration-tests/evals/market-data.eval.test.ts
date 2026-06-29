@@ -67,7 +67,6 @@ describe("market data — live prices, candles, depth, reference", () => {
         criterion:
           "Pass if: the answer reports the BTC-USD last price (around 95,150) with a USD label adjacent or implicit. " +
           "Fail if: the price is wrong, the USD label is entirely absent, or the answer is fabricated or unrelated.",
-
       }),
     ],
   });
@@ -99,7 +98,6 @@ describe("market data — live prices, candles, depth, reference", () => {
         criterion:
           "Pass if: the answer summarises ETH-USD price action with OHLC-style figures and preserves the local-time timestamps from the tool output (tool timestamps are labelled '(local)', not UTC); hourly readings faithful to the tool result are acceptable. " +
           "Fail if: the summary is absent or vague with no OHLC figures, timestamps are converted to UTC (which contradicts the server instruction to preserve local time), or the answer has the wrong direction or is unrelated.",
-
       }),
     ],
   });
@@ -137,7 +135,6 @@ describe("market data — live prices, candles, depth, reference", () => {
         criterion:
           "Pass if: the answer reports the BTC-USD spread (50 USD, derived from best bid 95,000 and best ask 95,050) with a USD label adjacent or implicit. " +
           "Fail if: the spread direction or magnitude is wrong, the USD label is entirely absent, or values are fabricated.",
-
       }),
     ],
   });
@@ -206,7 +203,6 @@ describe("market data — live prices, candles, depth, reference", () => {
         criterion:
           "Pass if: the answer lists all four crypto assets (BTC, ETH, SOL, USDC) and distinguishes them from the fiat currencies (USD, EUR); the distinction may be implicit. " +
           "Fail if: one or more crypto assets are missing, a currency is invented, or there is significant fabrication.",
-
       }),
     ],
   });

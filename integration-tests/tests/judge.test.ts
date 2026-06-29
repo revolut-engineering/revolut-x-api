@@ -60,7 +60,9 @@ describe("passesThreshold", () => {
 
 describe("runJudge — happy path", () => {
   it("passes when score is 1.0", async () => {
-    const anthropic = fakeAnthropic('{"score": 1.0, "reasoning": "criterion met"}');
+    const anthropic = fakeAnthropic(
+      '{"score": 1.0, "reasoning": "criterion met"}',
+    );
     const result = await runJudge(
       { ...baseAssertion, threshold: 0.7 },
       ctx(),
@@ -75,7 +77,9 @@ describe("runJudge — happy path", () => {
   });
 
   it("fails when score is 0.0", async () => {
-    const anthropic = fakeAnthropic('{"score": 0.0, "reasoning": "criterion not met"}');
+    const anthropic = fakeAnthropic(
+      '{"score": 0.0, "reasoning": "criterion not met"}',
+    );
     const result = await runJudge(
       baseAssertion,
       ctx(),

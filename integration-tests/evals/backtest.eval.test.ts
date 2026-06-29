@@ -75,7 +75,6 @@ describe("grid simulation flow", () => {
         criterion:
           "Pass if: the agent runs the grid backtest and the result includes an explicit caveat that this is a simulation of past data, not a prediction or guarantee of future performance. " +
           "Fail if: the backtest is not run without justification, or the simulation caveat is absent.",
-
       }),
     ],
   });
@@ -106,7 +105,6 @@ describe("grid simulation flow", () => {
         criterion:
           "Pass if: the answer presents at least the top-ranked grid parameter combination (levels and range %) with its ROI or P&L, and includes a caveat that these are simulations of past data, not guarantees of future performance. " +
           "Fail if: no parameter combination is presented, key metrics are missing, or the simulation caveat is absent.",
-
       }),
     ],
   });

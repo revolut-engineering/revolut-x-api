@@ -223,7 +223,6 @@ describe("trading volume — 30d grouped by quote currency", () => {
         criterion:
           "Pass if: the answer groups volume by quote currency and reports approximately USD 90,000, EUR 20,000, GBP 20,000, USDC 40,000 (±1%); includes partial fills; presentation may be verbose or slightly ambiguous. " +
           "Fail if: one or more totals are wrong, partial fills are omitted, values are fabricated, or base/quote currencies are confused.",
-
       }),
     ],
   });

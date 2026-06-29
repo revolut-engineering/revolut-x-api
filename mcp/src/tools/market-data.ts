@@ -120,7 +120,7 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Order Book",
       description:
-        "Get the LIVE order book (bid/ask depth) for a trading pair. Use for current spread, depth, and immediate-market structure — not historical price action. " + 
+        "Get the LIVE order book (bid/ask depth) for a trading pair. Use for current spread, depth, and immediate-market structure — not historical price action. " +
         "Spread is the difference between the best bid and ask",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),

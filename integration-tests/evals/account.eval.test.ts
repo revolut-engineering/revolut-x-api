@@ -95,7 +95,6 @@ describe("account state & single-record lookups", () => {
         criterion:
           "Pass if: the answer reports all four balances (BTC, ETH, USD, EUR) with a currency label adjacent to each amount; reporting available, reserved, or total fields is acceptable. " +
           "Fail if: the answer invents a cross-currency total, a portfolio percentage breakdown, or applies a conversion rate not present in the tool result, or gets any balance wrong.",
-
       }),
     ],
   });
@@ -121,7 +120,6 @@ describe("account state & single-record lookups", () => {
         criterion:
           "Pass if: the answer reports the order's status as filled, the filled quantity (0.333 BTC), and the average fill price (around 90,090 USD); vague phrasing on any one of these is acceptable. " +
           "Fail if: any of the three core fields (status, quantity, avg price) is wrong, missing, or the answer invents fees or unrelated order details.",
-
       }),
     ],
   });
@@ -150,7 +148,6 @@ describe("account state & single-record lookups", () => {
         criterion:
           "Pass if: the answer names both active orders (BTC-USD buy at 88000, ETH-EUR sell at 4000) and flags that the ETH-EUR order is partially filled; the remaining quantity may be mentioned vaguely. " +
           "Fail if: either order is missing, the partial-fill state is not mentioned, or the information is fabricated.",
-
       }),
     ],
   });
