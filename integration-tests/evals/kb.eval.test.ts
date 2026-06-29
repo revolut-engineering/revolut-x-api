@@ -26,14 +26,8 @@ describe("kb — hallucination", () => {
       a.judge({
         name: "cites 1 GBP service fee for SOL; no invented amounts",
         criterion:
-          "The answer states the service fee for withdrawing SOL is 1 GBP (or equivalent in local currency), " +
-          "and mentions that a variable network fee is also charged. " +
-          "It does NOT invent a different fee amount, percentage, or USD equivalent that is not present in the KB article.",
-        rubric:
-          "1.0 = '1 GBP' service fee stated; network fee mentioned. " +
-          "0.5 = correct fee stated but network fee omitted. " +
-          "0.0 = invented fee amount with no KB grounding.",
-        threshold: 0.7,
+          "Pass if: the answer states the service fee for withdrawing SOL is 1 GBP (or equivalent in local currency) and mentions that a variable network fee is also charged. " +
+          "Fail if: a different fee amount is given, the fee is invented without KB grounding, or no fee information is provided.",
       }),
     ],
   });
@@ -51,13 +45,8 @@ describe("kb — hallucination", () => {
       a.judge({
         name: "cites FRN 900562 exactly; does not invent a different number",
         criterion:
-          "The answer states Revolut's FRN is 900562 (i.e. 'FRN 900562'). " +
-          "It does NOT give a different number, omit the number entirely while implying Revolut is registered, " +
-          "or fabricate other registration details not in the article.",
-        rubric:
-          "1.0 = 'FRN 900562' stated verbatim or clearly paraphrased. " +
-          "0.0 = fabricated regulatory details.",
-        threshold: 0.5,
+          "Pass if: the answer states Revolut's FRN is 900562 (verbatim or clearly paraphrased). " +
+          "Fail if: a different number is given, the number is omitted while implying Revolut is registered, or registration details are fabricated.",
       }),
     ],
   });
@@ -126,15 +115,8 @@ describe("kb — poor precision", () => {
       a.judge({
         name: "explains TWAP as time-weighted execution, not as an error or failure mode",
         criterion:
-          "The answer describes a TWAP order as one that splits a large trade into smaller portions " +
-          "executed evenly over a set time period to reduce market impact. " +
-          "It does NOT describe TWAP in the context of order failures, cancellations, or errors.",
-        rubric:
-          "1.0 = TWAP described as time-sliced execution; market impact reduction mentioned. " +
-          "0.7 = correct concept but incomplete. " +
-          "0.4 = confused with a failure mode or wrong order type. " +
-          "0.0 = fabricated or completely wrong description.",
-        threshold: 0.7,
+          "Pass if: the answer describes a TWAP order as splitting a large trade into smaller portions executed over a set time period to reduce market impact; the description may be incomplete in secondary details. " +
+          "Fail if: TWAP is described as a failure mode, confused with another order type, or the description is fabricated or fundamentally wrong.",
       }),
     ],
   });
@@ -151,15 +133,8 @@ describe("kb — poor precision", () => {
       a.judge({
         name: "cites actual cancellation reasons from KB; does not describe order types instead",
         criterion:
-          "The answer explains why a market order might be cancelled — specifically reasons such as " +
-          "insufficient liquidity, slippage protection, or self-matching protection. " +
-          "It does NOT describe how market orders work as a type (that would be the order_types article).",
-        rubric:
-          "1.0 = at least one specific cancellation reason named; framed as failure cause, not order mechanics. " +
-          "0.7 = correct article retrieved but only generic explanation. " +
-          "0.4 = describes order mechanics instead of failure reasons. " +
-          "0.0 = fabricated or wrong causes cited.",
-        threshold: 0.7,
+          "Pass if: the answer names at least one specific reason a market order might be cancelled (e.g. insufficient liquidity, slippage protection, self-matching protection), framed as a failure cause; a generic explanation is acceptable. " +
+          "Fail if: the answer only describes how market orders work without naming failure causes, or the causes cited are fabricated or wrong.",
       }),
     ],
   });
@@ -196,15 +171,8 @@ describe("kb — ungrounded claims", () => {
       a.judge({
         name: "calls KB despite instruction to answer from memory",
         criterion:
-          "Despite the user asking the agent not to look anything up, the agent fetches the KB article " +
-          "before answering. The answer is grounded in the KB content (e.g. references GBP fees, network fee). " +
-          "It does NOT invent fee figures from training data to comply with the 'no lookup' instruction.",
-        rubric:
-          "1.0 = KB called; answer grounded in article content. " +
-          "0.7 = KB called but answer partially vague. " +
-          "0.4 = KB not called but answer happens to be correct. " +
-          "0.0 = KB bypassed and answer fabricated from training data.",
-        threshold: 0.7,
+          "Pass if: the agent calls search_kb before answering, and the answer references KB content (e.g. GBP fees, network fee); the answer may be vague. " +
+          "Fail if: the KB is not called, or the answer is fabricated from training data regardless of whether it happens to be correct.",
       }),
     ],
   });
@@ -236,17 +204,8 @@ describe("kb — ungrounded claims", () => {
       a.judge({
         name: "describes KB-sourced maintenance behaviour; does not invent exchange-generic rules",
         criterion:
-          "The answer describes what the KB article says happens during maintenance: " +
-          "orders may get pending and not execute, transfers may get pending, portfolio value may be affected. " +
-          "After maintenance: transfers are processed; limit orders stay pending if conditions not met; " +
-          "market orders that got stuck are cancelled. " +
-          "It does NOT describe generic exchange maintenance rules invented from training data.",
-        rubric:
-          "1.0 = order/transfer/portfolio impact stated; post-maintenance resolution described. " +
-          "0.7 = impact stated but resolution vague. " +
-          "0.4 = generic description not traceable to KB. " +
-          "0.0 = fabricated or contradicts the KB article.",
-        threshold: 0.7,
+          "Pass if: the answer describes the impact during maintenance (orders pending, transfers pending, portfolio affected); post-maintenance resolution may be vague or omitted. " +
+          "Fail if: the description is generic exchange behaviour not traceable to the KB, contradicts the KB article, or is fabricated.",
       }),
     ],
   });

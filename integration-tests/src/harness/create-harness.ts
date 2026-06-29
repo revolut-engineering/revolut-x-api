@@ -29,11 +29,18 @@ export async function createHarness(): Promise<Harness> {
   await mcpClient.connect(clientTransport);
 
   const anthropic = new Anthropic();
+  const serverInstructions = mcpClient.getInstructions() ?? undefined;
 
   return {
     mcpClient,
     anthropic,
-    runAgent: (opts) => runAgent({ ...opts, mcpClient, anthropic }),
+    runAgent: (opts) =>
+      runAgent({
+        ...opts,
+        mcpClient,
+        anthropic,
+        systemPrompt: opts.systemPrompt ?? serverInstructions,
+      }),
     async close() {
       await mcpClient.close();
       await server.close();

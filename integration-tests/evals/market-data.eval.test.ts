@@ -62,14 +62,8 @@ describe("market data — live prices, candles, depth, reference", () => {
       a.judge({
         name: "answers with BTC-USD price labelled in USD; no preamble noise",
         criterion:
-          "The answer reports the BTC-USD last price (around 95,150) with the USD currency label adjacent. " +
-          "It does not call any reference or historical tool before answering.",
-        rubric:
-          "1.0 = price + USD label + direct answer. " +
-          "0.7 = price correct, label vague or implicit. " +
-          "0.4 = wrong price or label missing entirely. " +
-          "0.0 = fabricated price or unrelated answer.",
-        threshold: 0.7,
+          "Pass if: the answer reports the BTC-USD last price (around 95,150) with a USD label adjacent or implicit. " +
+          "Fail if: the price is wrong, the label is entirely absent, or the answer is fabricated or unrelated.",
       }),
     ],
   });
@@ -96,14 +90,9 @@ describe("market data — live prices, candles, depth, reference", () => {
       a.judge({
         name: "provides OHLC-style summary with UTC time references",
         criterion:
-          "The answer summarises the day's ETH-USD price action with open/high/low/close-style figures and references the time range in UTC. " +
-          "Note: the candle data is hourly, so the agent reporting specific hourly readings or hour-level peak/trough times IS faithful to the tool result — only minute-precise prices the tool didn't include would be fabrication.",
-        rubric:
-          "1.0 = clear OHLC summary + UTC labelled. " +
-          "0.7 = summary present, UTC implicit. " +
-          "0.4 = vague summary OR no UTC. " +
-          "0.0 = wrong direction or unrelated answer.",
-        threshold: 0.7,
+          "Pass if: the answer summarises ETH-USD price action with OHLC-style figures and references the time range in UTC (UTC may be implicit). " +
+          "Note: hourly readings and hour-level peak/trough times are faithful to the tool result. " +
+          "Fail if: the summary is absent or vague with no OHLC figures, UTC is not referenced at all, or the answer has the wrong direction or is unrelated.",
       }),
     ],
   });
@@ -136,15 +125,8 @@ describe("market data — live prices, candles, depth, reference", () => {
       a.judge({
         name: "reports the spread with USD label; does not swap to another tool",
         criterion:
-          "The answer reports the BTC-USD spread (best bid 95,000 USD vs best ask 95,050 USD; spread is 50 USD or ~0.05%). " +
-          "Currency label USD appears next to the spread or prices. " +
-          "It does not silently fall back to get_tickers data.",
-        rubric:
-          "1.0 = explicit spread value, USD-labelled, derived from the book. " +
-          "0.7 = correct spread, label vague. " +
-          "0.4 = wrong spread direction or magnitude. " +
-          "0.0 = fabricated values or unrelated answer.",
-        threshold: 0.7,
+          "Pass if: the answer reports the BTC-USD spread (50 USD or ~0.05%, derived from best bid 95,000 and best ask 95,050) with USD label adjacent or implicit. " +
+          "Fail if: the spread direction or magnitude is wrong, the label is entirely absent, or values are fabricated.",
       }),
     ],
   });
@@ -208,14 +190,8 @@ describe("market data — live prices, candles, depth, reference", () => {
       a.judge({
         name: "lists tradeable crypto; distinguishes crypto from fiat",
         criterion:
-          "The answer lists the crypto assets (BTC, ETH, SOL, USDC) and distinguishes them from the fiat currencies (USD, EUR). " +
-          "It does not invent currencies that were absent from the tool result.",
-        rubric:
-          "1.0 = all crypto listed AND crypto/fiat distinction is explicit. " +
-          "0.7 = all crypto listed, distinction implicit. " +
-          "0.4 = missing one asset or invents one. " +
-          "0.0 = significant fabrication.",
-        threshold: 0.7,
+          "Pass if: the answer lists all four crypto assets (BTC, ETH, SOL, USDC) and distinguishes them from the fiat currencies (USD, EUR); the distinction may be implicit. " +
+          "Fail if: one or more crypto assets are missing, a currency is invented, or there is significant fabrication.",
       }),
     ],
   });

@@ -190,16 +190,8 @@ describe("trading history — fills, P&L, multi-pair", () => {
       a.judge({
         name: "P&L-style summary; uses filled_amount only; partial fills included; no extrapolation",
         criterion:
-          "The answer summarises the past-week activity using only the filled_amount values from the orders. " +
-          "It includes the two partial fills in totals (not only the fully filled ones). " +
-          "It does NOT annualize, extrapolate, or estimate returns beyond what the tool result shows. " +
-          "Currency labels (USD) appear next to amounts.",
-        rubric:
-          "1.0 = clear summary, partial fills counted, USD-labelled, no extrapolation. " +
-          "0.7 = correct totals but vague on partial fills. " +
-          "0.4 = partial fills dropped or one number wrong. " +
-          "0.0 = fabricated numbers or annualized returns invented.",
-        threshold: 0.7,
+          "Pass if: the answer summarises activity using filled_amount values, includes partial fills in totals (not only fully filled orders), has USD labels adjacent to amounts, and does not annualise or extrapolate; vague mention of partial fills is acceptable. " +
+          "Fail if: partial fills are dropped, a number is wrong, amounts are USD-unlabelled, or returns are annualised/fabricated.",
       }),
     ],
   });
@@ -221,14 +213,8 @@ describe("trading history — fills, P&L, multi-pair", () => {
       a.judge({
         name: "answers the user's question directly: pieces (3 fills)",
         criterion:
-          "The answer directly answers 'one chunk or pieces' — explicitly states that the order was filled in three separate executions (pieces). " +
-          "It mentions the three fill quantities or prices.",
-        rubric:
-          "1.0 = direct answer ('pieces / 3 fills') + per-fill detail. " +
-          "0.7 = direct answer, vague on per-fill detail. " +
-          "0.4 = answers indirectly or claims one fill. " +
-          "0.0 = wrong count or fabricated fills.",
-        threshold: 0.7,
+          "Pass if: the answer directly states the order was filled in three separate executions (pieces); per-fill detail may be vague or omitted. " +
+          "Fail if: the answer is indirect, claims one fill, gives the wrong count, or fabricates fills.",
       }),
     ],
   });
@@ -261,15 +247,8 @@ describe("trading history — fills, P&L, multi-pair", () => {
       a.judge({
         name: "confirms scope or proactively bounds the query",
         criterion:
-          "Either: the agent asks the user to confirm an unbounded query before running it (best), " +
-          "OR it proactively sets a reasonable totalLimit / suggests narrowing the date range and explains why. " +
-          "It does NOT silently run get_historical_orders with totalLimit omitted and no date bound.",
-        rubric:
-          "1.0 = explicit scope confirmation with the user. " +
-          "0.7 = proactive totalLimit set, explained. " +
-          "0.4 = ran without confirmation but mentioned the risk after. " +
-          "0.0 = ran the unbounded query silently.",
-        threshold: 0.7,
+          "Pass if: the agent either asks the user to confirm scope before running the query, OR proactively sets a totalLimit and explains why. " +
+          "Fail if: the query runs without confirmation and without a totalLimit, or the risk is only mentioned after the fact.",
       }),
     ],
   });

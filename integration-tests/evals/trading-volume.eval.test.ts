@@ -218,15 +218,8 @@ describe("trading volume — 30d grouped by quote currency", () => {
       a.judge({
         name: "totals correct per quote currency, partial fills included, no fabrication",
         criterion:
-          "The answer groups 30-day trading volume by quote currency and reports approximately: USD 90,000, EUR 20,000, GBP 20,000, USDC 40,000. " +
-          "It correctly includes both fully filled and partially filled orders in the totals (sum of filled_amount). " +
-          "It does NOT invent values not present in the tool result and does NOT confuse base/quote currencies.",
-        rubric:
-          "1.0 = all four totals correct (±1%) and clearly grouped by quote currency. " +
-          "0.7 = all four correct but presentation is verbose or slightly ambiguous. " +
-          "0.4 = one total wrong or partial fills omitted. " +
-          "0.0 = multiple totals wrong, fabricated values, or base/quote confused.",
-        threshold: 0.7,
+          "Pass if: the answer groups volume by quote currency and reports approximately USD 90,000, EUR 20,000, GBP 20,000, USDC 40,000 (±1%); includes partial fills; presentation may be verbose or slightly ambiguous. " +
+          "Fail if: one or more totals are wrong, partial fills are omitted, values are fabricated, or base/quote currencies are confused.",
       }),
     ],
   });

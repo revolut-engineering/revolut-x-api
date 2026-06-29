@@ -59,8 +59,8 @@ describe("passesThreshold", () => {
 });
 
 describe("runJudge — happy path", () => {
-  it("passes when score >= threshold", async () => {
-    const anthropic = fakeAnthropic('{"score": 0.85, "reasoning": "good"}');
+  it("passes when score is 1.0", async () => {
+    const anthropic = fakeAnthropic('{"score": 1.0, "reasoning": "criterion met"}');
     const result = await runJudge(
       { ...baseAssertion, threshold: 0.7 },
       ctx(),
@@ -70,12 +70,26 @@ describe("runJudge — happy path", () => {
     );
     if (result.outcome.kind !== "judge") return;
     expect(result.outcome.passed).toBe(true);
-    expect(result.outcome.score).toBe(0.85);
-    expect(result.outcome.reasoning).toBe("good");
+    expect(result.outcome.score).toBe(1.0);
+    expect(result.outcome.reasoning).toBe("criterion met");
   });
 
-  it("fails when score < threshold (uses default 0.7)", async () => {
-    const anthropic = fakeAnthropic('{"score": 0.5, "reasoning": "weak"}');
+  it("fails when score is 0.0", async () => {
+    const anthropic = fakeAnthropic('{"score": 0.0, "reasoning": "criterion not met"}');
+    const result = await runJudge(
+      baseAssertion,
+      ctx(),
+      anthropic,
+      "claude-sonnet-4-6",
+      512,
+    );
+    if (result.outcome.kind !== "judge") return;
+    expect(result.outcome.passed).toBe(false);
+    expect(result.outcome.score).toBe(0.0);
+  });
+
+  it("treats a non-binary score (0.5) as failure — judge misbehaviour", async () => {
+    const anthropic = fakeAnthropic('{"score": 0.5, "reasoning": "partial"}');
     const result = await runJudge(
       baseAssertion,
       ctx(),
@@ -90,10 +104,10 @@ describe("runJudge — happy path", () => {
 
   it("ignores prose around the JSON object", async () => {
     const anthropic = fakeAnthropic(
-      'The judge says: {"score": 0.9, "reasoning": "ok"} (final)',
+      'The judge says: {"score": 1.0, "reasoning": "ok"} (final)',
     );
     const result = await runJudge(
-      { ...baseAssertion, threshold: 0.5 },
+      baseAssertion,
       ctx(),
       anthropic,
       "claude-sonnet-4-6",
@@ -101,11 +115,11 @@ describe("runJudge — happy path", () => {
     );
     if (result.outcome.kind !== "judge") return;
     expect(result.outcome.passed).toBe(true);
-    expect(result.outcome.score).toBe(0.9);
+    expect(result.outcome.score).toBe(1.0);
   });
 
   it("accumulates a non-zero cost", async () => {
-    const anthropic = fakeAnthropic('{"score": 0.9, "reasoning": "ok"}');
+    const anthropic = fakeAnthropic('{"score": 1.0, "reasoning": "ok"}');
     const result = await runJudge(
       baseAssertion,
       ctx(),

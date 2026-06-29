@@ -155,7 +155,6 @@ const JudgeAssertionInputSchema = z.object({
   kind: z.literal("judge"),
   name: z.string().min(1),
   criterion: z.string().min(1),
-  rubric: z.string().min(1).optional(),
   threshold: Threshold.optional(),
   model: z.string().min(1).optional(),
 });
