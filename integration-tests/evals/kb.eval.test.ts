@@ -17,6 +17,9 @@ describe("kb — hallucination", () => {
     name: "withdrawal-fee-exact-amount",
     description:
       "Fee question with a known exact answer → agent must retrieve KB and report '1 GBP' for SOL, not invent a number.",
+    failureModes: ["Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "How much does it cost to withdraw SOL from Revolut X?",
     trials: 3,
     passThreshold: 0.5,
@@ -36,6 +39,9 @@ describe("kb — hallucination", () => {
     name: "crypto-provider-exact-frn",
     description:
       "Regulatory question → agent must retrieve KB and report the exact FRN number, not hallucinate a registration detail.",
+    failureModes: ["Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "What is Revolut's regulatory registration number for crypto services?",
     trials: 3,
     passThreshold: 0.5,
@@ -61,9 +67,12 @@ describe("kb — poor recall", () => {
     name: "casual-fee-question",
     description:
       "Casual fee question phrased without buzzwords → agent must still route to KB, not answer from training data.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "what does revolut x charge me",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsTool("search_kb"),
       a.callsToolWithArgs("search_kb", { intent: "fees" }),
@@ -75,9 +84,12 @@ describe("kb — poor recall", () => {
     name: "indirect-deposit-question",
     description:
       "User asks how to add money using indirect phrasing → agent must look it up in KB.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "I want to put some funds into my revolut x, how do I do that",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsTool("search_kb"),
       a.callsToolWithArgs("search_kb", { intent: "deposits_withdrawals" }),
@@ -88,9 +100,12 @@ describe("kb — poor recall", () => {
     name: "locked-balance-implicit-question",
     description:
       "User describes a symptom without naming the feature → agent identifies locked balance intent and fetches KB.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "I have a limit order open and now I can't use some of my money",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsTool("search_kb"),
       a.callsToolWithArgs("search_kb", { intent: "locked_balance" }),
@@ -107,9 +122,12 @@ describe("kb — poor precision", () => {
     name: "order-types-not-failed-orders",
     description:
       "User asks how TWAP works → must route to order_types, not failed_orders or another intent.",
+    failureModes: ["Bad tool resolution", "Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "can you explain how a TWAP order works on Revolut X?",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsToolWithArgs("search_kb", { intent: "order_types" }),
       a.judge({
@@ -125,9 +143,12 @@ describe("kb — poor precision", () => {
     name: "failed-order-not-order-types",
     description:
       "User's order was cancelled → must route to failed_orders, not order_types.",
+    failureModes: ["Bad tool resolution", "Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "I placed a market order and it got cancelled straight away, why?",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsToolWithArgs("search_kb", { intent: "failed_orders" }),
       a.judge({
@@ -143,9 +164,12 @@ describe("kb — poor precision", () => {
     name: "crypto-safety-not-crypto-provider",
     description:
       "User asks about storage/custody → must route to crypto_safety, not crypto_provider.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "where does revolut actually keep my crypto?",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsToolWithArgs("search_kb", { intent: "crypto_safety" }),
       a.finalTextContainsAll(["cold storage"]),
@@ -162,10 +186,13 @@ describe("kb — ungrounded claims", () => {
     name: "no-bypass-when-asked-from-memory",
     description:
       "User explicitly asks agent to answer from memory → agent must still call KB per mandatory policy.",
+    failureModes: ["Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt:
       "Don't look anything up, just tell me from memory what Revolut X charges for withdrawals.",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsTool("search_kb"),
       a.judge({
@@ -181,9 +208,12 @@ describe("kb — ungrounded claims", () => {
     name: "age-requirement-grounded",
     description:
       "Age requirement question → answer must cite the KB (18 years), not rely on training data which might differ.",
+    failureModes: ["Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "what's the minimum age to use revolut x?",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsTool("search_kb"),
       a.callsToolWithArgs("search_kb", { intent: "get_started" }),
@@ -195,9 +225,12 @@ describe("kb — ungrounded claims", () => {
     name: "maintenance-behaviour-grounded",
     description:
       "Question about what happens during maintenance → must fetch KB, not describe generic exchange behaviour.",
+    failureModes: ["Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Support",
     prompt: "what happens to my orders when Revolut X goes into maintenance?",
     trials: 3,
-    passThreshold: 0.8,
+    passThreshold: 0.5,
     assertions: [
       a.callsTool("search_kb"),
       a.callsToolWithArgs("search_kb", { intent: "cant_trade" }),

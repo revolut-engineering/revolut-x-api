@@ -130,8 +130,33 @@ function renderToolbar(): string {
   return [
     `<div class="toolbar">`,
     `  <input id="filter" type="search" placeholder="Filter by case name..." aria-label="Filter cases">`,
+    `  <select id="filter-failure-mode" aria-label="Filter by failure mode">`,
+    `    <option value="">All failure modes</option>`,
+    `    <option value="LLM Calculation">LLM Calculation</option>`,
+    `    <option value="Hallucination">Hallucination</option>`,
+    `    <option value="Timeframe resolution">Timeframe resolution</option>`,
+    `    <option value="Bad tool resolution">Bad tool resolution</option>`,
+    `    <option value="Other">Other</option>`,
+    `  </select>`,
+    `  <select id="filter-granularity" aria-label="Filter by granularity">`,
+    `    <option value="">All granularities</option>`,
+    `    <option value="End-to-End">End-to-End</option>`,
+    `    <option value="Tool-specific">Tool-specific</option>`,
+    `  </select>`,
+    `  <select id="filter-workflow" aria-label="Filter by workflow">`,
+    `    <option value="">All workflows</option>`,
+    `    <option value="Account setup/onboarding">Account setup/onboarding</option>`,
+    `    <option value="Support">Support</option>`,
+    `    <option value="Account - Balance">Account - Balance</option>`,
+    `    <option value="Account - Trading History">Account - Trading History</option>`,
+    `    <option value="Market - Prices">Market - Prices</option>`,
+    `    <option value="Market - Order Book">Market - Order Book</option>`,
+    `    <option value="Market - Public Trades">Market - Public Trades</option>`,
+    `    <option value="Backtesting">Backtesting</option>`,
+    `  </select>`,
     `  <button type="button" data-action="expand-all">Expand all</button>`,
     `  <button type="button" data-action="collapse-all">Collapse all</button>`,
+    `  <button type="button" id="clear-filters">Clear filters</button>`,
     `</div>`,
   ].join("\n");
 }
@@ -147,9 +172,9 @@ function renderCasesTable(report: RunReport): string {
       const passClass = r.passed ? "pass" : "fail";
       const anchor = caseAnchor(r.name);
       return [
-        `    <tr data-case="${escapeAttr(r.name)}">`,
+        `    <tr data-case="${escapeAttr(r.name)}" ${caseDataAttrs(r)}>`,
         `      <td><span class="pill ${passClass}">${r.passed ? "PASS" : "FAIL"}</span></td>`,
-        `      <td><a href="#${escapeAttr(anchor)}"><code>${escapeHtml(r.name)}</code></a></td>`,
+        `      <td><a href="#${escapeAttr(anchor)}"><code>${escapeHtml(r.name)}</code></a>${renderTags(r)}</td>`,
         `      <td data-sort-value="${r.passRate.toFixed(4)}">${renderRateBar(r.passes, r.trialCount, passPct, passClass)}</td>`,
         `      <td data-sort-value="${r.totalCost.toFixed(6)}">${fmt.cost(r.totalCost)}</td>`,
         `      <td data-sort-value="${r.totalJudgeCost.toFixed(6)}">${fmt.cost(r.totalJudgeCost)}</td>`,
@@ -244,10 +269,11 @@ function renderRateBar(
 function renderCaseSection(result: EvalResult): string {
   const anchor = caseAnchor(result.name);
   return [
-    `<article class="case" data-case="${escapeAttr(result.name)}" id="${escapeAttr(anchor)}">`,
+    `<article class="case" data-case="${escapeAttr(result.name)}" ${caseDataAttrs(result)} id="${escapeAttr(anchor)}">`,
     `  <header class="case-header">`,
     `    <span class="pill ${result.passed ? "pass" : "fail"}">${result.passed ? "PASS" : "FAIL"}</span>`,
     `    <h2><code>${escapeHtml(result.name)}</code></h2>`,
+    renderTags(result),
     `    <span class="case-meta">${result.passes}/${result.trialCount} (${fmt.pct(result.passRate)}) · threshold ${fmt.threshold(result.threshold)} · ${fmt.cost(result.totalCost + result.totalJudgeCost + result.totalEmbeddingCost)}</span>`,
     `  </header>`,
     result.description
@@ -398,6 +424,35 @@ function caseAnchor(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
 }
 
+function renderTags(result: EvalResult): string {
+  const chips: string[] = [];
+  if (result.failureModes) {
+    for (const m of result.failureModes) {
+      chips.push(`<span class="tag tag-fm">${escapeHtml(m)}</span>`);
+    }
+  }
+  if (result.granularity) {
+    chips.push(
+      `<span class="tag tag-gran">${escapeHtml(result.granularity)}</span>`,
+    );
+  }
+  if (result.workflow) {
+    chips.push(
+      `<span class="tag tag-wf">${escapeHtml(result.workflow)}</span>`,
+    );
+  }
+  return chips.length ? `<span class="tags">${chips.join("")}</span>` : "";
+}
+
+function caseDataAttrs(result: EvalResult): string {
+  const fm = result.failureModes
+    ? escapeAttr(result.failureModes.join("|"))
+    : "";
+  const gran = result.granularity ? escapeAttr(result.granularity) : "";
+  const wf = result.workflow ? escapeAttr(result.workflow) : "";
+  return `data-failure-modes="${fm}" data-granularity="${gran}" data-workflow="${wf}"`;
+}
+
 function escapeHtml(input: string): string {
   return input
     .replace(/&/g, "&amp;")
@@ -433,6 +488,12 @@ function renderStyles(): string {
       --kind-predicate: #6366f1;
       --kind-judge: #d97706;
       --kind-semantic: #0891b2;
+      --tag-fm-bg: #f3e8ff;
+      --tag-fm-fg: #7c3aed;
+      --tag-gran-bg: #dbeafe;
+      --tag-gran-fg: #1d4ed8;
+      --tag-wf-bg: #fef3c7;
+      --tag-wf-fg: #92400e;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -455,6 +516,12 @@ function renderStyles(): string {
         --kind-predicate: #818cf8;
         --kind-judge: #fbbf24;
         --kind-semantic: #22d3ee;
+        --tag-fm-bg: #3b0764;
+        --tag-fm-fg: #d8b4fe;
+        --tag-gran-bg: #1e3a5f;
+        --tag-gran-fg: #93c5fd;
+        --tag-wf-bg: #451a03;
+        --tag-wf-fg: #fcd34d;
       }
     }
     * { box-sizing: border-box; }
@@ -486,8 +553,15 @@ function renderStyles(): string {
     .cost-split { font-size: 0.85rem; }
     .toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
     .toolbar input { flex: 1; min-width: 12rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--card); color: var(--fg); font: inherit; }
+    .toolbar select { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--card); color: var(--fg); font: inherit; cursor: pointer; }
+    .toolbar select:hover { background: var(--code-bg); }
     .toolbar button { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--card); color: var(--fg); font: inherit; cursor: pointer; }
     .toolbar button:hover { background: var(--code-bg); }
+    .tags { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; margin-left: 0.5rem; vertical-align: middle; }
+    .tag { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
+    .tag-fm { background: var(--tag-fm-bg); color: var(--tag-fm-fg); }
+    .tag-gran { background: var(--tag-gran-bg); color: var(--tag-gran-fg); }
+    .tag-wf { background: var(--tag-wf-bg); color: var(--tag-wf-fg); }
     .cases-table-wrapper { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1.25rem; overflow-x: auto; }
     .cases-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
     .cases-table th, .cases-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -546,18 +620,42 @@ function renderStyles(): string {
 function renderScript(): string {
   return `
     (function() {
+      function applyFilters() {
+        var q = (document.getElementById("filter") || {value:""}).value.toLowerCase().trim();
+        var fm = (document.getElementById("filter-failure-mode") || {value:""}).value;
+        var gran = (document.getElementById("filter-granularity") || {value:""}).value;
+        var wf = (document.getElementById("filter-workflow") || {value:""}).value;
+        function matches(el) {
+          var name = el.getAttribute("data-case").toLowerCase();
+          var modes = (el.getAttribute("data-failure-modes") || "").split("|");
+          var elGran = el.getAttribute("data-granularity") || "";
+          var elWf = el.getAttribute("data-workflow") || "";
+          return (q === "" || name.indexOf(q) !== -1) &&
+                 (fm === "" || modes.indexOf(fm) !== -1) &&
+                 (gran === "" || elGran === gran) &&
+                 (wf === "" || elWf === wf);
+        }
+        document.querySelectorAll(".case[data-case]").forEach(function(el) {
+          el.classList.toggle("hidden", !matches(el));
+        });
+        document.querySelectorAll(".cases-table tbody tr[data-case]").forEach(function(el) {
+          el.classList.toggle("hidden", !matches(el));
+        });
+      }
       var filter = document.getElementById("filter");
-      if (filter) {
-        filter.addEventListener("input", function(e) {
-          var q = e.target.value.toLowerCase().trim();
-          document.querySelectorAll(".case[data-case]").forEach(function(el) {
-            var name = el.getAttribute("data-case").toLowerCase();
-            el.classList.toggle("hidden", q !== "" && name.indexOf(q) === -1);
+      if (filter) { filter.addEventListener("input", applyFilters); }
+      ["filter-failure-mode","filter-granularity","filter-workflow"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.addEventListener("change", applyFilters); }
+      });
+      var clearBtn = document.getElementById("clear-filters");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", function() {
+          var f = document.getElementById("filter"); if (f) { f.value = ""; }
+          ["filter-failure-mode","filter-granularity","filter-workflow"].forEach(function(id) {
+            var el = document.getElementById(id); if (el) { el.value = ""; }
           });
-          document.querySelectorAll(".cases-table tbody tr[data-case]").forEach(function(el) {
-            var name = el.getAttribute("data-case").toLowerCase();
-            el.classList.toggle("hidden", q !== "" && name.indexOf(q) === -1);
-          });
+          applyFilters();
         });
       }
       document.querySelectorAll('[data-action="expand-all"]').forEach(function(btn) {

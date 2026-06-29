@@ -266,6 +266,9 @@ export function aggregate(
     totalOutputTokens: totalOutput,
     assertionPassRates,
     assertionMeanScores,
+    failureModes: evalCase.failureModes,
+    granularity: evalCase.granularity,
+    workflow: evalCase.workflow,
   };
 }
 

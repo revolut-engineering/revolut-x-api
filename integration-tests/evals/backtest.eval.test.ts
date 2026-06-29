@@ -38,6 +38,9 @@ describe("grid simulation flow", () => {
     name: "backtest-confirm-then-run",
     description:
       "User asks for a backtest with sparse params. Agent must confirm key params OR include a simulation caveat if it proceeds.",
+    failureModes: ["Other"],
+    granularity: "End-to-End",
+    workflow: "Backtesting",
     prompt:
       "backtest a grid bot on ETH-USD with 10000 dollars — use 5 levels, 10% range, no split investment",
     setup: () => {
@@ -70,8 +73,9 @@ describe("grid simulation flow", () => {
       a.judge({
         name: "surfaces the simulation-not-prediction caveat when reporting results",
         criterion:
-          "Pass if: the answer notes — even vaguely — that the backtest result is a simulation of past data and not a prediction or guarantee of future performance. " +
-          "Fail if: the caveat is entirely absent, or the answer treats the backtest result as a forecast.",
+          "Pass if: the agent runs the grid backtest and the result includes an explicit caveat that this is a simulation of past data, not a prediction or guarantee of future performance. " +
+          "Fail if: the backtest is not run without justification, or the simulation caveat is absent.",
+
       }),
     ],
   });
@@ -80,6 +84,9 @@ describe("grid simulation flow", () => {
     name: "optimize-grid-params",
     description:
       "Optimization happy path → grid_optimize; caveat about simulation still required.",
+    failureModes: ["Other"],
+    granularity: "End-to-End",
+    workflow: "Backtesting",
     prompt:
       "find me a good grid setup for BTC-USD on the last 3 days, 5000 USD investment, no split",
     setup: () => {
@@ -97,8 +104,9 @@ describe("grid simulation flow", () => {
       a.judge({
         name: "ranks combos and includes simulation caveat",
         criterion:
-          "Pass if: the answer presents the top-ranked grid parameter combination (levels per side and range %) with its ROI or total P&L, AND includes an explicit simulation caveat stating these are past-data results, not guarantees. " +
-          "Fail if: the ranking is missing, the ROI is absent, or the simulation caveat is absent or only vaguely implied.",
+          "Pass if: the answer presents at least the top-ranked grid parameter combination (levels and range %) with its ROI or P&L, and includes a caveat that these are simulations of past data, not guarantees of future performance. " +
+          "Fail if: no parameter combination is presented, key metrics are missing, or the simulation caveat is absent.",
+
       }),
     ],
   });

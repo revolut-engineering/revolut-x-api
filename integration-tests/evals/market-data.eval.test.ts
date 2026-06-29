@@ -37,6 +37,9 @@ describe("market data — live prices, candles, depth, reference", () => {
   defineEval({
     name: "live-price-btc",
     description: "Casual 'how much is BTC right now' → get_tickers only.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Market - Prices",
     prompt: "how much is BTC right now",
     setup: () => {
       revolutXMockState.getTickers.mockResolvedValueOnce({
@@ -63,7 +66,8 @@ describe("market data — live prices, candles, depth, reference", () => {
         name: "answers with BTC-USD price labelled in USD; no preamble noise",
         criterion:
           "Pass if: the answer reports the BTC-USD last price (around 95,150) with a USD label adjacent or implicit. " +
-          "Fail if: the price is wrong, the label is entirely absent, or the answer is fabricated or unrelated.",
+          "Fail if: the price is wrong, the USD label is entirely absent, or the answer is fabricated or unrelated.",
+
       }),
     ],
   });
@@ -72,6 +76,9 @@ describe("market data — live prices, candles, depth, reference", () => {
     name: "historical-candles-window",
     description:
       "OHLCV question → get_candles with 1h resolution; UTC time labelling preserved.",
+    failureModes: ["Timeframe resolution", "Hallucination"],
+    granularity: "Tool-specific",
+    workflow: "Market - Prices",
     prompt: "what did ETH-USD do yesterday on a 1-hour resolution",
     setup: () => {
       const start = Date.now() - 2 * DAY_MS;
@@ -90,9 +97,9 @@ describe("market data — live prices, candles, depth, reference", () => {
       a.judge({
         name: "provides OHLC-style summary with UTC time references",
         criterion:
-          "Pass if: the answer summarises ETH-USD price action with OHLC-style figures and references the time range in UTC (UTC may be implicit). " +
-          "Note: hourly readings and hour-level peak/trough times are faithful to the tool result. " +
-          "Fail if: the summary is absent or vague with no OHLC figures, UTC is not referenced at all, or the answer has the wrong direction or is unrelated.",
+          "Pass if: the answer summarises ETH-USD price action with OHLC-style figures and preserves the local-time timestamps from the tool output (tool timestamps are labelled '(local)', not UTC); hourly readings faithful to the tool result are acceptable. " +
+          "Fail if: the summary is absent or vague with no OHLC figures, timestamps are converted to UTC (which contradicts the server instruction to preserve local time), or the answer has the wrong direction or is unrelated.",
+
       }),
     ],
   });
@@ -101,6 +108,9 @@ describe("market data — live prices, candles, depth, reference", () => {
     name: "order-book-spread",
     description:
       "Spread question → get_order_book (live depth), not get_tickers.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Market - Order Book",
     prompt: "what's the BTC-USD spread look like right now?",
     setup: () => {
       revolutXMockState.getOrderBook.mockResolvedValueOnce({
@@ -125,8 +135,9 @@ describe("market data — live prices, candles, depth, reference", () => {
       a.judge({
         name: "reports the spread with USD label; does not swap to another tool",
         criterion:
-          "Pass if: the answer reports the BTC-USD spread (50 USD or ~0.05%, derived from best bid 95,000 and best ask 95,050) with USD label adjacent or implicit. " +
-          "Fail if: the spread direction or magnitude is wrong, the label is entirely absent, or values are fabricated.",
+          "Pass if: the answer reports the BTC-USD spread (50 USD, derived from best bid 95,000 and best ask 95,050) with a USD label adjacent or implicit. " +
+          "Fail if: the spread direction or magnitude is wrong, the USD label is entirely absent, or values are fabricated.",
+
       }),
     ],
   });
@@ -135,6 +146,9 @@ describe("market data — live prices, candles, depth, reference", () => {
     name: "currencies-reference",
     description:
       "What-coins question → get_currencies (the one case it's appropriate).",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Market - Prices",
     prompt: "what coins can I trade on revolut x?",
     setup: () => {
       revolutXMockState.getCurrencies.mockResolvedValueOnce({
@@ -192,6 +206,7 @@ describe("market data — live prices, candles, depth, reference", () => {
         criterion:
           "Pass if: the answer lists all four crypto assets (BTC, ETH, SOL, USDC) and distinguishes them from the fiat currencies (USD, EUR); the distinction may be implicit. " +
           "Fail if: one or more crypto assets are missing, a currency is invented, or there is significant fabrication.",
+
       }),
     ],
   });
