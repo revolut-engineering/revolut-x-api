@@ -72,8 +72,8 @@ jobs:
             const f = 'mcp/src/server.ts';
             let src = fs.readFileSync(f, 'utf8');
             src = src.replace(
-              /new McpServer\(\{(\s*name:\s*\"[^\"]*\",\s*)version:\s*\"[^\"]*\"/,
-              'new McpServer({\$1version: \"' + process.env.VERSION + '\"'
+              /(new McpServer\(\s*\{\s*name:\s*\"[^\"]*\",\s*version:\s*\")[^\"]*\"/,
+              '\$1' + process.env.VERSION + '\"'
             );
             fs.writeFileSync(f, src);
           "
