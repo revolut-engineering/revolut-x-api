@@ -12,6 +12,9 @@ describe("sanity", () => {
   defineEval({
     name: "no-tool-call-question",
     description: "Pure-text question requires no MCP tool",
+    failureModes: ["Other"],
+    granularity: "End-to-End",
+    workflow: "Support",
     prompt: "What is 2 + 2? Answer with just the number, no tool calls needed.",
     trials: 1,
     passThreshold: 1,

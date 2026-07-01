@@ -77,6 +77,9 @@ describe("account state & single-record lookups", () => {
     name: "account-balances-multi-currency",
     description:
       "Casual phrasing 'what do I have on revolut x' → get_balances once; amounts labelled with currencies.",
+    failureModes: ["Other"],
+    granularity: "End-to-End",
+    workflow: "Account - Balance",
     prompt: "what do I have on revolut x",
     setup: () => {
       revolutXMockState.getBalances.mockResolvedValueOnce(BALANCES);
@@ -90,15 +93,8 @@ describe("account state & single-record lookups", () => {
       a.judge({
         name: "currency labels next to amounts; no cross-currency fabrication",
         criterion:
-          "The answer reports the four balances (BTC, ETH, USD, EUR) with the currency label adjacent to each numeric amount. " +
-          "Note: each balance object contains available, reserved, staked, and total fields — reporting any of these IS faithful to the tool output, not fabrication. " +
-          "The only thing that counts as fabrication here is INVENTING a single USD-equivalent total across currencies, a portfolio percentage breakdown, or applying a conversion rate not present in the tool result.",
-        rubric:
-          "1.0 = four balances reported with adjacent currency labels, no invented cross-currency totals. " +
-          "0.7 = correct balances but a label is detached. " +
-          "0.4 = invents a cross-currency total or conversion rate. " +
-          "0.0 = wrong numbers entirely.",
-        threshold: 0.7,
+          "Pass if: the answer reports all four balances (BTC, ETH, USD, EUR) with a currency label adjacent to each amount; reporting available, reserved, or total fields is acceptable. " +
+          "Fail if: the answer invents a cross-currency total, a portfolio percentage breakdown, or applies a conversion rate not present in the tool result, or gets any balance wrong.",
       }),
     ],
   });
@@ -107,6 +103,9 @@ describe("account state & single-record lookups", () => {
     name: "single-order-lookup",
     description:
       "Natural-language order-ID extraction → get_order_by_id, not get_historical_orders.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "Tool-specific",
+    workflow: "Account - Orders",
     prompt: "look up order f2b9c-447e for me, what happened with it",
     setup: () => {
       revolutXMockState.getOrder.mockResolvedValueOnce({ data: FILLED_ORDER });
@@ -119,14 +118,8 @@ describe("account state & single-record lookups", () => {
       a.judge({
         name: "reports the order's filled status, quantity, and average fill price",
         criterion:
-          "The answer reports the order's status as filled, the filled quantity (0.333 BTC), and the average fill price (around 90,090 USD). " +
-          "Note: any timestamp, total cost (filled_amount × 1 = $30,000), and trailing fields like 'allow_taker' ARE in the tool output, so reporting them is not fabrication — only invented fees / counterparties / related orders would count.",
-        rubric:
-          "1.0 = status + qty + avg price all reported faithfully. " +
-          "0.7 = correct but one of the three vague. " +
-          "0.4 = one of status/qty/price wrong or missing. " +
-          "0.0 = multiple errors or unrelated answer.",
-        threshold: 0.7,
+          "Pass if: the answer reports the order's status as filled, the filled quantity (0.333 BTC), and the average fill price (around 90,090 USD); vague phrasing on any one of these is acceptable. " +
+          "Fail if: any of the three core fields (status, quantity, avg price) is wrong, missing, or the answer invents fees or unrelated order details.",
       }),
     ],
   });
@@ -135,6 +128,9 @@ describe("account state & single-record lookups", () => {
     name: "open-orders-non-empty",
     description:
       "Casual phrasing for open orders → get_active_orders; preserves partial-fill nuance.",
+    failureModes: ["Bad tool resolution"],
+    granularity: "End-to-End",
+    workflow: "Account - Balance",
     prompt: "what open / working orders do I have right now on revolut x?",
     setup: () => {
       revolutXMockState.getActiveOrders.mockResolvedValue({
@@ -150,14 +146,8 @@ describe("account state & single-record lookups", () => {
       a.judge({
         name: "mentions partial-fill status; reports per-order remaining quantity",
         criterion:
-          "The answer mentions both active orders (BTC-USD buy at 88000, ETH-EUR sell at 4000) AND explicitly flags that the ETH-EUR order is partially filled (2 out of 5 filled, 3 remaining). " +
-          "It does not silently aggregate the orders or drop the partial-fill state.",
-        rubric:
-          "1.0 = both orders named, partial-fill state explicit, remaining quantities clear. " +
-          "0.7 = both orders named, partial-fill mentioned but vague on quantities. " +
-          "0.4 = one order missing or partial fill not mentioned. " +
-          "0.0 = wrong information or significant fabrication.",
-        threshold: 0.7,
+          "Pass if: the answer names both active orders (BTC-USD buy at 88000, ETH-EUR sell at 4000) and flags that the ETH-EUR order is partially filled; the remaining quantity may be mentioned vaguely. " +
+          "Fail if: either order is missing, the partial-fill state is not mentioned, or the information is fabricated.",
       }),
     ],
   });

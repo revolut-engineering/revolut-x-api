@@ -38,6 +38,9 @@ describe("grid simulation flow", () => {
     name: "backtest-confirm-then-run",
     description:
       "User asks for a backtest with sparse params. Agent must confirm key params OR include a simulation caveat if it proceeds.",
+    failureModes: ["Other"],
+    granularity: "End-to-End",
+    workflow: "Backtesting",
     prompt:
       "backtest a grid bot on ETH-USD with 10000 dollars — use 5 levels, 10% range, no split investment",
     setup: () => {
@@ -70,14 +73,8 @@ describe("grid simulation flow", () => {
       a.judge({
         name: "surfaces the simulation-not-prediction caveat when reporting results",
         criterion:
-          "Because the user supplied all key parameters explicitly, the agent runs the backtest. " +
-          "When reporting the result, the answer explicitly notes that this is a simulation of past data, NOT a prediction or guarantee of future performance.",
-        rubric:
-          "1.0 = explicit simulation/not-a-guarantee caveat appears in the reply. " +
-          "0.7 = caveat present but slightly vague. " +
-          "0.4 = caveat hinted at but not explicit. " +
-          "0.0 = treats backtest as a prediction.",
-        threshold: 0.7,
+          "Pass if: the agent runs the grid backtest and the result includes an explicit caveat that this is a simulation of past data, not a prediction or guarantee of future performance. " +
+          "Fail if: the backtest is not run without justification, or the simulation caveat is absent.",
       }),
     ],
   });
@@ -86,6 +83,9 @@ describe("grid simulation flow", () => {
     name: "optimize-grid-params",
     description:
       "Optimization happy path → grid_optimize; caveat about simulation still required.",
+    failureModes: ["Other"],
+    granularity: "End-to-End",
+    workflow: "Backtesting",
     prompt:
       "find me a good grid setup for BTC-USD on the last 3 days, 5000 USD investment, no split",
     setup: () => {
@@ -103,14 +103,8 @@ describe("grid simulation flow", () => {
       a.judge({
         name: "ranks combos and includes simulation caveat",
         criterion:
-          "The answer presents at least the top-ranked grid parameter combination (levels per side and range %) and the corresponding ROI or total P&L from the simulation. " +
-          "It includes a caveat that these results are simulations of past data, NOT guarantees of future performance.",
-        rubric:
-          "1.0 = top combo + ROI + clear simulation caveat. " +
-          "0.7 = top combo + ROI, caveat vague. " +
-          "0.4 = caveat missing OR ranking missing. " +
-          "0.0 = treats as prediction or fabricates ranking.",
-        threshold: 0.8,
+          "Pass if: the answer presents at least the top-ranked grid parameter combination (levels and range %) with its ROI or P&L, and includes a caveat that these are simulations of past data, not guarantees of future performance. " +
+          "Fail if: no parameter combination is presented, key metrics are missing, or the simulation caveat is absent.",
       }),
     ],
   });

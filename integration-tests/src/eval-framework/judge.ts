@@ -92,18 +92,18 @@ export async function runJudge(
 }
 
 function buildJudgeSystemPrompt(assertion: JudgeAssertion): string {
-  const rubric =
-    assertion.rubric ??
-    "Score 1.0 if the criterion is fully met, 0.0 if not met at all, and a value in between for partial credit. Be strict.";
   return [
     "You are an evaluation judge. Score whether the agent's output meets a specific criterion.",
     "",
     `CRITERION: ${assertion.criterion}`,
     "",
-    `RUBRIC: ${rubric}`,
+    "Score exactly 1.0 if the criterion is met. Score exactly 0.0 if the criterion is not met. " +
+      "No other values are valid. " +
+      "Minor wording or formatting differences in the agent's response do not affect the score — " +
+      "only whether the stated criterion is satisfied.",
     "",
     "Output JSON only, no other text. Schema:",
-    `{"score": <number 0..1>, "reasoning": "<one short sentence explaining the score>"}`,
+    `{"score": <0.0 or 1.0>, "reasoning": "<one short sentence explaining the score>"}`,
   ].join("\n");
 }
 

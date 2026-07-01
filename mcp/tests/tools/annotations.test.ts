@@ -68,12 +68,14 @@ const EXPECTED_TOOL_NAMES = [
   "get_order_fills",
   "grid_backtest",
   "grid_optimize",
+  "list_kb_articles",
+  "search_kb",
 ];
 
 describe("tool annotations", () => {
-  it("all 19 tools are registered", async () => {
+  it("all 21 tools are registered", async () => {
     const tools = await listTools();
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(21);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });

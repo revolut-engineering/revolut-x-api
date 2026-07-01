@@ -120,7 +120,8 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Order Book",
       description:
-        "Get the LIVE order book (bid/ask depth) for a trading pair. Use for current spread, depth, and immediate-market structure — not historical price action.",
+        "Get the LIVE order book (bid/ask depth) for a trading pair. Use for current spread, depth, and immediate-market structure — not historical price action. " +
+        "Spread is the difference between the best bid and ask",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         limit: z
@@ -252,7 +253,9 @@ export function registerMarketDataTools(server: McpServer): void {
       description:
         "Get historical OHLCV candlestick data for a trading pair. Use for technical analysis, charting, or backtest input. " +
         "Returns up to 50,000 candles in one call; older or wider ranges are clamped to the most recent 50,000 candles, " +
-        "and the NOTE TO LLM in the output spells out which case applied.",
+        "and the NOTE TO LLM in the output spells out which case applied. " +
+        "Resolution guide: for windows ≥ 7 days use 1h or coarser; for windows ≥ 30 days use 1d or coarser. " +
+        "Using 1m over a 7-day window produces ~10,000 candles — prefer a coarser resolution unless the user explicitly requests minute-level granularity.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         resolution: z
@@ -379,8 +382,8 @@ export function registerMarketDataTools(server: McpServer): void {
       description:
         "Get public trade history (every market trade by anyone) for a trading pair. " +
         "Use for tape-reading, micro-structure analysis, or volume profiling. For your own fills use `get_historical_orders`. " +
-        "IMPORTANT: If totalLimit is omitted, the result may be very large (>10,000 trades). " +
-        "Always ask the user to confirm before fetching without a totalLimit, or suggest a reasonable totalLimit.",
+        "IMPORTANT: Always set totalLimit before calling this tool unless the user has already confirmed they want an unbounded result. " +
+        "Active markets can produce hundreds of thousands of trades per day — omitting totalLimit risks an extremely large response.",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
         start_date: z

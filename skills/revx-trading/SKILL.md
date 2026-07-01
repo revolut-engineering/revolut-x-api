@@ -68,6 +68,9 @@ revx order place BTC-USD buy --qty 0.001 --limit 95000
 # Post-only limit (maker only, cancelled if would take)
 revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
 
+# Limit order with time in force (immediate-or-cancel)
+revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
+
 # Quote-sized order (buy $500 worth of BTC at market)
 revx order place BTC-USD buy --quote 500 --market
 ```
@@ -84,6 +87,7 @@ revx order place BTC-USD buy --quote 500 --market
 | `--quote <amount>` | Size in quote currency (e.g., 500 for USD) |
 | `--market` | Market order (required unless `--limit`) |
 | `--limit <price>` | Limit price (required unless `--market`) |
+| `--time-in-force <value>` | `gtc` (default) or `ioc`. Limit orders only — `fok` is not accepted when placing. |
 | `--post-only` | Post-only execution (limit orders only) |
 
 Must specify either `--qty` or `--quote` (not both).
@@ -110,6 +114,9 @@ revx order replace <order-id> --allow-taker
 # Switch to post-only
 revx order replace <order-id> --post-only
 
+# Change time in force
+revx order replace <order-id> --time-in-force ioc
+
 # Combine — re-price and re-size
 revx order replace <order-id> --price 96000 --qty 0.002
 ```
@@ -128,10 +135,11 @@ revx order replace <order-id> --price 96000 --qty 0.002
 | `--qty <amount>` | New base-currency size |
 | `--quote <amount>` | New quote-currency size |
 | `--client-order-id <id>` | Client order ID for the replacement (auto-generated if omitted) |
+| `--time-in-force <value>` | `gtc` or `ioc`. `fok` is not accepted when replacing. |
 | `--post-only` | Set execution to `[post_only]` |
 | `--allow-taker` | Set execution to `[allow_taker]` explicitly |
 
-At least one of `--price`, `--qty`, `--quote`, `--post-only`, `--allow-taker` is required.
+At least one of `--price`, `--qty`, `--quote`, `--time-in-force`, `--post-only`, `--allow-taker` is required.
 
 ---
 

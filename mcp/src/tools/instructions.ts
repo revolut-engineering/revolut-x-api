@@ -36,6 +36,10 @@ Read-only data (safe to call):
   grid_backtest         — run backtest simulation
   grid_optimize         — optimize grid parameters
 
+Knowledge base (safe to call):
+  list_kb_articles      — list available help articles with their intents
+  search_kb             — search for a help article by natural-language query
+
 Trading setup:
   get_trading_setup     — how to set up Claude Code + trading plugin
 

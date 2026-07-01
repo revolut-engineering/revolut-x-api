@@ -153,6 +153,28 @@ describe("order place", () => {
     });
   });
 
+  it("places a limit order with --time-in-force", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--qty",
+      "0.001",
+      "--limit",
+      "95000",
+      "--time-in-force",
+      "ioc",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      symbol: "BTC-USD",
+      side: "buy",
+      limit: { price: "95000", baseSize: "0.001", timeInForce: "ioc" },
+    });
+  });
+
   it("places a market buy order with quote amount", async () => {
     await program.parseAsync([
       "node",
@@ -451,6 +473,52 @@ describe("order history", () => {
         startDate: expect.any(Number),
       }),
     );
+  });
+
+  it("passes conditional and tpsl order types filter", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "history",
+      "--order-types",
+      "conditional,tpsl",
+    ]);
+    expect(mockGetHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderTypes: ["conditional", "tpsl"],
+      }),
+    );
+  });
+
+  it("displays conditions column for historical orders with triggers", async () => {
+    mockGetHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          ...sampleOrder,
+          status: "filled",
+          type: "tpsl",
+          take_profit: {
+            trigger_price: "100000",
+            type: "market",
+            trigger_direction: "ge",
+            time_in_force: "gtc",
+            execution_instructions: [],
+          },
+          stop_loss: {
+            trigger_price: "80000",
+            type: "market",
+            trigger_direction: "le",
+            time_in_force: "gtc",
+            execution_instructions: [],
+          },
+        },
+      ],
+    });
+    await program.parseAsync(["node", "revx", "order", "history"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("TP 100000");
+    expect(output).toContain("SL 80000");
   });
 
   it("displays period subtitle in header when date ranges are provided", async () => {
@@ -789,6 +857,45 @@ describe("order replace", () => {
     expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
       clientOrderId: "client-new",
       executionInstructions: ["post_only"],
+    });
+  });
+
+  it("replaces order with --time-in-force alongside --price", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+      "--time-in-force",
+      "ioc",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      price: "96000",
+      timeInForce: "ioc",
+    });
+  });
+
+  it("replaces order with only --time-in-force", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--time-in-force",
+      "gtc",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      timeInForce: "gtc",
     });
   });
 

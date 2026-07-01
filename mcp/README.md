@@ -170,6 +170,13 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 | `get_order_by_id` | Get full details of a single order by venue order ID. Includes total fees paid (`total_fee` + `fee_currency`). Shows trigger details for `conditional` and `tpsl` orders. |
 | `get_order_fills` | Get all fills (executions) for a specific order. |
 
+### Knowledge Base
+
+| Tool | Description |
+|------|-------------|
+| `list_kb_articles` | List all available help articles with their ids and a plain-English description of what user intent each covers. Call this first to identify the right article. |
+| `search_kb` | Retrieve the full content of a help article by its exact id. Use after `list_kb_articles` to answer user questions about fees, order types, deposits, withdrawals, staking, MCP setup, account issues, and more. |
+
 ---
 
 ## Development

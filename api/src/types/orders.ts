@@ -16,8 +16,9 @@ export type HistoricalOrderState =
   | "replaced"
   | "partially_filled";
 export type ActiveOrderType = "limit" | "conditional" | "tpsl";
-export type HistoricalOrderType = "market" | "limit";
+export type HistoricalOrderType = "market" | "limit" | "conditional" | "tpsl";
 export type TimeInForce = "gtc" | "ioc" | "fok";
+export type PlaceTimeInForce = "gtc" | "ioc";
 export type ExecutionInstruction = "allow_taker" | "post_only";
 export type TriggerDirection = "ge" | "le";
 
@@ -92,6 +93,7 @@ export interface LimitOrderConfig {
   price: string;
   baseSize?: string;
   quoteSize?: string;
+  timeInForce?: PlaceTimeInForce;
   executionInstructions?: ExecutionInstruction[];
 }
 
@@ -113,6 +115,7 @@ export interface ReplaceOrderParams {
   price?: string;
   baseSize?: string;
   quoteSize?: string;
+  timeInForce?: PlaceTimeInForce;
   executionInstructions?: ExecutionInstruction[];
 }
 
