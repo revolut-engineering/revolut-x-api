@@ -4,6 +4,11 @@ import { logger } from "./logger.js";
 import { fmt } from "./format.js";
 
 export async function setup(): Promise<void> {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    logger.warn(
+      "ANTHROPIC_API_KEY is not set — all agent eval cases will be skipped. Copy integration-tests/.env.example to .env and set ANTHROPIC_API_KEY to run them.",
+    );
+  }
   const config = getEvalConfig();
   process.env.EVAL_RUN_ID = config.runId;
   process.env.EVAL_REPORT_DIR = config.reportDir;

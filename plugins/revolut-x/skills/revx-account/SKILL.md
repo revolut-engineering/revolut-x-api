@@ -48,7 +48,7 @@ revx order history --symbols BTC-USD --start-date 7d --end-date today
 revx order history --order-states filled,cancelled --limit 20
 ```
 
-**Filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced, partially_filled), `--order-types` (market, limit), `--start-date`, `--end-date`, `--limit`
+**Filters:** `--symbols`, `--order-states` (filled, cancelled, rejected, replaced, partially_filled), `--order-types` (market, limit, conditional, tpsl), `--start-date`, `--end-date`, `--limit`
 
 **Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
@@ -58,6 +58,8 @@ revx order history --order-states filled,cancelled --limit 20
 revx order get <order-id>              # Full order details
 revx order fills <order-id>            # All fills for an order
 ```
+
+Order details always include `time_in_force` — one of `gtc`, `ioc`, or `fok` (an order can come back as `fok` even though only `gtc`/`ioc` can be set when placing/replacing).
 
 Optional fields in order details output (shown only when present):
 - `amount` / `filled_amount` — quote-currency size and how much of it has been filled

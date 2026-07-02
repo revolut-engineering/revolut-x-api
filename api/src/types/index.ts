@@ -26,6 +26,7 @@ export type {
   ActiveOrderType,
   HistoricalOrderType,
   TimeInForce,
+  PlaceTimeInForce,
   ExecutionInstruction,
   TriggerDirection,
   OrderTrigger,
@@ -35,6 +36,7 @@ export type {
   LimitOrderConfig,
   MarketOrderConfig,
   PlaceOrderParams,
+  ReplaceOrderParams,
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
 } from "./orders.js";

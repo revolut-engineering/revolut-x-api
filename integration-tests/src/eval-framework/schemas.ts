@@ -90,6 +90,31 @@ export const TrialResultSchema = z.object({
 });
 export type TrialResult = z.infer<typeof TrialResultSchema>;
 
+export const FailureModeSchema = z.enum([
+  "LLM Calculation",
+  "Hallucination",
+  "Timeframe resolution",
+  "Bad tool resolution",
+  "Other",
+]);
+export type FailureMode = z.infer<typeof FailureModeSchema>;
+
+export const GranularitySchema = z.enum(["End-to-End", "Tool-specific"]);
+export type Granularity = z.infer<typeof GranularitySchema>;
+
+export const WorkflowSchema = z.enum([
+  "Account setup/onboarding",
+  "Support",
+  "Account - Balance",
+  "Account - Orders",
+  "Account - Portfolio Performance",
+  "Market - Prices",
+  "Market - Order Book",
+  "Market - Public Trades",
+  "Backtesting",
+]);
+export type Workflow = z.infer<typeof WorkflowSchema>;
+
 export const EvalResultSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
@@ -108,6 +133,13 @@ export const EvalResultSchema = z.object({
   totalOutputTokens: NonNegativeFinite,
   assertionPassRates: z.record(Score),
   assertionMeanScores: z.record(Score.nullable()),
+  failureModes: z
+    .array(FailureModeSchema)
+    .min(1)
+    .catch(undefined as never)
+    .optional(),
+  granularity: GranularitySchema.catch(undefined as never).optional(),
+  workflow: WorkflowSchema.catch(undefined as never).optional(),
 });
 export type EvalResult = z.infer<typeof EvalResultSchema>;
 
@@ -155,7 +187,6 @@ const JudgeAssertionInputSchema = z.object({
   kind: z.literal("judge"),
   name: z.string().min(1),
   criterion: z.string().min(1),
-  rubric: z.string().min(1).optional(),
   threshold: Threshold.optional(),
   model: z.string().min(1).optional(),
 });
@@ -200,6 +231,9 @@ export const EvalCaseSchema = z.object({
   model: z.string().min(1).optional(),
   maxIterations: PositiveInt.optional(),
   systemPrompt: z.string().optional(),
+  failureModes: z.array(FailureModeSchema).min(1).optional(),
+  granularity: GranularitySchema.optional(),
+  workflow: WorkflowSchema.optional(),
 });
 export type EvalCase = z.infer<typeof EvalCaseSchema>;
 
@@ -214,8 +248,11 @@ export const Schemas = {
   AssertionSchema,
   EvalCaseSchema,
   EvalResultSchema,
+  FailureModeSchema,
+  GranularitySchema,
   JudgeResponseSchema,
   RunMetadataSchema,
   RunReportSchema,
   TrialResultSchema,
+  WorkflowSchema,
 };

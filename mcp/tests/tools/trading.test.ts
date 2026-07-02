@@ -293,6 +293,102 @@ describe("trading read-only tools", () => {
     );
   });
 
+  it("get_historical_orders passes conditional and tpsl order types", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {
+        order_types: ["conditional", "tpsl"],
+      },
+    });
+
+    expect(getText(result)).toContain("No historical orders found");
+    expect(mockClient.getHistoricalOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderTypes: ["conditional", "tpsl"],
+      }),
+    );
+  });
+
+  it("get_historical_orders renders conditional and tpsl triggers", async () => {
+    mockClient.getHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          id: "hist-cond-1",
+          client_order_id: "co-cond-1",
+          symbol: "ETH-USD",
+          side: "sell",
+          type: "conditional",
+          price: "0",
+          quantity: "1",
+          filled_quantity: "0",
+          leaves_quantity: "1",
+          status: "cancelled",
+          time_in_force: "gtc",
+          execution_instructions: [],
+          conditional: {
+            trigger_price: "3000",
+            type: "market",
+            trigger_direction: "le",
+            time_in_force: "gtc",
+            execution_instructions: [],
+          },
+          created_date: 1700000000000,
+        },
+        {
+          id: "hist-tpsl-1",
+          client_order_id: "co-tpsl-1",
+          symbol: "BTC-USD",
+          side: "sell",
+          type: "tpsl",
+          price: "0",
+          quantity: "0.1",
+          filled_quantity: "0.1",
+          filled_amount: "9500",
+          leaves_quantity: "0",
+          status: "filled",
+          time_in_force: "gtc",
+          execution_instructions: [],
+          take_profit: {
+            trigger_price: "100000",
+            type: "market",
+            trigger_direction: "ge",
+            time_in_force: "gtc",
+            execution_instructions: [],
+          },
+          stop_loss: {
+            trigger_price: "80000",
+            type: "market",
+            trigger_direction: "le",
+            time_in_force: "gtc",
+            execution_instructions: [],
+          },
+          created_date: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_historical_orders",
+      arguments: {},
+    });
+    const text = getText(result);
+    expect(text).toContain("Conditional trigger");
+    expect(text).toContain("3000");
+    expect(text).toContain("<=");
+    expect(text).toContain("Take profit");
+    expect(text).toContain("100000");
+    expect(text).toContain(">=");
+    expect(text).toContain("Stop loss");
+    expect(text).toContain("80000");
+  });
+
   it("get_historical_orders fetches all pages automatically", async () => {
     const orderA = {
       id: "hist-page1",

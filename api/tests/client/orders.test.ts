@@ -187,6 +187,39 @@ describe("Orders", () => {
       };
       expect(config.limit.execution_instructions).toEqual(["post_only"]);
     });
+
+    it("includes time_in_force for limit orders", async () => {
+      const client = createTestClient();
+      let capturedBody: Record<string, unknown>;
+
+      nock(BASE_URL)
+        .post("/api/1.0/orders", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tif",
+            client_order_id: "client-tif",
+            state: "new",
+          },
+        });
+
+      await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "buy",
+        limit: {
+          price: "95000",
+          baseSize: "0.001",
+          timeInForce: "ioc",
+        },
+      });
+
+      const config = capturedBody.order_configuration as {
+        limit: { time_in_force: string };
+      };
+      expect(config.limit.time_in_force).toBe("ioc");
+    });
   });
 
   describe("getActiveOrders", () => {
@@ -346,6 +379,21 @@ describe("Orders", () => {
         symbols: ["BTC-USD"],
         orderStates: ["filled"],
         orderTypes: ["limit"],
+      });
+    });
+
+    it("supports conditional and tpsl order types", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/historical")
+        .query({ order_types: "conditional,tpsl" })
+        .reply(200, {
+          data: [],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      await client.getHistoricalOrders({
+        orderTypes: ["conditional", "tpsl"],
       });
     });
 
@@ -634,6 +682,62 @@ describe("Orders", () => {
         base_size: "0.5",
         quote_size: "100",
         execution_instructions: ["post_only"],
+      });
+    });
+
+    it("replaces order with timeInForce alongside price", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tif",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        price: "95000",
+        timeInForce: "gtc",
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        price: "95000",
+        time_in_force: "gtc",
+      });
+    });
+
+    it("replaces order with only timeInForce", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tif-only",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        timeInForce: "ioc",
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        time_in_force: "ioc",
       });
     });
 

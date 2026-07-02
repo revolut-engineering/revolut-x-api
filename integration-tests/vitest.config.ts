@@ -13,6 +13,16 @@ const globalSetup = fileURLToPath(
 );
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "md-text",
+      transform(src, id) {
+        if (id.endsWith(".md")) {
+          return { code: `export default ${JSON.stringify(src)}` };
+        }
+      },
+    },
+  ],
   test: {
     globals: true,
     include: ["evals/**/*.eval.test.ts"],

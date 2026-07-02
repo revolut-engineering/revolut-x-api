@@ -41,19 +41,23 @@ export function defineEval(rawCase: EvalCase): void {
   const passThreshold = evalCase.passThreshold ?? config.passThreshold;
   const model = evalCase.model ?? config.model;
 
-  it(`${evalCase.name} (${trialCount} trials, threshold ${fmt.threshold(passThreshold)})`, async () => {
-    const trials: TrialResult[] = [];
-    const startedAt = Date.now();
+  const run = process.env.ANTHROPIC_API_KEY ? it : it.skip;
+  run(
+    `${evalCase.name} (${trialCount} trials, threshold ${fmt.threshold(passThreshold)})`,
+    async () => {
+      const trials: TrialResult[] = [];
+      const startedAt = Date.now();
 
-    for (let i = 0; i < trialCount; i++) {
-      const trial = await runTrial(evalCase, i, model);
-      trials.push(trial);
-    }
+      for (let i = 0; i < trialCount; i++) {
+        const trial = await runTrial(evalCase, i, model);
+        trials.push(trial);
+      }
 
-    const result = aggregate(evalCase, trials, passThreshold, startedAt);
-    await recordEvalResult(result);
-    assertPassed(result);
-  });
+      const result = aggregate(evalCase, trials, passThreshold, startedAt);
+      await recordEvalResult(result);
+      assertPassed(result);
+    },
+  );
 }
 
 async function runTrial(
@@ -266,6 +270,9 @@ export function aggregate(
     totalOutputTokens: totalOutput,
     assertionPassRates,
     assertionMeanScores,
+    failureModes: evalCase.failureModes,
+    granularity: evalCase.granularity,
+    workflow: evalCase.workflow,
   };
 }
 

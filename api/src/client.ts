@@ -245,6 +245,8 @@ export class RevolutXClient {
       if (params.limit.baseSize) limitConfig.base_size = params.limit.baseSize;
       if (params.limit.quoteSize)
         limitConfig.quote_size = params.limit.quoteSize;
+      if (params.limit.timeInForce)
+        limitConfig.time_in_force = params.limit.timeInForce;
       if (params.limit.executionInstructions) {
         limitConfig.execution_instructions = params.limit.executionInstructions;
       }
@@ -388,6 +390,8 @@ export class RevolutXClient {
     if (params.price !== undefined) body.price = params.price;
     if (params.baseSize !== undefined) body.base_size = params.baseSize;
     if (params.quoteSize !== undefined) body.quote_size = params.quoteSize;
+    if (params.timeInForce !== undefined)
+      body.time_in_force = params.timeInForce;
     if (params.executionInstructions !== undefined) {
       body.execution_instructions = params.executionInstructions;
     }

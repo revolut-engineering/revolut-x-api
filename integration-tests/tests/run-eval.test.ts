@@ -116,15 +116,15 @@ describe("aggregate", () => {
     const trials = [
       trial(0, true, [
         { kind: "predicate", name: "p1", passed: true },
-        { kind: "judge", name: "j1", passed: true, score: 0.8 },
+        { kind: "judge", name: "j1", passed: true, score: 1.0 },
       ]),
-      trial(1, true, [
+      trial(1, false, [
         { kind: "predicate", name: "p1", passed: true },
-        { kind: "judge", name: "j1", passed: true, score: 0.6 },
+        { kind: "judge", name: "j1", passed: false, score: 0.0 },
       ]),
     ];
     const result = aggregate(evalCase(), trials, 0.5, Date.now());
-    expect(result.assertionMeanScores["j1"]).toBeCloseTo(0.7, 5);
+    expect(result.assertionMeanScores["j1"]).toBeCloseTo(0.5, 5);
   });
 
   it("clamps non-finite costs in trials to 0 in totals", () => {
