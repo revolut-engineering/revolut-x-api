@@ -206,7 +206,7 @@ export class RevolutXClient {
   }> {
     this.requireAuth();
     const params: Record<string, unknown> = {};
-    if (opts?.limit !== undefined) params.limit = opts.limit;
+    params.limit = opts?.limit ?? 50;
     const raw = await this.request<{
       data: OrderBook<WireOrderBookLevel>;
       metadata: { timestamp: number };

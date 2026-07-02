@@ -609,7 +609,7 @@ Get the current order book snapshot (bids and asks) for a specific trading pair.
 | Name | In | Type | Required | Description |
 |------|-----|------|----------|-------------|
 | symbol | path | string | yes | Trading pair symbol (e.g., `BTC-USD`) |
-| limit | query | integer | no | Depth of order book (number of levels). Range: 1-20, default: 20 |
+| limit | query | integer | no | Depth of order book (number of levels). Range: 1-50, default: 20 |
 
 **Response (200):** `{ data: { asks: [OrderBookPriceLevel], bids: [OrderBookPriceLevel] }, metadata: { timestamp } }`
 

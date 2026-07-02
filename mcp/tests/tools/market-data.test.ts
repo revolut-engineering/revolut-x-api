@@ -163,6 +163,24 @@ describe("market data tools", () => {
     expect(text).toContain("0.5");
     expect(text).toContain("99000");
     expect(text).toContain("1.0");
+    expect(mockClient.getOrderBook).toHaveBeenCalledWith("BTC-USD", {
+      limit: 50,
+    });
+  });
+
+  it("get_order_book passes custom limit through to the API", async () => {
+    mockClient.getOrderBook.mockResolvedValue({
+      data: { asks: [], bids: [] },
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    await client.callTool({
+      name: "get_order_book",
+      arguments: { symbol: "BTC-USD", limit: 25 },
+    });
+    expect(mockClient.getOrderBook).toHaveBeenCalledWith("BTC-USD", {
+      limit: 25,
+    });
   });
 
   it("get_tickers returns formatted data", async () => {

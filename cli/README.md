@@ -119,8 +119,8 @@ revx market candles BTC-USD             # OHLCV candles (default 1h)
   --interval 1h                         # Resolution: 1m 5m 15m 30m 1h 4h 1d 2d 4d 1w 2w 4w
   --since 7d                            # Start, local time (relative: 7d 1w 4h 30m today yesterday; ISO; epoch ms)
   --until today                         # End, local time (same formats)
-revx market orderbook BTC-USD           # Order book snapshot (top 10)
-  --limit 20                            # Depth (1–20)
+revx market orderbook BTC-USD           # Order book snapshot (top 50)
+  --limit 50                            # Depth (1–50)
 ```
 
 ---

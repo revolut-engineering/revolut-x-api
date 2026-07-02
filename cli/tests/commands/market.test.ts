@@ -530,7 +530,7 @@ describe("market orderbook", () => {
     exitSpy.mockRestore();
   });
 
-  it("fetches order book with default limit of 10", async () => {
+  it("fetches order book with default limit of 50", async () => {
     await program.parseAsync([
       "node",
       "revx",
@@ -538,7 +538,7 @@ describe("market orderbook", () => {
       "orderbook",
       "BTC-USD",
     ]);
-    expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 10 });
+    expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 50 });
   });
 
   it("fetches order book with custom --limit", async () => {
@@ -552,6 +552,19 @@ describe("market orderbook", () => {
       "5",
     ]);
     expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 5 });
+  });
+
+  it("clamps limit above 50 down to 50", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "orderbook",
+      "BTC-USD",
+      "--limit",
+      "100",
+    ]);
+    expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 50 });
   });
 
   it("displays asks and bids in table output", async () => {
