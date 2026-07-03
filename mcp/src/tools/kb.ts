@@ -19,7 +19,8 @@ type IntentEntry = { description: string; content: string };
 export const INTENT_MAP: Record<string, IntentEntry> = {
   get_started: {
     description:
-      "User wants to sign up, create an account, learn what Revolut X is, or understand eligibility requirements.",
+      "User wants to sign up, create an account, learn what Revolut X is, or understand eligibility requirements. " +
+      "Does NOT cover questions about how to execute trades or set up the trading plugin — for those, call get_trading_setup.",
     content: getStartedContent,
   },
   fees: {
