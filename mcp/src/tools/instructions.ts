@@ -122,9 +122,12 @@ export function registerInstructionsTools(server: McpServer): void {
     {
       title: "Get Trading Setup Guide",
       description:
-        "Call when the user wants to trade — place or cancel orders, buy or sell crypto, " +
-        "run a live grid bot, set up price monitors, or configure Telegram alerts. " +
-        "Returns installation steps for the Revolut X trading plugin (Claude Code) since this MCP server is read-only.",
+        "Call when the user wants to trade or asks how to start, set up, or get started with trading as an action. " +
+        "This covers both action requests (place or cancel orders, buy or sell crypto, run a live grid bot, " +
+        "set up price monitors, configure Telegram alerts) and setup questions ('how do I start trading?', " +
+        "'how do I set up trading?'). Does NOT apply to sign-up, account creation, or eligibility questions — " +
+        "those belong in search_kb with intent get_started. " +
+        "Returns installation steps for the Revolut X trading plugin (Claude Code) and a mandatory security disclaimer.",
       annotations: {
         title: "Get Trading Setup Guide",
         readOnlyHint: true,
