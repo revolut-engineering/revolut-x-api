@@ -173,10 +173,11 @@ describe("Market Data", () => {
   });
 
   describe("getOrderBook", () => {
-    it("returns order book with bids and asks", async () => {
+    it("returns order book with bids and asks using default limit 50", async () => {
       const client = createTestClient();
       nock(BASE_URL)
         .get("/api/1.0/order-book/BTC-USD")
+        .query({ limit: "50" })
         .reply(200, {
           data: {
             asks: [mockOrderBookLevel],
@@ -193,7 +194,7 @@ describe("Market Data", () => {
       expect(result.data.bids[0].price).toBe("95000");
     });
 
-    it("respects limit parameter", async () => {
+    it("respects custom limit parameter overriding default", async () => {
       const client = createTestClient();
       nock(BASE_URL)
         .get("/api/1.0/order-book/BTC-USD")
@@ -212,6 +213,7 @@ describe("Market Data", () => {
       const client = createTestClient();
       nock(BASE_URL)
         .get("/api/1.0/order-book/ETH-USD")
+        .query({ limit: "50" })
         .reply(200, {
           data: {
             asks: [mockOrderBookLevel],

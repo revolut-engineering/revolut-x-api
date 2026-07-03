@@ -43,7 +43,7 @@ Examples:
   $ revx market tickers BTC-USD                   Get BTC-USD ticker
   $ revx market candles BTC-USD                   Get hourly candles
   $ revx market candles BTC-USD --interval 5      Get 5-minute candles
-  $ revx market orderbook BTC-USD                 Get order book (top 10)`,
+  $ revx market orderbook BTC-USD                 Get order book (top 50)`,
     );
 
   market
@@ -406,7 +406,7 @@ Examples:
   market
     .command("orderbook <symbol>")
     .description("Get order book for a pair")
-    .option("--limit <n>", "Depth (1-20)", "10")
+    .option("--limit <n>", "Depth (1-50)", "50")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -418,7 +418,7 @@ Examples:
           const client = getClient({ requireAuth: true });
           const cleanSymbol = symbol.trim().toUpperCase();
           const result = await client.getOrderBook(cleanSymbol, {
-            limit: parsePositiveInt(opts.limit, "limit"),
+            limit: Math.min(50, parsePositiveInt(opts.limit, "limit")),
           });
 
           if (isJsonOutput(opts)) {

@@ -47,7 +47,7 @@ Examples:
     $ revx market candles BTC-USD                         Get hourly candles
     $ revx market candles BTC-USD --interval 5m           Get 5-minute candles
     $ revx market candles BTC-USD --since 7d --until today
-    $ revx market orderbook BTC-USD                       Get order book (top 10)
+    $ revx market orderbook BTC-USD                       Get order book (top 50)
     $ revx market orderbook BTC-USD --limit 20            Get order book (top 20)
 
   Orders:

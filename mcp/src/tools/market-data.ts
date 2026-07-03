@@ -127,9 +127,9 @@ export function registerMarketDataTools(server: McpServer): void {
         limit: z
           .number()
           .min(1)
-          .max(20)
-          .default(20)
-          .describe("Depth of order book, 1-20 (default 20)"),
+          .max(50)
+          .default(50)
+          .describe("Depth of order book, 1-50 (default 50)"),
       },
       annotations: {
         title: "Get Order Book",
@@ -145,7 +145,7 @@ export function registerMarketDataTools(server: McpServer): void {
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
 
-      limit = Math.max(1, Math.min(20, limit));
+      limit = Math.max(1, Math.min(50, limit));
 
       let result;
       try {
