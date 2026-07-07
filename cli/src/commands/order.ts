@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import chalk from "chalk";
 import {
   type Order,
+  type TriggeredBy,
+  type OnFill,
   paginateWithDynamicWindows,
   HISTORICAL_ORDERS_API_LIMIT,
 } from "@revolut/revolut-x-api";
@@ -61,6 +63,21 @@ function pushTriggerRows(
       chalk.gray("  ↳ Execution"),
       t.execution_instructions.join(", "),
     ]);
+}
+
+function pushTriggeredByRows(rows: [string, string][], tb: TriggeredBy): void {
+  rows.push([chalk.cyan.bold(`\n❖ Triggered By`), ""]);
+  rows.push([chalk.gray("  ↳ Reason"), tb.reason]);
+  pushTriggerRows(rows, "Conditional Trigger", tb.conditional);
+  pushTriggerRows(rows, "Take Profit", tb.take_profit);
+  pushTriggerRows(rows, "Stop Loss", tb.stop_loss);
+}
+
+function pushOnFillRows(rows: [string, string][], of: OnFill): void {
+  rows.push([chalk.cyan.bold(`\n❖ On Fill (Exit Strategy)`), ""]);
+  if (of.id) rows.push([chalk.gray("  ↳ Linked Order ID"), of.id]);
+  pushTriggerRows(rows, "Take Profit", of.take_profit);
+  pushTriggerRows(rows, "Stop Loss", of.stop_loss);
 }
 
 const COMMON_ORDER_COLUMNS: ColumnDef<Order>[] = [
@@ -538,6 +555,9 @@ Examples:
             pushTriggerRows(rows, "Trigger", o.conditional);
             pushTriggerRows(rows, "Take Profit", o.take_profit);
             pushTriggerRows(rows, "Stop Loss", o.stop_loss);
+
+            if (o.triggered_by) pushTriggeredByRows(rows, o.triggered_by);
+            if (o.on_fill) pushOnFillRows(rows, o.on_fill);
 
             printKeyValue(rows);
           }

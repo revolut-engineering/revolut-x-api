@@ -457,7 +457,8 @@ export function registerTradingTools(server: McpServer): void {
       description:
         "Get the full details of a single order by its venue order ID. " +
         "Supports market, limit, conditional, and tpsl orders. " +
-        "Includes total fees paid (`total_fee` and `fee_currency`) when the venue has reported them — this is the only tool that surfaces per-order fee data.",
+        "Includes total fees paid (`total_fee` and `fee_currency`) when the venue has reported them — this is the only tool that surfaces per-order fee data. " +
+        "May include `triggered_by` (when this order was submitted by a conditional or TP/SL trigger) or `on_fill` (when a linked TP/SL exit strategy is attached); these are mutually exclusive.",
       inputSchema: {
         order_id: z.string().describe("The venue order ID to look up."),
       },
@@ -495,6 +496,29 @@ export function registerTradingTools(server: McpServer): void {
       const stopLossLine = o.stop_loss
         ? formatTrigger("Stop loss", o.stop_loss)
         : "";
+      const triggeredByLine = o.triggered_by
+        ? "  Triggered by:\n" +
+          `    Reason: ${o.triggered_by.reason}\n` +
+          (o.triggered_by.conditional
+            ? formatTrigger("Conditional trigger", o.triggered_by.conditional)
+            : "") +
+          (o.triggered_by.take_profit
+            ? formatTrigger("Take profit", o.triggered_by.take_profit)
+            : "") +
+          (o.triggered_by.stop_loss
+            ? formatTrigger("Stop loss", o.triggered_by.stop_loss)
+            : "")
+        : "";
+      const onFillLine = o.on_fill
+        ? "  On fill (exit strategy):\n" +
+          (o.on_fill.id ? `    Linked order ID: ${o.on_fill.id}\n` : "") +
+          (o.on_fill.take_profit
+            ? formatTrigger("Take profit", o.on_fill.take_profit)
+            : "") +
+          (o.on_fill.stop_loss
+            ? formatTrigger("Stop loss", o.on_fill.stop_loss)
+            : "")
+        : "";
       const avgFillLine = o.average_fill_price
         ? `  Avg Fill Price: ${o.average_fill_price}\n`
         : "";
@@ -520,6 +544,8 @@ export function registerTradingTools(server: McpServer): void {
           conditionalLine +
           takeProfitLine +
           stopLossLine +
+          triggeredByLine +
+          onFillLine +
           `  Quantity: ${o.quantity}\n` +
           (o.amount ? `  Amount: ${o.amount}\n` : "") +
           `  Filled: ${o.filled_quantity}\n` +
