@@ -380,6 +380,23 @@ describe("order open", () => {
     expect(output).toContain("partially_filled");
   });
 
+  it("displays avg fill price for partially_filled open orders", async () => {
+    mockGetActiveOrders.mockResolvedValue({
+      data: [
+        {
+          ...sampleOrder,
+          status: "partially_filled",
+          filled_quantity: "0.0005",
+          average_fill_price: "94500",
+        },
+      ],
+    });
+    await program.parseAsync(["node", "revx", "order", "open"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Avg Fill Price");
+    expect(output).toContain("94500");
+  });
+
   it("shows empty message when no open orders", async () => {
     mockGetActiveOrders.mockResolvedValue({ data: [] });
     await program.parseAsync(["node", "revx", "order", "open"]);
@@ -550,6 +567,23 @@ describe("order history", () => {
     expect(output).toContain("0.0005");
   });
 
+  it("displays avg fill price for partially_filled historical orders", async () => {
+    mockGetHistoricalOrders.mockResolvedValue({
+      data: [
+        {
+          ...sampleOrder,
+          status: "partially_filled",
+          filled_quantity: "0.0005",
+          average_fill_price: "94500",
+        },
+      ],
+    });
+    await program.parseAsync(["node", "revx", "order", "history"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Avg Fill Price");
+    expect(output).toContain("94500");
+  });
+
   it("shows empty message when no history found", async () => {
     mockGetHistoricalOrders.mockResolvedValue({ data: [] });
     await program.parseAsync(["node", "revx", "order", "history"]);
@@ -678,6 +712,16 @@ describe("order get", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("100");
     expect(output).toContain("95");
+  });
+
+  it("displays avg fill price when present", async () => {
+    mockGetOrder.mockResolvedValue({
+      data: { ...sampleOrder, average_fill_price: "94800" },
+    });
+    await program.parseAsync(["node", "revx", "order", "get", "order-123"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Avg Fill Price");
+    expect(output).toContain("94800");
   });
 });
 

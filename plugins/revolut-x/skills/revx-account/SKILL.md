@@ -63,6 +63,7 @@ Order details always include `time_in_force` — one of `gtc`, `ioc`, or `fok` (
 
 Optional fields in order details output (shown only when present):
 - `amount` / `filled_amount` — quote-currency size and how much of it has been filled
+- `average_fill_price` — volume-weighted average execution price (shown as "Avg Fill Price"); only present for filled or partially filled orders
 - `total_fee` / `fee_currency` — total fee charged and the currency it was paid in
 
 ---

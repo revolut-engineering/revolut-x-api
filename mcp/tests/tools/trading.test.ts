@@ -99,6 +99,38 @@ describe("trading read-only tools", () => {
     expect(text).toContain("90000");
   });
 
+  it("get_active_orders shows avg fill price for partially_filled orders", async () => {
+    mockClient.getActiveOrders.mockResolvedValue({
+      data: [
+        {
+          id: "order-pf",
+          client_order_id: "co-pf",
+          symbol: "BTC-USD",
+          side: "buy",
+          type: "limit",
+          price: "90000",
+          average_fill_price: "89500",
+          quantity: "0.1",
+          filled_quantity: "0.05",
+          leaves_quantity: "0.05",
+          status: "partially_filled",
+          time_in_force: "gtc",
+          execution_instructions: [],
+          created_date: 1700000000000,
+        },
+      ],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_active_orders",
+      arguments: {},
+    });
+    const text = getText(result);
+    expect(text).toContain("order-pf");
+    expect(text).toContain("Avg Fill Price: 89500");
+  });
+
   it("get_historical_orders returns formatted list", async () => {
     mockClient.getHistoricalOrders.mockResolvedValue({
       data: [
@@ -628,6 +660,7 @@ describe("get_order_by_id", () => {
       arguments: { order_id: "order-fee" },
     });
     const text = getText(result);
+    expect(text).toContain("Avg Fill Price: 90000");
     expect(text).toContain("Total fee: 1.50 USD");
   });
 

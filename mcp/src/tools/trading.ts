@@ -139,6 +139,9 @@ export function registerTradingTools(server: McpServer): void {
       const lines = ["Active orders:\n"];
       for (const o of orders) {
         const priceLine = o.type === "limit" ? `  Price: ${o.price}\n` : "";
+        const avgFillLine = o.average_fill_price
+          ? `  Avg Fill Price: ${o.average_fill_price}\n`
+          : "";
         const execLine =
           o.execution_instructions && o.execution_instructions.length
             ? `  Execution instructions: ${o.execution_instructions.join(", ")}\n`
@@ -159,6 +162,7 @@ export function registerTradingTools(server: McpServer): void {
             `  Side: ${o.side}\n` +
             `  Type: ${o.type}\n` +
             priceLine +
+            avgFillLine +
             execLine +
             conditionalLine +
             takeProfitLine +
@@ -492,7 +496,7 @@ export function registerTradingTools(server: McpServer): void {
         ? formatTrigger("Stop loss", o.stop_loss)
         : "";
       const avgFillLine = o.average_fill_price
-        ? `  Avg fill price: ${o.average_fill_price}\n`
+        ? `  Avg Fill Price: ${o.average_fill_price}\n`
         : "";
       const totalFeeLine = o.total_fee
         ? `  Total fee: ${o.total_fee}${o.fee_currency ? ` ${o.fee_currency}` : ""}\n`

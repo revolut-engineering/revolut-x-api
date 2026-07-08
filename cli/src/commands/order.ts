@@ -85,6 +85,11 @@ const COMMON_ORDER_COLUMNS: ColumnDef<Order>[] = [
     align: "right",
   },
   {
+    header: "Avg Fill Price",
+    accessor: (o) => o.average_fill_price ?? chalk.dim("—"),
+    align: "right",
+  },
+  {
     header: "Status",
     accessor: (o) => {
       switch (o.status?.toLowerCase()) {
