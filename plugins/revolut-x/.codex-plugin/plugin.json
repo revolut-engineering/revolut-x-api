@@ -1,7 +1,7 @@
 {
   "name": "revolut-x",
   "version": "1.0.46",
-  "description": "Revolut X CLI skills only — auth, market, account, trading, monitoring, Telegram, and grid trading via the revx CLI.",
+  "description": "Revolut X CLI — auth, market, account, trading, monitoring, Telegram, and grid trading via the revx CLI.",
   "author": {
     "name": "Revolut X",
     "url": "https://exchange.revolut.com"
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Revolut X",
     "developerName": "Revolut X",
-    "shortDescription": "Crypto trading, market data, monitoring, and grid bots via the revx CLI",
+    "shortDescription": "Manage your crypto portfolio",
     "longDescription": "Revolut X for Codex provides skills that teach the assistant to use the revx CLI for the Revolut X crypto exchange — auth setup, market data, account queries, order placement, live monitoring, and grid trading strategies.",
     "category": "Finance",
     "capabilities": [
@@ -30,7 +30,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Help me check my Revolut X balances or place a trade using the revx CLI"
+      "Help me check my Revolut X balances",
+      "Show me current prices for BTC and ETH",
+      "Show me my open orders"
     ],
     "screenshots": [],
     "websiteURL": "https://exchange.revolut.com",
