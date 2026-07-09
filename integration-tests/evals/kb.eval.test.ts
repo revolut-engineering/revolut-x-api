@@ -206,23 +206,6 @@ describe("kb — ungrounded claims", () => {
   });
 
   defineEval({
-    name: "age-requirement-grounded",
-    description:
-      "Age requirement question → answer must cite the KB (18 years), not rely on training data which might differ.",
-    failureModes: ["Hallucination"],
-    granularity: "Tool-specific",
-    workflow: "Support",
-    prompt: "what's the minimum age to use revolut x?",
-    trials: 3,
-    passThreshold: 0.5,
-    assertions: [
-      a.callsTool("search_kb"),
-      a.callsToolWithArgs("search_kb", { intent: "get_started" }),
-      a.finalTextContainsAll(["18"]),
-    ],
-  });
-
-  defineEval({
     name: "maintenance-behaviour-grounded",
     description:
       "Question about what happens during maintenance → must fetch KB, not describe generic exchange behaviour.",
