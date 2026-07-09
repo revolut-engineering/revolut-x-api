@@ -1,6 +1,6 @@
 {
   "name": "revolut-x",
-  "version": "1.0.46",
+  "version": "1.0.47",
   "description": "Revolut X CLI — auth, market, account, trading, monitoring, Telegram, and grid trading via the revx CLI.",
   "author": {
     "name": "Revolut X",
