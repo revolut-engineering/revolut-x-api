@@ -31,6 +31,21 @@ export interface OrderTrigger {
   execution_instructions: ExecutionInstruction[];
 }
 
+export type TriggerReason = "conditional" | "take_profit" | "stop_loss";
+
+export interface TriggeredBy {
+  conditional?: OrderTrigger;
+  take_profit?: OrderTrigger;
+  stop_loss?: OrderTrigger;
+  reason: TriggerReason;
+}
+
+export interface OnFill {
+  take_profit?: OrderTrigger;
+  stop_loss?: OrderTrigger;
+  id?: string;
+}
+
 export interface Order {
   id: string;
   previous_order_id?: string;
@@ -79,6 +94,8 @@ export interface OrderDetails {
   conditional?: OrderTrigger;
   take_profit?: OrderTrigger;
   stop_loss?: OrderTrigger;
+  triggered_by?: TriggeredBy;
+  on_fill?: OnFill;
   created_date: number;
   updated_date: number;
 }

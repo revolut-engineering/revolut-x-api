@@ -17,6 +17,7 @@
 7. **Execution instructions default** to `["allow_taker"]`. An empty array `[]` means no specific instructions.
 8. **Date range queries** (`start_date`/`end_date`) must span at most 1 week.
 9. **OrderTrigger time_in_force** supports only `"gtc"` and `"ioc"` (no `"fok"`), unlike the main order which supports all three.
+10. **`triggered_by` and `on_fill`** on `OrderDetails` are mutually exclusive — only one appears per order. `on_fill.id` is present only after the order is filled.
 
 ---
 
@@ -420,6 +421,8 @@ In addition to all `Order` fields, the response may include these optional field
 |-------|------|-------------|
 | total_fee | string | Total fee charged for the order |
 | fee_currency | string | Currency in which the fee was paid |
+| triggered_by | TriggeredBy | Present when this order was submitted by a conditional or TP/SL trigger. Includes the trigger `reason` and the trigger definition that fired. Mutually exclusive with `on_fill` |
+| on_fill | OnFill | Present when a linked TP/SL exit strategy is attached to this order. Includes take-profit/stop-loss triggers and, once the order is filled, the linked order `id`. Mutually exclusive with `triggered_by` |
 
 **Example response (limit order):**
 ```json
@@ -470,6 +473,54 @@ In addition to all `Order` fields, the response may include these optional field
     "conditional": {
       "trigger_price": "0.002", "type": "limit", "trigger_direction": "le",
       "limit_price": "0.003", "time_in_force": "gtc", "execution_instructions": ["allow_taker"]
+    },
+    "created_date": 3318215482991, "updated_date": 3318215482991
+  }
+}
+```
+
+**Example response (order with `triggered_by`):**
+```json
+{
+  "data": {
+    "id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b",
+    "client_order_id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b",
+    "symbol": "BTC/USD", "side": "buy", "type": "limit",
+    "quantity": "0.005", "filled_quantity": "0", "leaves_quantity": "0.005",
+    "price": "60000", "status": "cancelled", "time_in_force": "gtc",
+    "execution_instructions": ["post_only"],
+    "triggered_by": {
+      "reason": "conditional",
+      "conditional": {
+        "trigger_price": "1000", "type": "limit", "trigger_direction": "le",
+        "limit_price": "1001", "time_in_force": "gtc", "execution_instructions": ["allow_taker"]
+      }
+    },
+    "created_date": 3318215482991, "updated_date": 3318215482991
+  }
+}
+```
+
+**Example response (order with `on_fill`):**
+```json
+{
+  "data": {
+    "id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b",
+    "client_order_id": "7a52e92e-8639-4fe1-abaa-68d3a2d5234b",
+    "symbol": "BTC/USD", "side": "buy", "type": "limit",
+    "quantity": "0.1", "filled_quantity": "0.1", "leaves_quantity": "0",
+    "price": "60000", "status": "filled", "time_in_force": "gtc",
+    "execution_instructions": ["post_only"],
+    "on_fill": {
+      "id": "794b48be-9f32-46b4-a9cc-38ca8ea227ac",
+      "take_profit": {
+        "trigger_price": "100000", "type": "market", "trigger_direction": "ge",
+        "time_in_force": "ioc", "execution_instructions": ["allow_taker"]
+      },
+      "stop_loss": {
+        "trigger_price": "1000", "type": "market", "trigger_direction": "le",
+        "time_in_force": "ioc", "execution_instructions": ["allow_taker"]
+      }
     },
     "created_date": 3318215482991, "updated_date": 3318215482991
   }
@@ -846,7 +897,7 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 
 ### OrderTrigger
 
-Used by `conditional`, `take_profit`, and `stop_loss` fields on `Order`.
+Used by `conditional`, `take_profit`, and `stop_loss` fields on `Order`, and by `TriggeredBy` and `OnFill` on `OrderDetails`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -856,6 +907,27 @@ Used by `conditional`, `take_profit`, and `stop_loss` fields on `Order`.
 | limit_price | string (decimal) | conditional | Execution price (required when `type=limit`) |
 | time_in_force | string | yes | `"gtc"` or `"ioc"` only (no `"fok"`) |
 | execution_instructions | array of string | yes | `["allow_taker"]` \| `["post_only"]` \| `[]` |
+
+### TriggeredBy
+
+Present on `OrderDetails` (order-by-id response) when this order was submitted by a conditional or TP/SL trigger. Mutually exclusive with `on_fill`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| reason | string | yes | `"conditional"` \| `"take_profit"` \| `"stop_loss"` -- which trigger fired |
+| conditional | OrderTrigger | no | The conditional trigger definition that fired (present when `reason=conditional`) |
+| take_profit | OrderTrigger | no | The take-profit trigger definition that fired (present when `reason=take_profit`) |
+| stop_loss | OrderTrigger | no | The stop-loss trigger definition that fired (present when `reason=stop_loss`) |
+
+### OnFill
+
+Present on `OrderDetails` (order-by-id response) when a linked TP/SL exit strategy is attached to this order. Mutually exclusive with `triggered_by`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | string (uuid) | no | Linked order ID (present once the order is filled; absent while the order is still open) |
+| take_profit | OrderTrigger | no | Attached take-profit trigger |
+| stop_loss | OrderTrigger | no | Attached stop-loss trigger |
 
 ### Trade (Authenticated Endpoints)
 

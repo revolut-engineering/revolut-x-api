@@ -500,6 +500,144 @@ describe("Orders", () => {
       expect(result.data.filled_amount).toBe("95");
     });
 
+    it("includes triggered_by with conditional reason when present", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-triggered")
+        .reply(200, {
+          data: {
+            ...mockOrder,
+            triggered_by: {
+              conditional: {
+                trigger_price: "1000",
+                type: "limit",
+                trigger_direction: "le",
+                limit_price: "1001",
+                time_in_force: "gtc",
+                execution_instructions: ["allow_taker"],
+              },
+              reason: "conditional",
+            },
+          },
+        });
+
+      const result = await client.getOrder("order-triggered");
+
+      expect(result.data.triggered_by).toBeDefined();
+      expect(result.data.triggered_by!.reason).toBe("conditional");
+      expect(result.data.triggered_by!.conditional).toBeDefined();
+      expect(result.data.triggered_by!.conditional!.trigger_price).toBe("1000");
+    });
+
+    it("includes triggered_by with take_profit reason when present", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-tp-trigger")
+        .reply(200, {
+          data: {
+            ...mockOrder,
+            triggered_by: {
+              take_profit: {
+                trigger_price: "100000",
+                type: "market",
+                trigger_direction: "ge",
+                time_in_force: "ioc",
+                execution_instructions: ["allow_taker"],
+              },
+              stop_loss: {
+                trigger_price: "80000",
+                type: "market",
+                trigger_direction: "le",
+                time_in_force: "ioc",
+                execution_instructions: ["allow_taker"],
+              },
+              reason: "take_profit",
+            },
+          },
+        });
+
+      const result = await client.getOrder("order-tp-trigger");
+
+      expect(result.data.triggered_by).toBeDefined();
+      expect(result.data.triggered_by!.reason).toBe("take_profit");
+      expect(result.data.triggered_by!.take_profit).toBeDefined();
+      expect(result.data.triggered_by!.stop_loss).toBeDefined();
+    });
+
+    it("includes on_fill with linked order id when present", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-onfill")
+        .reply(200, {
+          data: {
+            ...mockOrder,
+            status: "filled",
+            filled_quantity: "0.1",
+            leaves_quantity: "0",
+            on_fill: {
+              take_profit: {
+                trigger_price: "100000",
+                type: "market",
+                trigger_direction: "ge",
+                time_in_force: "ioc",
+                execution_instructions: ["allow_taker"],
+              },
+              stop_loss: {
+                trigger_price: "1000",
+                type: "market",
+                trigger_direction: "le",
+                time_in_force: "ioc",
+                execution_instructions: ["allow_taker"],
+              },
+              id: "794b48be-9f32-46b4-a9cc-38ca8ea227ac",
+            },
+          },
+        });
+
+      const result = await client.getOrder("order-onfill");
+
+      expect(result.data.on_fill).toBeDefined();
+      expect(result.data.on_fill!.id).toBe(
+        "794b48be-9f32-46b4-a9cc-38ca8ea227ac",
+      );
+      expect(result.data.on_fill!.take_profit).toBeDefined();
+      expect(result.data.on_fill!.stop_loss).toBeDefined();
+    });
+
+    it("includes on_fill without id when order is not filled", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/orders/order-onfill-no-id")
+        .reply(200, {
+          data: {
+            ...mockOrder,
+            on_fill: {
+              take_profit: {
+                trigger_price: "100000",
+                type: "market",
+                trigger_direction: "ge",
+                time_in_force: "ioc",
+                execution_instructions: ["allow_taker"],
+              },
+              stop_loss: {
+                trigger_price: "1000",
+                type: "market",
+                trigger_direction: "le",
+                time_in_force: "ioc",
+                execution_instructions: ["allow_taker"],
+              },
+            },
+          },
+        });
+
+      const result = await client.getOrder("order-onfill-no-id");
+
+      expect(result.data.on_fill).toBeDefined();
+      expect(result.data.on_fill!.id).toBeUndefined();
+      expect(result.data.on_fill!.take_profit).toBeDefined();
+      expect(result.data.on_fill!.stop_loss).toBeDefined();
+    });
+
     it("remaps cancelled order with partial fill to partially_filled", async () => {
       const client = createTestClient();
       nock(BASE_URL)

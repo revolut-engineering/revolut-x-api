@@ -664,6 +664,199 @@ describe("get_order_by_id", () => {
     expect(text).toContain("Total fee: 1.50 USD");
   });
 
+  it("returns triggered_by details for order triggered by conditional", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-triggered-cond",
+        client_order_id: "co-triggered-cond",
+        symbol: "BTC-USD",
+        side: "buy",
+        type: "limit",
+        price: "60000",
+        quantity: "0.005",
+        filled_quantity: "0",
+        leaves_quantity: "0.005",
+        status: "cancelled",
+        time_in_force: "gtc",
+        execution_instructions: ["post_only"],
+        triggered_by: {
+          conditional: {
+            trigger_price: "1000",
+            type: "limit",
+            trigger_direction: "le",
+            limit_price: "1001",
+            time_in_force: "gtc",
+            execution_instructions: ["allow_taker"],
+          },
+          reason: "conditional",
+        },
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-triggered-cond" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Triggered by:");
+    expect(text).toContain("Reason: conditional");
+    expect(text).toContain("Conditional trigger");
+    expect(text).toContain("1000");
+    expect(text).toContain("<=");
+  });
+
+  it("returns triggered_by details for order triggered by take profit", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-triggered-tp",
+        client_order_id: "co-triggered-tp",
+        symbol: "BTC-USD",
+        side: "buy",
+        type: "limit",
+        price: "60000",
+        quantity: "0.005",
+        filled_quantity: "0",
+        leaves_quantity: "0.005",
+        status: "cancelled",
+        time_in_force: "gtc",
+        execution_instructions: ["post_only"],
+        triggered_by: {
+          take_profit: {
+            trigger_price: "100000",
+            type: "market",
+            trigger_direction: "ge",
+            time_in_force: "ioc",
+            execution_instructions: ["allow_taker"],
+          },
+          stop_loss: {
+            trigger_price: "80000",
+            type: "market",
+            trigger_direction: "le",
+            time_in_force: "ioc",
+            execution_instructions: ["allow_taker"],
+          },
+          reason: "take_profit",
+        },
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-triggered-tp" },
+    });
+    const text = getText(result);
+    expect(text).toContain("Triggered by:");
+    expect(text).toContain("Reason: take_profit");
+    expect(text).toContain("Take profit");
+    expect(text).toContain("100000");
+    expect(text).toContain(">=");
+    expect(text).toContain("Stop loss");
+    expect(text).toContain("80000");
+  });
+
+  it("returns on_fill details with linked order id when order is filled", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-onfill",
+        client_order_id: "co-onfill",
+        symbol: "BTC-USD",
+        side: "buy",
+        type: "limit",
+        price: "60000",
+        quantity: "0.1",
+        filled_quantity: "0.1",
+        leaves_quantity: "0",
+        status: "filled",
+        time_in_force: "gtc",
+        execution_instructions: ["post_only"],
+        on_fill: {
+          take_profit: {
+            trigger_price: "100000",
+            type: "market",
+            trigger_direction: "ge",
+            time_in_force: "ioc",
+            execution_instructions: ["allow_taker"],
+          },
+          stop_loss: {
+            trigger_price: "1000",
+            type: "market",
+            trigger_direction: "le",
+            time_in_force: "ioc",
+            execution_instructions: ["allow_taker"],
+          },
+          id: "794b48be-9f32-46b4-a9cc-38ca8ea227ac",
+        },
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-onfill" },
+    });
+    const text = getText(result);
+    expect(text).toContain("On fill (exit strategy):");
+    expect(text).toContain(
+      "Linked order ID: 794b48be-9f32-46b4-a9cc-38ca8ea227ac",
+    );
+    expect(text).toContain("Take profit");
+    expect(text).toContain("100000");
+    expect(text).toContain("Stop loss");
+    expect(text).toContain("1000");
+  });
+
+  it("returns on_fill details without id when order is not yet filled", async () => {
+    mockClient.getOrder.mockResolvedValue({
+      data: {
+        id: "order-onfill-no-id",
+        client_order_id: "co-onfill-no-id",
+        symbol: "BTC-USD",
+        side: "buy",
+        type: "limit",
+        price: "60000",
+        quantity: "0.1",
+        filled_quantity: "0",
+        leaves_quantity: "0.1",
+        status: "new",
+        time_in_force: "gtc",
+        execution_instructions: ["post_only"],
+        on_fill: {
+          take_profit: {
+            trigger_price: "100000",
+            type: "market",
+            trigger_direction: "ge",
+            time_in_force: "ioc",
+            execution_instructions: ["allow_taker"],
+          },
+          stop_loss: {
+            trigger_price: "1000",
+            type: "market",
+            trigger_direction: "le",
+            time_in_force: "ioc",
+            execution_instructions: ["allow_taker"],
+          },
+        },
+        created_date: 1700000000000,
+        updated_date: 1700000001000,
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_by_id",
+      arguments: { order_id: "order-onfill-no-id" },
+    });
+    const text = getText(result);
+    expect(text).toContain("On fill (exit strategy):");
+    expect(text).not.toContain("Linked order ID");
+    expect(text).toContain("Take profit");
+    expect(text).toContain("Stop loss");
+  });
+
   it("returns auth error as setup guide", async () => {
     const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
     mockClient.getOrder.mockRejectedValue(new AuthNotConfiguredError());

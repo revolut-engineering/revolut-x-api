@@ -65,6 +65,9 @@ Optional fields in order details output (shown only when present):
 - `amount` / `filled_amount` — quote-currency size and how much of it has been filled
 - `average_fill_price` — volume-weighted average execution price (shown as "Avg Fill Price"); only present for filled or partially filled orders
 - `total_fee` / `fee_currency` — total fee charged and the currency it was paid in
+- `conditional` / `take_profit` / `stop_loss` — trigger definitions on conditional and TPSL orders; each includes trigger price, direction (≥/≤), order type (market/limit), time in force, and optional limit price
+- `triggered_by` — present when this order was submitted by a conditional or TP/SL trigger; includes a `reason` (`conditional`, `take_profit`, or `stop_loss`) and the trigger definition that fired. Mutually exclusive with `on_fill`.
+- `on_fill` — present when a linked TP/SL exit strategy is attached to this order; includes take-profit / stop-loss triggers and, once the order is filled, the linked order `id`. Mutually exclusive with `triggered_by`.
 
 ---
 
