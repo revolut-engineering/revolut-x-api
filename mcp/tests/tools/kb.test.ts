@@ -40,10 +40,6 @@ const FACTUAL_ASSERTIONS: Array<{ intent: string; facts: string[] }> = [
     facts: ["1 GBP", "3 GBP", "network fee", "XRP"],
   },
   {
-    intent: "get_started",
-    facts: ["18 years old", "government-issued ID"],
-  },
-  {
     intent: "order_types",
     facts: ["market order", "limit order", "TWAP", "TP/SL"],
   },
@@ -115,7 +111,6 @@ describe("search_kb — hallucination prevention", () => {
 
 const PRECISION_CHECKS: Array<{ intent: string; topicTerms: string[] }> = [
   { intent: "fees", topicTerms: ["fee", "GBP", "withdrawal"] },
-  { intent: "get_started", topicTerms: ["sign up", "account", "Revolut X"] },
   { intent: "order_types", topicTerms: ["order", "market", "limit"] },
   { intent: "failed_orders", topicTerms: ["cancelled", "rejected", "failed"] },
   {
@@ -175,7 +170,6 @@ describe("search_kb — precision (article covers its intent)", () => {
 // keywords with the query — a proxy for LLM classification accuracy without
 // requiring a live model call.
 const EVAL_CASES: Array<{ query: string; expectedIntent: string }> = [
-  { query: "How do I sign up for Revolut X?", expectedIntent: "get_started" },
   { query: "What are the trading fees on Revolut X?", expectedIntent: "fees" },
   { query: "How does a stop loss order work?", expectedIntent: "order_types" },
   { query: "My order was cancelled, why?", expectedIntent: "failed_orders" },

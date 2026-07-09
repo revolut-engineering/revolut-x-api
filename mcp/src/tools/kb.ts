@@ -2,7 +2,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { textResult } from "../shared/_helpers.js";
 
-import getStartedContent from "../data/articles/revolut-x-get-started.md";
 import feesContent from "../data/articles/revolut-x-fees.md";
 import orderTypesContent from "../data/articles/revolut-x-order-types.md";
 import failedOrdersContent from "../data/articles/revolut-x-failed-orders.md";
@@ -17,12 +16,6 @@ import legalContent from "../data/articles/revolut-x-legal.md";
 type IntentEntry = { description: string; content: string };
 
 export const INTENT_MAP: Record<string, IntentEntry> = {
-  get_started: {
-    description:
-      "User wants to sign up, create an account, learn what Revolut X is, or understand eligibility requirements. " +
-      "Does NOT cover questions about how to execute trades or set up the trading plugin — for those, call get_trading_setup.",
-    content: getStartedContent,
-  },
   fees: {
     description:
       "User asks about trading fees, withdrawal fees, network fees, service fees, or how much it costs to trade or withdraw crypto.",
