@@ -81,7 +81,7 @@
     },
     {
       "name": "get_tickers",
-      "description": "Get current ticker data for all trading pairs. Returns bid, ask, mid, and last price for each pair."
+      "description": "Get current ticker data for all trading pairs. Returns bid, ask, mid, last price, and 24h stats for each pair."
     },
     {
       "name": "get_candles",

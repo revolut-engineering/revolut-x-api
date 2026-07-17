@@ -93,6 +93,10 @@ const sampleTickers = {
       ask: "100100",
       mid: "100000",
       last_price: "99999",
+      low_24h: "98000",
+      high_24h: "101000",
+      price_change_24h: "500",
+      volume_24h: "12.34000000",
     },
     {
       symbol: "ETH-USD",
@@ -100,6 +104,10 @@ const sampleTickers = {
       ask: "3510",
       mid: "3500",
       last_price: "3495",
+      low_24h: "3400",
+      high_24h: "3600",
+      price_change_24h: "-25",
+      volume_24h: "456.78000000",
     },
   ],
 };
@@ -294,6 +302,11 @@ describe("market tickers", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC-USD");
     expect(output).toContain("ETH-USD");
+    expect(output).toContain("98000");
+    expect(output).toContain("101000");
+    expect(output).toContain("500");
+    expect(output).toContain("Volume 24h");
+    expect(output).toContain("12.34000000");
   });
 
   it("fetches specific ticker when symbol is provided", async () => {
@@ -302,6 +315,14 @@ describe("market tickers", () => {
     expect(mockGetTickers).toHaveBeenCalledWith({ symbols: ["BTC-USD"] });
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC-USD");
+    expect(output).toContain("Low 24h");
+    expect(output).toContain("98000");
+    expect(output).toContain("High 24h");
+    expect(output).toContain("101000");
+    expect(output).toContain("Change 24h");
+    expect(output).toContain("500");
+    expect(output).toContain("Volume 24h");
+    expect(output).toContain("12.34000000");
   });
 
   it("filters by --symbols option", async () => {
@@ -323,6 +344,12 @@ describe("market tickers", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     const parsed = JSON.parse(output);
     expect(parsed.data).toHaveLength(2);
+    expect(parsed.data[0]).toMatchObject({
+      low_24h: "98000",
+      high_24h: "101000",
+      price_change_24h: "500",
+      volume_24h: "12.34000000",
+    });
   });
 
   it("exits with error when specific ticker returns no data", async () => {
