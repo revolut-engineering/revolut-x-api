@@ -34,7 +34,7 @@ revx market pairs --filter BTC-USD,ETH-USD  # Filter by specific pairs
 ## Tickers
 
 ```bash
-revx market tickers                    # All tickers (bid, ask, mid, last)
+revx market tickers                    # All tickers (bid, ask, mid, last, 24h stats)
 revx market tickers --symbols BTC-USD,ETH-USD
 revx market tickers BTC-USD            # Single ticker (key-value display)
 ```

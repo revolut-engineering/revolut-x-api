@@ -322,14 +322,14 @@ Get active orders for the authenticated user with optional filters.
 
 **Parameters:**
 
-| Name | In | Type | Required | Description |
-|------|-----|------|----------|-------------|
-| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all) |
+| Name | In | Type | Required | Description                                                                                               |
+|------|-----|------|----------|-----------------------------------------------------------------------------------------------------------|
+| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all)         |
 | order_states | query | string (comma-separated) | no | Filter by state: `pending_new`, `new`, `partially_filled`. If omitted, no filter is applied (returns all) |
-| order_types | query | string (comma-separated) | no | Filter by type: `limit`, `conditional`, `tpsl`. If omitted, no filter is applied (returns all) |
-| side | query | string | no | `"buy"` or `"sell"`. If omitted, no filter is applied (returns both) |
-| cursor | query | string | no | Pagination cursor from previous response |
-| limit | query | integer | no | Max records (1-100, default: 100) |
+| order_types | query | string (comma-separated) | no | Filter by type: `limit`, `conditional`, `tpsl`. If omitted, no filter is applied (returns all)            |
+| side | query | string | no | `"buy"` or `"sell"`. If omitted, no filter is applied (returns both)                                      |
+| cursor | query | string | no | Pagination cursor from previous response                                                                  |
+| limit | query | integer | no | Max records (1-300, default: 300)                                                                         |
 
 **Response (200):** `{ data: [Order], metadata: { timestamp, next_cursor? } }`
 
@@ -363,15 +363,15 @@ Get historical (completed) orders for the authenticated user.
 
 **Parameters:**
 
-| Name | In | Type | Required | Description |
-|------|-----|------|----------|-------------|
-| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all) |
+| Name | In | Type | Required | Description                                                                                                    |
+|------|-----|------|----------|----------------------------------------------------------------------------------------------------------------|
+| symbols | query | string (comma-separated) | no | Filter by currency pairs, e.g., `BTC-USD,ETH-USD`. If omitted, no filter is applied (returns all)              |
 | order_states | query | string (comma-separated) | no | Filter by state: `filled`, `cancelled`, `rejected`, `replaced`. If omitted, no filter is applied (returns all) |
-| order_types | query | string (comma-separated) | no | Filter by type: `market`, `limit`. If omitted, no filter is applied (returns all) |
-| start_date | query | integer (int64) | no | Start timestamp in Unix epoch ms. Defaults to `end_date - 1 week` |
-| end_date | query | integer (int64) | no | End timestamp in Unix epoch ms. Defaults to `start_date + 1 week` or now. **Max range: 1 week** |
-| cursor | query | string | no | Pagination cursor from previous response |
-| limit | query | integer | no | Max records (1-100, default: 100) |
+| order_types | query | string (comma-separated) | no | Filter by type: `market`, `limit`. If omitted, no filter is applied (returns all)                              |
+| start_date | query | integer (int64) | no | Start timestamp in Unix epoch ms. Defaults to `end_date - 1 week`                                              |
+| end_date | query | integer (int64) | no | End timestamp in Unix epoch ms. Defaults to `start_date + 1 week` or now. **Max range: 1 week**                |
+| cursor | query | string | no | Pagination cursor from previous response                                                                       |
+| limit | query | integer | no | Max records (1-1900, default: 1900)                                                                            |
 
 **Response (200):** `{ data: [Order], metadata: { timestamp, next_cursor? } }`
 
@@ -739,8 +739,8 @@ Get the latest market data snapshots for all supported currency pairs, or filter
 ```json
 {
   "data": [
-    {"symbol": "BTC/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02"},
-    {"symbol": "ETH/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02"}
+    {"symbol": "BTC/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000"},
+    {"symbol": "ETH/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000"}
   ],
   "metadata": {"timestamp": 1770201294631}
 }
@@ -1001,6 +1001,10 @@ Used by: `GET /public/order-book/{symbol}`
 | ask | string (decimal) | yes | Current lowest sell price |
 | mid | string (decimal) | yes | Midpoint: `(bid + ask) / 2` |
 | last_price | string (decimal) | yes | Most recent trade price |
+| low_24h | string (decimal) | yes | Lowest traded price over the last 24 hours |
+| high_24h | string (decimal) | yes | Highest traded price over the last 24 hours |
+| price_change_24h | string (decimal) | yes | Price change over the last 24 hours |
+| volume_24h | string (decimal) | yes | Traded volume in the base currency over the last 24 hours |
 
 ---
 
@@ -1008,18 +1012,19 @@ Used by: `GET /public/order-book/{symbol}`
 
 Allowed values for the `interval` query parameter on `GET /candles/{symbol}`:
 
-| Minutes | Duration |
-|---------|----------|
-| 5 | 5 minutes |
-| 15 | 15 minutes |
-| 30 | 30 minutes |
-| 60 | 1 hour |
-| 240 | 4 hours |
-| 1440 | 1 day |
-| 2880 | 2 days |
-| 5760 | 4 days |
-| 10080 | 1 week |
-| 20160 | 2 weeks |
-| 40320 | 4 weeks |
+| Minutes | Duration  |
+|---------|-----------|
+| 1       | 1 minute  |
+| 5       | 5 minutes |
+| 15      | 15 minutes |
+| 30      | 30 minutes |
+| 60      | 1 hour    |
+| 240     | 4 hours   |
+| 1440    | 1 day     |
+| 2880    | 2 days    |
+| 5760    | 4 days    |
+| 10080   | 1 week    |
+| 20160   | 2 weeks   |
+| 40320   | 4 weeks   |
 
-**Constraint:** The total number of candles `(until - since) / interval` must not exceed 100.
+**Constraint:** The total number of candles `(until - since) / interval` must not exceed 50000.

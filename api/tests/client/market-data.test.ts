@@ -70,6 +70,10 @@ describe("Market Data", () => {
         ask: "95100",
         mid: "95050",
         last_price: "95050",
+        low_24h: "94000",
+        high_24h: "96000",
+        price_change_24h: "250",
+        volume_24h: "123.45000000",
       });
     });
 

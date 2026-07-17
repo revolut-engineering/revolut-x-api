@@ -197,7 +197,7 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Tickers",
       description:
-        "Get the LIVE bid/ask/mid/last-price snapshot for one or more trading pairs. " +
+        "Get the LIVE bid/ask/mid/last-price and 24h market statistics for one or more trading pairs. " +
         "For historical price action use `get_candles`; this tool returns only a current snapshot.",
       inputSchema: {
         symbols: z
@@ -206,6 +206,24 @@ export function registerMarketDataTools(server: McpServer): void {
           .describe(
             'Filter by trading pairs, e.g. ["BTC-USD", "ETH-USD"]. Omit to get all pairs.',
           ),
+      },
+      outputSchema: {
+        tickers: z.array(
+          z.object({
+            symbol: z.string(),
+            bid: z.string(),
+            ask: z.string(),
+            mid: z.string(),
+            last_price: z.string(),
+            low_24h: z.string(),
+            high_24h: z.string(),
+            price_change_24h: z.string(),
+            volume_24h: z.string(),
+          }),
+        ),
+        metadata: z.object({
+          timestamp: z.number(),
+        }),
       },
       annotations: {
         title: "Get Tickers",
@@ -227,22 +245,40 @@ export function registerMarketDataTools(server: McpServer): void {
       }
 
       const tickers = result.data;
-      if (!tickers.length) return textResult("No ticker data available.");
+      if (!tickers.length) {
+        return {
+          ...textResult("No ticker data available."),
+          structuredContent: {
+            tickers,
+            metadata: result.metadata,
+          },
+        };
+      }
 
       const lines = [
-        `${"Pair".padEnd(12)} | ${"Bid".padStart(14)} | ${"Ask".padStart(14)} | ${"Mid".padStart(14)} | ${"Last".padStart(14)}`,
+        `${"Pair".padEnd(12)} | ${"Bid".padStart(14)} | ${"Ask".padStart(14)} | ${"Mid".padStart(14)} | ${"Last".padStart(14)} | ${"Low 24h".padStart(14)} | ${"High 24h".padStart(14)} | ${"Change 24h".padStart(14)} | ${"Volume 24h".padStart(14)}`,
       ];
-      lines.push("-".repeat(78));
+      lines.push("-".repeat(150));
       for (const t of tickers) {
         lines.push(
           `${t.symbol.padEnd(12)} | ` +
             `${t.bid.padStart(14)} | ` +
             `${t.ask.padStart(14)} | ` +
             `${t.mid.padStart(14)} | ` +
-            `${t.last_price.padStart(14)}`,
+            `${t.last_price.padStart(14)} | ` +
+            `${t.low_24h.padStart(14)} | ` +
+            `${t.high_24h.padStart(14)} | ` +
+            `${t.price_change_24h.padStart(14)} | ` +
+            `${t.volume_24h.padStart(14)}`,
         );
       }
-      return textResult(lines.join("\n"));
+      return {
+        ...textResult(lines.join("\n")),
+        structuredContent: {
+          tickers,
+          metadata: result.metadata,
+        },
+      };
     },
   );
 

@@ -64,6 +64,16 @@ function getText(result: Awaited<ReturnType<Client["callTool"]>>): string {
   return content[0]?.text ?? "";
 }
 
+function getStructuredContent(
+  result: Awaited<ReturnType<Client["callTool"]>>,
+): { tickers?: Array<Record<string, unknown>>; metadata?: unknown } {
+  if (!("structuredContent" in result)) return {};
+  return result.structuredContent as {
+    tickers?: Array<Record<string, unknown>>;
+    metadata?: unknown;
+  };
+}
+
 describe("market data tools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -192,6 +202,10 @@ describe("market data tools", () => {
           ask: "100000",
           mid: "99500",
           last_price: "99800",
+          low_24h: "98000",
+          high_24h: "101000",
+          price_change_24h: "500",
+          volume_24h: "12.34000000",
         },
       ],
       metadata: { timestamp: 1700000000000 },
@@ -204,6 +218,20 @@ describe("market data tools", () => {
     const text = getText(result);
     expect(text).toContain("BTC-USD");
     expect(text).toContain("99000");
+    expect(text).toContain("Low 24h");
+    expect(text).toContain("98000");
+    expect(text).toContain("High 24h");
+    expect(text).toContain("101000");
+    expect(text).toContain("Change 24h");
+    expect(text).toContain("500");
+    expect(text).toContain("Volume 24h");
+    expect(text).toContain("12.34000000");
+    expect(getStructuredContent(result).tickers?.[0]).toMatchObject({
+      low_24h: "98000",
+      high_24h: "101000",
+      price_change_24h: "500",
+      volume_24h: "12.34000000",
+    });
   });
 
   it("get_tickers passes symbols filter", async () => {
@@ -215,6 +243,10 @@ describe("market data tools", () => {
           ask: "100000",
           mid: "99500",
           last_price: "99800",
+          low_24h: "98000",
+          high_24h: "101000",
+          price_change_24h: "500",
+          volume_24h: "12.34000000",
         },
         {
           symbol: "ETH-USD",
@@ -222,6 +254,10 @@ describe("market data tools", () => {
           ask: "3000",
           mid: "2950",
           last_price: "2980",
+          low_24h: "2800",
+          high_24h: "3100",
+          price_change_24h: "-50",
+          volume_24h: "45.67000000",
         },
       ],
       metadata: { timestamp: 1700000000000 },
@@ -233,6 +269,23 @@ describe("market data tools", () => {
     });
     expect(mockClient.getTickers).toHaveBeenCalledWith({
       symbols: ["BTC-USD", "ETH-USD"],
+    });
+  });
+
+  it("get_tickers returns empty structured data when no tickers are available", async () => {
+    mockClient.getTickers.mockResolvedValue({
+      data: [],
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_tickers",
+      arguments: {},
+    });
+    expect(getText(result)).toContain("No ticker data available.");
+    expect(getStructuredContent(result)).toEqual({
+      tickers: [],
+      metadata: { timestamp: 1700000000000 },
     });
   });
 

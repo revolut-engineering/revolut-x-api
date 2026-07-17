@@ -278,6 +278,10 @@ Examples:
               ["Ask", chalk.red(t.ask)],
               ["Mid", chalk.yellow(t.mid)],
               ["Last", chalk.cyan(t.last_price)],
+              ["Low 24h", chalk.white(t.low_24h)],
+              ["High 24h", chalk.white(t.high_24h)],
+              ["Change 24h", chalk.white(t.price_change_24h)],
+              ["Volume 24h", chalk.white(t.volume_24h)],
             ]);
           } else {
             printSectionHeader("Market Tickers");
@@ -454,5 +458,9 @@ function printTickerTable(tickers: Ticker[]): void {
     { header: "Ask", key: "ask", align: "right" },
     { header: "Mid", key: "mid", align: "right" },
     { header: "Last", key: "last_price", align: "right" },
+    { header: "Low 24h", key: "low_24h", align: "right" },
+    { header: "High 24h", key: "high_24h", align: "right" },
+    { header: "Change 24h", key: "price_change_24h", align: "right" },
+    { header: "Volume 24h", key: "volume_24h", align: "right" },
   ]);
 }

@@ -25,7 +25,7 @@ Read-only data (safe to call):
   get_balances          — all crypto balances
   get_currencies        — all available currencies
   get_currency_pairs    — all tradeable pairs
-  get_tickers           — current bid/ask/last prices
+  get_tickers           — current bid/ask/last prices and 24h stats
   get_order_book        — live order book depth
   get_candles           — OHLCV candlestick history
   get_public_trades     — public trade history
