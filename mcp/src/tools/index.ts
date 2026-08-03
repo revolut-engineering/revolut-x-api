@@ -6,6 +6,7 @@ import { registerMarketDataTools } from "./market-data.js";
 import { registerTradingTools } from "./trading.js";
 import { registerTransactionTools } from "./transactions.js";
 import { registerBacktestTools } from "./backtest.js";
+import { registerMartingaleTools } from "./martingale.js";
 import { registerKbTools } from "./kb.js";
 
 export function registerAllTools(server: McpServer): void {
@@ -16,5 +17,6 @@ export function registerAllTools(server: McpServer): void {
   registerTradingTools(server);
   registerTransactionTools(server);
   registerBacktestTools(server);
+  registerMartingaleTools(server);
   registerKbTools(server);
 }
