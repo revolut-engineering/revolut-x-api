@@ -46,18 +46,34 @@ export function parseApiCandles(candles: ApiCandle[]): ScenarioCandle[] {
   return out.map((p) => p.candle);
 }
 
-export interface OrderBookMidProviderOptions {
+export function resolveTickerPrice(t: {
+  mid?: string | null;
+  last_price?: string | null;
+}): Decimal | null {
+  const raw = t.mid ?? t.last_price;
+  if (raw == null) {
+    return null;
+  }
+  try {
+    const price = new Decimal(String(raw));
+    return price.isFinite() ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface TickerPriceProviderOptions {
   client: RevolutXClient;
   pair: string;
   intervalSec: number;
 }
 
-export class OrderBookMidProvider implements LivePriceSource {
+export class TickerPriceProvider implements LivePriceSource {
   readonly paceIntervalSec: number;
   private _client: RevolutXClient;
   private _pair: string;
 
-  constructor(opts: OrderBookMidProviderOptions) {
+  constructor(opts: TickerPriceProviderOptions) {
     this._client = opts.client;
     this._pair = opts.pair;
     this.paceIntervalSec = opts.intervalSec;
@@ -72,12 +88,19 @@ export class OrderBookMidProvider implements LivePriceSource {
   }
 
   private async _poll(): Promise<Decimal> {
-    const resp = await this._client.getOrderBook(this._pair, { limit: 1 });
-    const bestBid = resp.data.bids[0];
-    const bestAsk = resp.data.asks[0];
-    if (!bestBid || !bestAsk) {
-      throw new Error(`No order book data for ${this._pair}`);
+    const resp = await this._client.getTickers({ symbols: [this._pair] });
+    const ticker = resp.data.find(
+      (t) => t.symbol.replace("/", "-") === this._pair,
+    );
+    if (!ticker) {
+      throw new Error(`No ticker data for ${this._pair}`);
     }
-    return new Decimal(bestBid.price).plus(new Decimal(bestAsk.price)).div(2);
+    const price = resolveTickerPrice(ticker);
+    if (price == null || price.lte(0)) {
+      throw new Error(
+        `Invalid ticker price for ${this._pair}: mid=${ticker.mid} last=${ticker.last_price}`,
+      );
+    }
+    return price;
   }
 }

@@ -17,6 +17,7 @@ import type { TelegramConnection } from "../db/store.js";
 import { sendWithRetries, formatNotification } from "./notify.js";
 import { CandleCache } from "./candle-cache.js";
 import { fmtPrice } from "./grid-renderer.js";
+import { resolveTickerPrice } from "../shared/price-source/index.js";
 
 export interface MonitorSpec {
   pair: string;
@@ -515,15 +516,9 @@ export class ForegroundMonitor {
     >();
 
     for (const t of tickers) {
-      const mid = t.mid ?? t.last_price;
-      if (!t.symbol || mid == null) continue;
-
-      let price: Decimal;
-      try {
-        price = new Decimal(String(mid));
-      } catch {
-        continue;
-      }
+      if (!t.symbol) continue;
+      const price = resolveTickerPrice(t);
+      if (price == null) continue;
 
       let bid: Decimal | undefined;
       let ask: Decimal | undefined;

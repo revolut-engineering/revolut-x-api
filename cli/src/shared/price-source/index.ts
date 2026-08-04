@@ -11,7 +11,8 @@ export type {
 
 export { parseSpec, PriceSpecError } from "./spec.js";
 export {
-  OrderBookMidProvider,
+  TickerPriceProvider,
+  resolveTickerPrice,
   loadApiCandles,
   parseApiCandles,
 } from "./sources/api.js";

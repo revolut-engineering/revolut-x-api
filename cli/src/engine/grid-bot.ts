@@ -9,7 +9,7 @@ import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
 import type { LivePriceSource } from "../shared/price-source/index.js";
 import {
-  OrderBookMidProvider,
+  TickerPriceProvider,
   withCachedPeek,
 } from "../shared/price-source/index.js";
 import {
@@ -155,7 +155,7 @@ export class ForegroundGridBot {
     if (this._priceSource) {
       this._priceSource = withCachedPeek(this._priceSource);
     } else {
-      this._priceSource = new OrderBookMidProvider({
+      this._priceSource = new TickerPriceProvider({
         client: this._client,
         pair: this._config.pair,
         intervalSec: this._config.intervalSec,
@@ -318,7 +318,7 @@ export class ForegroundGridBot {
 
     let currentPrice: Decimal;
     try {
-      currentPrice = await this._getMidPrice();
+      currentPrice = await this._getCurrentPrice();
     } catch {
       currentPrice = new Decimal(this._state.gridPrice);
     }
@@ -400,7 +400,7 @@ export class ForegroundGridBot {
       : new Decimal("0");
   }
 
-  private async _getMidPrice(): Promise<Decimal> {
+  private async _getCurrentPrice(): Promise<Decimal> {
     if (!this._priceSource) {
       throw new Error("price source not initialized");
     }
@@ -808,8 +808,8 @@ export class ForegroundGridBot {
     const config = this._config;
 
     console.log(chalk.dim("  Fetching current price..."));
-    const currentPrice = await this._getMidPrice();
-    console.log(chalk.dim(`  Current mid-price: ${currentPrice}`));
+    const currentPrice = await this._getCurrentPrice();
+    console.log(chalk.dim(`  Current price: ${currentPrice}`));
 
     const quoteCurrency = config.pair.split("-")[1] ?? "";
     const investment = new Decimal(config.investment);
@@ -1260,7 +1260,7 @@ export class ForegroundGridBot {
     ) {
       const quoteCurrency = config.pair.split("-")[1] ?? "";
       const baseCurrency = config.pair.split("-")[0] ?? "";
-      const currentPrice = await this._getMidPrice();
+      const currentPrice = await this._getCurrentPrice();
       const sellCount = this._state.levels.filter((l) =>
         new Decimal(l.price).gt(currentPrice),
       ).length;

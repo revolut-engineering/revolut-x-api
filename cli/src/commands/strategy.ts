@@ -1027,7 +1027,7 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     )
     .option(
       "--prices <spec>",
-      "[Dry-run only] Drive the bot with a synthetic price sequence (for scenario testing) instead of polling the live order book. " +
+      "[Dry-run only] Drive the bot with a synthetic price sequence (for scenario testing) instead of polling the live ticker. " +
         "Sources: api (default), file:<path>, stdin, inline:<csv>, gen:<type>?<params>, interactive (prompt for each tick). " +
         "Rejected unless --dry-run is also set — real orders always use the live market. See grid-mock-prices.md.",
       "api",

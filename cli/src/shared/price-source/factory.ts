@@ -6,7 +6,7 @@ import { generatorCandles, generatePrices } from "./sources/generators.js";
 import { loadFileCandles, fileLiveSource } from "./sources/file.js";
 import { loadStdinCandles, stdinLiveSource } from "./sources/stdin.js";
 import { interactiveLiveSource } from "./sources/interactive.js";
-import { loadApiCandles, OrderBookMidProvider } from "./sources/api.js";
+import { loadApiCandles, TickerPriceProvider } from "./sources/api.js";
 
 export interface BatchSourceContext {
   apiClient?: RevolutXClient;
@@ -70,7 +70,7 @@ export async function createLiveProvider(
           "api live source requires client, pair, and intervalSec",
         );
       }
-      return new OrderBookMidProvider({
+      return new TickerPriceProvider({
         client: ctx.apiClient,
         pair: ctx.apiPair,
         intervalSec: ctx.apiIntervalSec,
