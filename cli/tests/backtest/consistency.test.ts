@@ -9,6 +9,7 @@ import {
   runBacktest as runBacktestMcp,
   optimizeGridParams as optimizeGridParamsMcp,
 } from "../../../mcp/src/shared/backtest/index.js";
+import { trailUpTriggerPrice } from "../../src/engine/grid-math.js";
 
 // ── Mocks required for runBacktestBot (drives ForegroundGridBot) ──────────────
 
@@ -57,6 +58,19 @@ function flat(price: number) {
   const p = d(price);
   return { open: p, high: p, low: p, close: p };
 }
+
+function at(p: Decimal) {
+  return { open: p, high: p, low: p, close: p };
+}
+
+const TRAIL_UP_LADDER = [
+  "95000",
+  "96920.75",
+  "98880.32",
+  "100879.52",
+  "102919.14",
+  "105000",
+].map((price, index) => ({ index, price, buyOrderIds: [], positions: [] }));
 
 const LEVELS = 6;
 const RANGE = d("0.05");
@@ -247,6 +261,34 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
     expect(bot.totalSells).toBe(bt.totalSells);
     expect(bot.realizedPnl.gt(0)).toBe(true);
   });
+
+  it("trailing-up fires exactly at trailUpTriggerPrice, not before", async () => {
+    const trigger = trailUpTriggerPrice(TRAIL_UP_LADDER);
+    expect(trigger).not.toBeNull();
+    expect(trigger!.toFixed(2)).toBe("108205.85");
+
+    const below = await runBacktestBot(
+      [flat(100_000), at(trigger!.minus("0.01"))],
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      true,
+      0,
+    );
+    expect(below.trailingUpShifts).toBe(0);
+
+    const atTrigger = await runBacktestBot(
+      [flat(100_000), at(trigger!)],
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      true,
+      0,
+    );
+    expect(atTrigger.trailingUpShifts).toBe(1);
+  });
 });
 
 // ── B — CLI runBacktest ↔ MCP runBacktest (byte-level equality) ───────────────
@@ -302,6 +344,69 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
       );
       expect(cliResults[0].totalTrades).toBe(mcpResults[0].totalTrades);
     }
+  });
+
+  it("both engines cross the trail-up threshold at the same price", () => {
+    const trigger = trailUpTriggerPrice(TRAIL_UP_LADDER)!;
+
+    const below = [flat(100_000), at(trigger.minus("0.01"))];
+    const cliBelow = runBacktest(below, LEVELS, RANGE, INVEST, false, true, 0);
+    const mcpBelow = runBacktestMcp(
+      below,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      true,
+      0,
+    );
+    expect(cliBelow.trailingUpShifts).toBe(0);
+    expect(mcpBelow.trailingUpShifts).toBe(cliBelow.trailingUpShifts);
+
+    const reached = [flat(100_000), at(trigger), flat(103_000), flat(110_000)];
+    const cliAt = runBacktest(reached, LEVELS, RANGE, INVEST, false, true, 0);
+    const mcpAt = runBacktestMcp(
+      reached,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      true,
+      0,
+    );
+    expect(cliAt.trailingUpShifts).toBe(1);
+    expect(mcpAt.trailingUpShifts).toBe(cliAt.trailingUpShifts);
+    expect(cliAt.totalBuys).toBe(mcpAt.totalBuys);
+    expect(cliAt.totalSells).toBe(mcpAt.totalSells);
+    expect(cliAt.realizedPnl.eq(mcpAt.realizedPnl)).toBe(true);
+    expect(cliAt.finalBase.eq(mcpAt.finalBase)).toBe(true);
+    expect(cliAt.finalQuote.eq(mcpAt.finalQuote)).toBe(true);
+    expect(cliAt.tradeLog).toEqual(mcpAt.tradeLog);
+  });
+
+  it("identical results across a trailing-up rebuild", () => {
+    const tuCandles = [
+      flat(100_000),
+      flat(98_500),
+      flat(101_000),
+      flat(103_000),
+      flat(105_000),
+      flat(120_000),
+      flat(108_000),
+    ];
+    const cli = runBacktest(tuCandles, LEVELS, RANGE, INVEST, true, true, 0);
+    const mcp = runBacktestMcp(tuCandles, LEVELS, RANGE, INVEST, true, true, 0);
+
+    expect(cli.trailingUpShifts).toBe(1);
+    expect(mcp.trailingUpShifts).toBe(cli.trailingUpShifts);
+    expect(cli.totalBuys).toBe(mcp.totalBuys);
+    expect(cli.totalSells).toBe(mcp.totalSells);
+    expect(cli.totalTrades).toBe(mcp.totalTrades);
+    expect(cli.realizedPnl.eq(mcp.realizedPnl)).toBe(true);
+    expect(cli.finalBase.eq(mcp.finalBase)).toBe(true);
+    expect(cli.finalQuote.eq(mcp.finalQuote)).toBe(true);
+    expect(cli.stopLossTriggered).toBe(mcp.stopLossTriggered);
+    expect(cli.tradeLog).toEqual(mcp.tradeLog);
   });
 });
 

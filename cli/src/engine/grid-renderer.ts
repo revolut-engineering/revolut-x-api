@@ -1,6 +1,7 @@
 import { Decimal } from "decimal.js";
 import chalk from "chalk";
 import type { GridState, GridLevelPosition } from "../db/grid-store.js";
+import { trailUpTriggerPrice } from "./grid-math.js";
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: "$",
@@ -243,6 +244,38 @@ export function fmtUptime(ms: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function fmtDistance(target: Decimal, currentPrice: Decimal): string {
+  if (!currentPrice.gt(0)) return "";
+  const pct = target.minus(currentPrice).div(currentPrice).times(100);
+  return ` (${pct.gte(0) ? "+" : ""}${pct.toFixed(1)}%)`;
+}
+
+export function renderRiskLine(
+  state: GridState,
+  currentPrice: Decimal,
+): string | null {
+  const cs = getCurrSymbol(state.pair);
+  const parts: string[] = [];
+
+  if (state.config.trailingUp) {
+    const trigger = trailUpTriggerPrice(state.levels);
+    if (trigger !== null) {
+      parts.push(
+        `Trail up ${fmtPrice(trigger, cs)}${fmtDistance(trigger, currentPrice)}`,
+      );
+    }
+    const shifts = state.shiftCount ?? 0;
+    if (shifts > 0) parts.push(`Shifts ${shifts}`);
+  }
+
+  if (state.config.stopLoss) {
+    const stop = new Decimal(state.config.stopLoss);
+    parts.push(`Stop ${fmtPrice(stop, cs)}${fmtDistance(stop, currentPrice)}`);
+  }
+
+  return parts.length > 0 ? parts.join(" \u00B7 ") : null;
+}
+
 function padLine(content: string, width: number): string {
   const maxContent = width - 2;
   let vis = visibleLength(content);
@@ -329,6 +362,17 @@ export function renderDashboard(data: DashboardData): string {
         innerW,
       ),
     );
+  }
+  if (state.config.trailingUp) {
+    const trigger = trailUpTriggerPrice(state.levels);
+    if (trigger !== null) {
+      lines.push(
+        padLine(
+          `  ${chalk.dim("Trail Up".padEnd(14))}${chalk.cyan(fmtPrice(trigger, cs))}`,
+          innerW,
+        ),
+      );
+    }
   }
   lines.push(
     padLine(

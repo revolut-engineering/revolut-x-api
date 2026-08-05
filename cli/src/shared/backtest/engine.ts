@@ -2,6 +2,7 @@ import { Decimal } from "decimal.js";
 import { randomUUID } from "node:crypto";
 import { ForegroundGridBot } from "../../engine/grid-bot.js";
 import type { GridBotConfig } from "../../engine/grid-bot.js";
+import { trailUpTriggerFromBounds } from "../../engine/grid-math.js";
 import { SimulatedExchange } from "./simulated-exchange.js";
 import type {
   GridState,
@@ -527,14 +528,8 @@ export function runBacktest(
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
       const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
-      if (
-        candle.high.gte(
-          upper
-            .times(ratio)
-            .plus(upper.times(ratio.pow(2)))
-            .div(2),
-        )
-      ) {
+      const trigger = trailUpTriggerFromBounds(lower, upper, levels.length);
+      if (trigger !== null && candle.high.gte(trigger)) {
         const rebuildPrice = candle.close;
 
         // Save buyCount before sell pass clears things (used to restore split slots)

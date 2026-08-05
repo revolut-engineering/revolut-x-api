@@ -34,8 +34,10 @@ import {
   fmtSignedPnl,
   fmtMoney,
   renderOrderLadder,
+  renderRiskLine,
   type DashboardData,
 } from "./grid-renderer.js";
+import { trailUpTriggerPrice } from "./grid-math.js";
 
 export interface GridBotConfig {
   pair: string;
@@ -96,7 +98,6 @@ export class ForegroundGridBot {
   private _state: GridState | null = null;
   private _startTime = 0;
   private _currentPrice: Decimal | null = null;
-  private _previousPrice: Decimal | null = null;
   private _tickCount = 0;
   private _lastError: string | null = null;
   private _warnings: string[] = [];
@@ -121,20 +122,12 @@ export class ForegroundGridBot {
     this._suppressDashboard = options.suppressDashboard === true;
   }
 
-  get connectionCount(): number {
-    return this._connections.length;
-  }
-
   stop(): void {
     this._running = false;
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
     }
-  }
-
-  get state(): GridState | null {
-    return this._state;
   }
 
   async run(): Promise<void> {
@@ -437,21 +430,15 @@ export class ForegroundGridBot {
     const levels = state.levels;
     const lower = new Decimal(levels[0].price);
     const upper = new Decimal(levels[levels.length - 1].price);
-    const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
     const cs = this._cs;
 
-    if (
-      this._config.trailingUp &&
-      currentPrice.gte(
-        upper
-          .times(ratio)
-          .plus(upper.times(ratio.pow(2)))
-          .div(2),
-      )
-    ) {
-      this._shouldRebuildUp = true;
-      this._boundaryAlerted = false;
-      return;
+    if (this._config.trailingUp) {
+      const trailUpPrice = trailUpTriggerPrice(levels);
+      if (trailUpPrice !== null && currentPrice.gte(trailUpPrice)) {
+        this._shouldRebuildUp = true;
+        this._boundaryAlerted = false;
+        return;
+      }
     }
 
     if (currentPrice.lt(lower) || currentPrice.gt(upper)) {
@@ -1454,9 +1441,13 @@ export class ForegroundGridBot {
         this._lastError = err instanceof Error ? err.message : String(err);
       }
 
-      this._render();
-      this._emitTickEvent(tick.price, tick.timestamp);
-      this._statusReporter?.update(this._renderStatusCard());
+      try {
+        this._render();
+        this._emitTickEvent(tick.price, tick.timestamp);
+        this._statusReporter?.update(this._renderStatusCard());
+      } catch (err) {
+        this._lastError = `Reporting failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
 
       if (!this._running) break;
       await this._paceSleep(cycleStart, source.paceIntervalSec);
@@ -1582,9 +1573,11 @@ export class ForegroundGridBot {
     const ladder = renderOrderLadder(state, price, {
       maxRows: LADDER_MAX_ROWS,
     });
+    const riskLine = renderRiskLine(state, price);
     const body = [
       `${glyph} Grid ${state.pair}${mode}  ${label}`,
       `Price ${fmtPrice(price, cs)} · Pos ${position.toFixed()} ${base}`,
+      ...(riskLine ? [riskLine] : []),
       `Realized ${fmtSignedPnl(realizedPnl, cs)} · Unreal ${fmtSignedPnl(unrealized, cs)}`,
       `Total ${fmtSignedPnl(totalPnl, cs)} · Net ${fmtMoney(netValue, cs)}`,
       `Fills ${s.totalBuys} buys · ${s.totalSells} sells · Up ${fmtUptime(Date.now() - this._startTime)}`,
@@ -1601,7 +1594,6 @@ export class ForegroundGridBot {
     this._warnings = [];
     this._connections = loadConnections().filter((c) => c.enabled);
 
-    this._previousPrice = this._currentPrice;
     this._currentPrice = currentPrice;
 
     if (this._config.stopLoss) {
