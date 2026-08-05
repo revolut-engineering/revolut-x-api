@@ -1577,10 +1577,10 @@ export class ForegroundGridBot {
     const body = [
       `${glyph} Grid ${state.pair}${mode}  ${label}`,
       `Price ${fmtPrice(price, cs)} · Pos ${position.toFixed()} ${base}`,
-      ...(riskLine ? [riskLine] : []),
       `Realized ${fmtSignedPnl(realizedPnl, cs)} · Unreal ${fmtSignedPnl(unrealized, cs)}`,
       `Total ${fmtSignedPnl(totalPnl, cs)} · Net ${fmtMoney(netValue, cs)}`,
       `Fills ${s.totalBuys} buys · ${s.totalSells} sells · Up ${fmtUptime(Date.now() - this._startTime)}`,
+      ...(riskLine ? [riskLine] : []),
       ...(ladder.length > 0 ? ["", ...ladder] : []),
       "",
       `Updated ${fmtLocalDateTime()}`,
