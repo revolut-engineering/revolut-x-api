@@ -150,8 +150,18 @@ function getBoxWidth(): number {
   return Math.max(50, Math.min(80, cols - 2));
 }
 
-export function renderMartingaleDashboard(data: MartingaleDashboardData): string {
-  const { state, currentPrice, uptime, tickCount, lastError, warnings, intervalSec } = data;
+export function renderMartingaleDashboard(
+  data: MartingaleDashboardData,
+): string {
+  const {
+    state,
+    currentPrice,
+    uptime,
+    tickCount,
+    lastError,
+    warnings,
+    intervalSec,
+  } = data;
   const cs = getCurrSymbol(state.pair);
   const cfg = state.config;
   const W = getBoxWidth();
@@ -179,9 +189,10 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
 
   // Pair + price row
   const priceStr = chalk.white.bold(fmtPrice(currentPrice, cs));
-  const entryRef = state.inPosition && state.avgEntryPrice !== "0"
-    ? new Decimal(state.avgEntryPrice)
-    : null;
+  const entryRef =
+    state.inPosition && state.avgEntryPrice !== "0"
+      ? new Decimal(state.avgEntryPrice)
+      : null;
   const deltaStr = entryRef ? fmtDelta(currentPrice, entryRef) : "";
   const deltaLabel = deltaStr ? `${deltaStr} ${chalk.dim("vs entry")}` : "";
   const pairLabel = chalk.bold.cyan(state.pair);
@@ -240,7 +251,10 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
   } else {
     const connLabel = `${data.telegramConnections} connection${data.telegramConnections !== 1 ? "s" : ""}`;
     const staleSec = 5 * 60;
-    if (data.lastNotifyOk > 0 && Date.now() - data.lastNotifyOk > staleSec * 1000) {
+    if (
+      data.lastNotifyOk > 0 &&
+      Date.now() - data.lastNotifyOk > staleSec * 1000
+    ) {
       const ago = Math.floor((Date.now() - data.lastNotifyOk) / 60_000);
       telegramStr = `${connLabel}  ${chalk.yellow(`⚠ last OK ${ago}m ago`)}`;
     } else if (data.lastNotifyOk === 0 && data.tickCount > 2) {
@@ -257,13 +271,20 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
   if (lastError || warnings.length > 0) {
     lines.push(padLine("", innerW));
     if (lastError) {
-      lines.push(padLine(`  ${chalk.red("✗")} ${chalk.yellow(lastError)}`, innerW));
+      lines.push(
+        padLine(`  ${chalk.red("✗")} ${chalk.yellow(lastError)}`, innerW),
+      );
     }
     for (const w of warnings.slice(0, 3)) {
       lines.push(padLine(`  ${chalk.yellow("⚠")} ${chalk.yellow(w)}`, innerW));
     }
     if (warnings.length > 3) {
-      lines.push(padLine(`  ${chalk.dim(`  ...and ${warnings.length - 3} more`)}`, innerW));
+      lines.push(
+        padLine(
+          `  ${chalk.dim(`  ...and ${warnings.length - 3} more`)}`,
+          innerW,
+        ),
+      );
     }
   }
 
@@ -290,7 +311,12 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
       ),
     );
   } else {
-    lines.push(padLine(`  ${chalk.dim("Position".padEnd(16))}${chalk.dim("Waiting for entry")}`, innerW));
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Position".padEnd(16))}${chalk.dim("Waiting for entry")}`,
+        innerW,
+      ),
+    );
   }
   lines.push(
     padLine(
@@ -311,7 +337,9 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
   lines.push(padLine("", innerW));
 
   // Order ladder — pre-compute column widths for alignment
-  const sorted = [...state.levels].sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
+  const sorted = [...state.levels].sort(
+    (a, b) => parseFloat(b.price) - parseFloat(a.price),
+  );
   const pColW = sorted.reduce(
     (m, lv) => Math.max(m, fmtPrice(new Decimal(lv.price), cs).length),
     0,
@@ -327,9 +355,17 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
 
     if (!markerInserted && currentPrice.gte(levelPrice)) {
       const priceLabel = `${fmtPrice(currentPrice, cs)} ◄`;
-      const dashCount = Math.max(2, Math.floor((innerW - priceLabel.length - 12) / 2));
+      const dashCount = Math.max(
+        2,
+        Math.floor((innerW - priceLabel.length - 12) / 2),
+      );
       const dashes = chalk.yellow("─".repeat(dashCount));
-      lines.push(padLine(`      ${dashes} ${chalk.yellow.bold(priceLabel)} ${dashes}`, innerW));
+      lines.push(
+        padLine(
+          `      ${dashes} ${chalk.yellow.bold(priceLabel)} ${dashes}`,
+          innerW,
+        ),
+      );
       markerInserted = true;
     }
 
@@ -346,7 +382,10 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
       barStr = chalk.green("█████");
       statusStr = chalk.green(isEntry ? "ENTRY" : "SAFETY");
     } else if (hasBuy) {
-      const cnt = level.buyOrderIds.length > 1 ? chalk.dim(` (${level.buyOrderIds.length})`) : "";
+      const cnt =
+        level.buyOrderIds.length > 1
+          ? chalk.dim(` (${level.buyOrderIds.length})`)
+          : "";
       barStr = chalk.green("▒▒▒▒▒");
       statusStr = chalk.green("BUY") + cnt;
     } else {
@@ -355,21 +394,35 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
     }
 
     lines.push(
-      padLine(`  ${chalk.dim(`#${idx}`)}  ${pStr}  ${chalk.dim(qStr)}  ${barStr}  ${statusStr}`, innerW),
+      padLine(
+        `  ${chalk.dim(`#${idx}`)}  ${pStr}  ${chalk.dim(qStr)}  ${barStr}  ${statusStr}`,
+        innerW,
+      ),
     );
   }
 
   if (!markerInserted) {
     const priceLabel = `${fmtPrice(currentPrice, cs)} ◄`;
-    const dashCount = Math.max(2, Math.floor((innerW - priceLabel.length - 12) / 2));
+    const dashCount = Math.max(
+      2,
+      Math.floor((innerW - priceLabel.length - 12) / 2),
+    );
     const dashes = chalk.yellow("─".repeat(dashCount));
-    lines.push(padLine(`      ${dashes} ${chalk.yellow.bold(priceLabel)} ${dashes}`, innerW));
+    lines.push(
+      padLine(
+        `      ${dashes} ${chalk.yellow.bold(priceLabel)} ${dashes}`,
+        innerW,
+      ),
+    );
   }
 
   // TP / SL markers below ladder
-  const tpPrice = state.inPosition && state.avgEntryPrice !== "0"
-    ? new Decimal(state.avgEntryPrice).times(new Decimal(1).plus(new Decimal(cfg.takeProfit)))
-    : null;
+  const tpPrice =
+    state.inPosition && state.avgEntryPrice !== "0"
+      ? new Decimal(state.avgEntryPrice).times(
+          new Decimal(1).plus(new Decimal(cfg.takeProfit)),
+        )
+      : null;
   const slPrice = state.stopLossPrice ? new Decimal(state.stopLossPrice) : null;
 
   lines.push(padLine("", innerW));
@@ -403,7 +456,9 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
     : new Decimal(0);
   const totalPnl = realizedPnl.plus(unrealized);
   const investment = new Decimal(cfg.investment);
-  const roiPct = investment.isZero() ? new Decimal(0) : totalPnl.div(investment).times(100);
+  const roiPct = investment.isZero()
+    ? new Decimal(0)
+    : totalPnl.div(investment).times(100);
   const netValue = investment.plus(totalPnl);
   const base = state.pair.split("-")[0] ?? "";
 
@@ -466,8 +521,11 @@ export function renderMartingaleDashboard(data: MartingaleDashboardData): string
     lines.push(padLine(`  ${chalk.dim("No trades yet")}`, innerW));
   } else {
     for (const trade of recentTrades) {
-      const time = new Date(trade.ts).toLocaleTimeString("en-GB", { hour12: false });
-      const sideStr = trade.side === "buy" ? chalk.green("BUY ") : chalk.red("SELL");
+      const time = new Date(trade.ts).toLocaleTimeString("en-GB", {
+        hour12: false,
+      });
+      const sideStr =
+        trade.side === "buy" ? chalk.green("BUY ") : chalk.red("SELL");
       const profitStr =
         trade.profit != null ? `  ${fmtPnl(trade.profit, cs)}` : "";
       lines.push(
@@ -510,20 +568,32 @@ export function renderMartingaleShutdownSummary(
   const unrealized = position.gt(0)
     ? position.times(currentPrice).minus(costBasis)
     : new Decimal(0);
-  const netValue = new Decimal(state.config.investment).plus(realizedPnl).plus(unrealized);
+  const netValue = new Decimal(state.config.investment)
+    .plus(realizedPnl)
+    .plus(unrealized);
   const base = state.pair.split("-")[0] ?? "";
   const baseValue = position.times(currentPrice);
 
   lines.push("");
   lines.push(chalk.bold("  Martingale Bot Summary"));
   lines.push(chalk.dim("  " + "─".repeat(40)));
-  lines.push(`  ${chalk.dim("Cycles".padEnd(18))}${state.stats.completedCycles} (${state.stats.winningCycles} wins)`);
+  lines.push(
+    `  ${chalk.dim("Cycles".padEnd(18))}${state.stats.completedCycles} (${state.stats.winningCycles} wins)`,
+  );
   lines.push(`  ${chalk.dim("Total Buys".padEnd(18))}${state.stats.totalBuys}`);
-  lines.push(`  ${chalk.dim("Total Sells".padEnd(18))}${state.stats.totalSells}`);
-  lines.push(`  ${chalk.dim("Realized P&L".padEnd(18))}${fmtPnl(realizedPnl.toFixed(2), cs)}`);
-  lines.push(`  ${chalk.dim("Fees Paid".padEnd(18))}${chalk.dim(`${cs}${new Decimal(state.stats.totalFees ?? "0").toFixed(2)}`)}`);
+  lines.push(
+    `  ${chalk.dim("Total Sells".padEnd(18))}${state.stats.totalSells}`,
+  );
+  lines.push(
+    `  ${chalk.dim("Realized P&L".padEnd(18))}${fmtPnl(realizedPnl.toFixed(2), cs)}`,
+  );
+  lines.push(
+    `  ${chalk.dim("Fees Paid".padEnd(18))}${chalk.dim(`${cs}${new Decimal(state.stats.totalFees ?? "0").toFixed(2)}`)}`,
+  );
   lines.push(`  ${chalk.dim(`${base} Held`.padEnd(18))}${position.toFixed(8)}`);
-  lines.push(`  ${chalk.dim(`${base} Value`.padEnd(18))}${fmtPrice(baseValue, cs)}`);
+  lines.push(
+    `  ${chalk.dim(`${base} Value`.padEnd(18))}${fmtPrice(baseValue, cs)}`,
+  );
   lines.push(`  ${chalk.dim("Net Value".padEnd(18))}${fmtPrice(netValue, cs)}`);
   lines.push(chalk.dim("  " + "─".repeat(40)));
   if (remainingOrders > 0) {
@@ -549,13 +619,21 @@ export function renderMartingaleReconciliationSummary(
   lines.push(chalk.bold("  Reconciliation Summary"));
   lines.push(chalk.dim("  " + "─".repeat(40)));
   if (buysFilled > 0)
-    lines.push(`  ${chalk.green("✓")} ${buysFilled} buy order${buysFilled !== 1 ? "s" : ""} filled while offline`);
+    lines.push(
+      `  ${chalk.green("✓")} ${buysFilled} buy order${buysFilled !== 1 ? "s" : ""} filled while offline`,
+    );
   if (sellsFilled > 0)
-    lines.push(`  ${chalk.green("✓")} ${sellsFilled} sell order${sellsFilled !== 1 ? "s" : ""} filled while offline`);
+    lines.push(
+      `  ${chalk.green("✓")} ${sellsFilled} sell order${sellsFilled !== 1 ? "s" : ""} filled while offline`,
+    );
   if (ordersKept > 0)
-    lines.push(`  ${chalk.cyan("↻")} ${ordersKept} order${ordersKept !== 1 ? "s" : ""} kept from previous session`);
+    lines.push(
+      `  ${chalk.cyan("↻")} ${ordersKept} order${ordersKept !== 1 ? "s" : ""} kept from previous session`,
+    );
   if (ordersDead > 0)
-    lines.push(`  ${chalk.yellow("✗")} ${ordersDead} order${ordersDead !== 1 ? "s" : ""} expired/cancelled on exchange`);
+    lines.push(
+      `  ${chalk.yellow("✗")} ${ordersDead} order${ordersDead !== 1 ? "s" : ""} expired/cancelled on exchange`,
+    );
   if (buysFilled + sellsFilled + ordersKept + ordersDead === 0)
     lines.push(`  ${chalk.dim("No leftover orders from previous session")}`);
   lines.push(chalk.dim("  " + "─".repeat(40)));
