@@ -40,7 +40,9 @@ export interface MartingaleBacktestTickEvent {
   cycle: number;
 }
 
-export type MartingaleBacktestOnTick = (event: MartingaleBacktestTickEvent) => void;
+export type MartingaleBacktestOnTick = (
+  event: MartingaleBacktestTickEvent,
+) => void;
 
 export interface MartingaleOptimizationResult {
   priceDeviation: Decimal;
@@ -71,9 +73,15 @@ function buildLevels(
   entryPrice: Decimal,
   params: MartingaleBacktestParams,
 ): Array<{ price: Decimal; quoteSize: Decimal; filled: boolean }> {
-  const { priceDeviation, safetyOrderVolumeScale, maxSafetyOrders, investment } = params;
+  const {
+    priceDeviation,
+    safetyOrderVolumeScale,
+    maxSafetyOrders,
+    investment,
+  } = params;
   const basePct = computeBaseOrderPct(safetyOrderVolumeScale, maxSafetyOrders);
-  const levels: Array<{ price: Decimal; quoteSize: Decimal; filled: boolean }> = [];
+  const levels: Array<{ price: Decimal; quoteSize: Decimal; filled: boolean }> =
+    [];
   for (let i = 0; i <= maxSafetyOrders; i++) {
     const price = entryPrice
       .times(new Decimal(1).minus(priceDeviation).pow(i + 1))
@@ -87,7 +95,10 @@ function buildLevels(
   return levels;
 }
 
-function initCycle(entryPrice: Decimal, params: MartingaleBacktestParams): CycleState {
+function initCycle(
+  entryPrice: Decimal,
+  params: MartingaleBacktestParams,
+): CycleState {
   const slPrice = entryPrice
     .times(new Decimal(1).minus(params.stopLoss))
     .toDecimalPlaces(2, Decimal.ROUND_DOWN);
@@ -165,7 +176,9 @@ export function runMartingaleBacktest(
         if (!low.lte(level.price)) continue;
 
         const isInitial = !state.inPosition;
-        const qty = level.quoteSize.div(level.price).toDecimalPlaces(5, Decimal.ROUND_DOWN);
+        const qty = level.quoteSize
+          .div(level.price)
+          .toDecimalPlaces(5, Decimal.ROUND_DOWN);
         level.filled = true;
         state.totalQty = state.totalQty.plus(qty);
         state.totalCost = state.totalCost.plus(level.quoteSize);
@@ -178,7 +191,9 @@ export function runMartingaleBacktest(
           state.safetyOrdersFilled++;
         }
 
-        state.tpPrice = state.avgEntryPrice.times(new Decimal(1).plus(takeProfit)).toDecimalPlaces(2, Decimal.ROUND_UP);
+        state.tpPrice = state.avgEntryPrice
+          .times(new Decimal(1).plus(takeProfit))
+          .toDecimalPlaces(2, Decimal.ROUND_UP);
         totalTrades++;
         const reason = isInitial ? "INITIAL" : `SO#${state.safetyOrdersFilled}`;
         tradeLog.push(
@@ -193,7 +208,9 @@ export function runMartingaleBacktest(
       // Stop-loss check
       if (state.slPrice && low.lte(state.slPrice)) {
         const slFillPrice = state.slPrice;
-        const revenue = state.totalQty.times(slFillPrice).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const revenue = state.totalQty
+          .times(slFillPrice)
+          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(state.totalCost);
         realizedPnl = realizedPnl.plus(profit);
         stopLossCount++;
@@ -210,7 +227,9 @@ export function runMartingaleBacktest(
       // TP check
       if (state.tpPrice && high.gte(state.tpPrice)) {
         const tpFillPrice = state.tpPrice;
-        const revenue = state.totalQty.times(tpFillPrice).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const revenue = state.totalQty
+          .times(tpFillPrice)
+          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(state.totalCost);
         realizedPnl = realizedPnl.plus(profit);
         completedCycles++;
@@ -265,7 +284,9 @@ export function runMartingaleBacktest(
     ? state.totalQty.times(lastClose).minus(state.totalCost)
     : new Decimal(0);
   const totalReturn = realizedPnl.plus(finalUnrealized);
-  const returnPct = params.investment.gt(0) ? totalReturn.div(params.investment).times(100) : new Decimal(0);
+  const returnPct = params.investment.gt(0)
+    ? totalReturn.div(params.investment).times(100)
+    : new Decimal(0);
 
   return {
     completedCycles,
@@ -328,7 +349,14 @@ export function optimizeMartingaleParams(
           );
           if (stopLoss.lte(minSlRequired)) continue;
 
-          combinations.push({ priceDeviation: dev, safetyOrderVolumeScale: scale, maxSafetyOrders: maxSO, takeProfit: tp, stopLoss, investment });
+          combinations.push({
+            priceDeviation: dev,
+            safetyOrderVolumeScale: scale,
+            maxSafetyOrders: maxSO,
+            takeProfit: tp,
+            stopLoss,
+            investment,
+          });
           if (combinations.length >= maxCombinations) break outer;
         }
       }
