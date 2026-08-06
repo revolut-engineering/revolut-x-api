@@ -89,7 +89,10 @@ function fmtLocalDateTime(d = new Date()): string {
   );
 }
 
-export function computeBaseOrderPct(scale: Decimal, maxSafetyOrders: number): Decimal {
+export function computeBaseOrderPct(
+  scale: Decimal,
+  maxSafetyOrders: number,
+): Decimal {
   const n = maxSafetyOrders + 1;
   if (scale.minus(1).abs().lt(new Decimal("1e-9"))) {
     return new Decimal(1).div(n);
@@ -221,7 +224,9 @@ export class ForegroundMartingaleBot {
           if (!this._config.dryRun) {
             await this._client.cancelOrder(buyOrderId);
           }
-          level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+          level.buyOrderIds = level.buyOrderIds.filter(
+            (id) => id !== buyOrderId,
+          );
           cancelled++;
         } catch {
           remaining++;
@@ -249,7 +254,9 @@ export class ForegroundMartingaleBot {
 
     if (cancelled > 0) {
       console.log(
-        chalk.dim(`  Cancelled ${cancelled} order${cancelled !== 1 ? "s" : ""}`),
+        chalk.dim(
+          `  Cancelled ${cancelled} order${cancelled !== 1 ? "s" : ""}`,
+        ),
       );
     }
 
@@ -260,9 +267,12 @@ export class ForegroundMartingaleBot {
       currentPrice = this._currentPrice ?? new Decimal(0);
     }
 
-    console.log(renderMartingaleShutdownSummary(this._state, currentPrice, remaining));
+    console.log(
+      renderMartingaleShutdownSummary(this._state, currentPrice, remaining),
+    );
 
-    const { realizedPnl, unrealized, totalPnl, netValue } = this._computePnl(currentPrice);
+    const { realizedPnl, unrealized, totalPnl, netValue } =
+      this._computePnl(currentPrice);
     const cs = this._cs;
     const s = this._state.stats;
 
@@ -491,19 +501,33 @@ export class ForegroundMartingaleBot {
     const cfg = this._config;
     const s = saved.config;
     if (s.priceDeviation !== cfg.priceDeviation)
-      throw new Error(`Saved state has priceDeviation=${s.priceDeviation} but requested ${cfg.priceDeviation}. Use --reset.`);
+      throw new Error(
+        `Saved state has priceDeviation=${s.priceDeviation} but requested ${cfg.priceDeviation}. Use --reset.`,
+      );
     if (s.safetyOrderVolumeScale !== cfg.safetyOrderVolumeScale)
-      throw new Error(`Saved state has scale=${s.safetyOrderVolumeScale} but requested ${cfg.safetyOrderVolumeScale}. Use --reset.`);
+      throw new Error(
+        `Saved state has scale=${s.safetyOrderVolumeScale} but requested ${cfg.safetyOrderVolumeScale}. Use --reset.`,
+      );
     if (s.maxSafetyOrders !== cfg.maxSafetyOrders)
-      throw new Error(`Saved state has maxSafetyOrders=${s.maxSafetyOrders} but requested ${cfg.maxSafetyOrders}. Use --reset.`);
+      throw new Error(
+        `Saved state has maxSafetyOrders=${s.maxSafetyOrders} but requested ${cfg.maxSafetyOrders}. Use --reset.`,
+      );
     if (s.takeProfit !== cfg.takeProfit)
-      throw new Error(`Saved state has takeProfit=${s.takeProfit} but requested ${cfg.takeProfit}. Use --reset.`);
+      throw new Error(
+        `Saved state has takeProfit=${s.takeProfit} but requested ${cfg.takeProfit}. Use --reset.`,
+      );
     if (s.stopLoss !== cfg.stopLoss)
-      throw new Error(`Saved state has stopLoss=${s.stopLoss} but requested ${cfg.stopLoss}. Use --reset.`);
+      throw new Error(
+        `Saved state has stopLoss=${s.stopLoss} but requested ${cfg.stopLoss}. Use --reset.`,
+      );
     if (!new Decimal(s.investment).eq(cfg.investment))
-      throw new Error(`Saved state has investment=${s.investment} but requested ${cfg.investment}. Use --reset.`);
+      throw new Error(
+        `Saved state has investment=${s.investment} but requested ${cfg.investment}. Use --reset.`,
+      );
     if (s.dryRun !== cfg.dryRun)
-      throw new Error(`Saved state was started in ${s.dryRun ? "dry-run" : "live"} mode but requested ${cfg.dryRun ? "dry-run" : "live"}. Use --reset.`);
+      throw new Error(
+        `Saved state was started in ${s.dryRun ? "dry-run" : "live"} mode but requested ${cfg.dryRun ? "dry-run" : "live"}. Use --reset.`,
+      );
   }
 
   // --------------- reconciliation ---------------
@@ -524,30 +548,45 @@ export class ForegroundMartingaleBot {
     // Check buy orders on each level
     for (const level of this._state.levels) {
       for (const buyOrderId of [...level.buyOrderIds]) {
-        if (buyOrderId.startsWith("dry-")) { ordersKept++; continue; }
+        if (buyOrderId.startsWith("dry-")) {
+          ordersKept++;
+          continue;
+        }
         try {
           const resp = await this._client!.getOrder(buyOrderId);
           const order = resp.data;
           if (FILLED_STATUSES.has(order.status)) {
             buysFilled++;
-            level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             if (!level.filled) {
               level.filled = true;
               const levelPrice = new Decimal(level.price);
               const netBase = this._netBase(order);
               const filledAmount = this._filledAmount(order, levelPrice);
               const feeQuote = this._feeQuote(order, levelPrice);
-              this._applyBuyFill(level, netBase, filledAmount, feeQuote, order.id);
+              this._applyBuyFill(
+                level,
+                netBase,
+                filledAmount,
+                feeQuote,
+                order.id,
+              );
             }
           } else if (DEAD_STATUSES.has(order.status)) {
-            level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             ordersDead++;
           } else {
             ordersKept++;
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
-          level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+          level.buyOrderIds = level.buyOrderIds.filter(
+            (id) => id !== buyOrderId,
+          );
           ordersDead++;
         }
         await sleep(ORDER_DELAY_MS);
@@ -566,7 +605,9 @@ export class ForegroundMartingaleBot {
             ? new Decimal(this._state.avgEntryPrice).times(
                 new Decimal(1).plus(this._config.takeProfit),
               )
-            : new Decimal(order.filled_amount || 0).div(totalQty.gt(0) ? totalQty : 1);
+            : new Decimal(order.filled_amount || 0).div(
+                totalQty.gt(0) ? totalQty : 1,
+              );
           const filledAmount = this._filledAmount(order, tpPrice);
           const feeQuote = this._feeQuote(order, tpPrice);
           this._applyTpFill(filledAmount, feeQuote, order.id, tpPrice);
@@ -587,13 +628,26 @@ export class ForegroundMartingaleBot {
     }
 
     saveMartingaleState(this._state);
-    console.log(renderMartingaleReconciliationSummary(buysFilled, sellsFilled, ordersKept, ordersDead));
+    console.log(
+      renderMartingaleReconciliationSummary(
+        buysFilled,
+        sellsFilled,
+        ordersKept,
+        ordersDead,
+      ),
+    );
     console.log(chalk.dim("  Martingale resumed and state saved.\n"));
 
     if (buysFilled + sellsFilled > 0) {
       const parts = [`Martingale reconciled: ${this._config.pair}`];
-      if (buysFilled > 0) parts.push(`${buysFilled} buy${buysFilled !== 1 ? "s" : ""} filled offline`);
-      if (sellsFilled > 0) parts.push(`${sellsFilled} sell${sellsFilled !== 1 ? "s" : ""} filled offline`);
+      if (buysFilled > 0)
+        parts.push(
+          `${buysFilled} buy${buysFilled !== 1 ? "s" : ""} filled offline`,
+        );
+      if (sellsFilled > 0)
+        parts.push(
+          `${sellsFilled} sell${sellsFilled !== 1 ? "s" : ""} filled offline`,
+        );
       this._notify(parts.join(" | "));
     }
   }
@@ -611,8 +665,13 @@ export class ForegroundMartingaleBot {
     const isInitial = !state.inPosition;
 
     state.totalQty = new Decimal(state.totalQty).plus(netBase).toString();
-    state.totalCost = new Decimal(state.totalCost).plus(filledAmount).plus(feeQuote).toString();
-    state.avgEntryPrice = new Decimal(state.totalCost).div(new Decimal(state.totalQty)).toString();
+    state.totalCost = new Decimal(state.totalCost)
+      .plus(filledAmount)
+      .plus(feeQuote)
+      .toString();
+    state.avgEntryPrice = new Decimal(state.totalCost)
+      .div(new Decimal(state.totalQty))
+      .toString();
     state.lastBuyPrice = level.price;
     this._addFee(feeQuote);
 
@@ -624,23 +683,48 @@ export class ForegroundMartingaleBot {
     }
 
     state.stats.totalBuys++;
-    const reason: MartingaleTradeEntry["reason"] = isInitial ? "initial" : "safety";
-    this._logTrade("buy", level.price, netBase.toString(), orderId, reason, undefined, feeQuote.gt(0) ? feeQuote.toString() : undefined);
+    const reason: MartingaleTradeEntry["reason"] = isInitial
+      ? "initial"
+      : "safety";
+    this._logTrade(
+      "buy",
+      level.price,
+      netBase.toString(),
+      orderId,
+      reason,
+      undefined,
+      feeQuote.gt(0) ? feeQuote.toString() : undefined,
+    );
   }
 
-  private _applyTpFill(filledAmount: Decimal, feeQuote: Decimal, orderId: string, sellPrice: Decimal): void {
+  private _applyTpFill(
+    filledAmount: Decimal,
+    feeQuote: Decimal,
+    orderId: string,
+    sellPrice: Decimal,
+  ): void {
     const state = this._state!;
     const totalQty = new Decimal(state.totalQty);
     const totalCost = new Decimal(state.totalCost);
     const revenue = filledAmount.minus(feeQuote);
     const profit = revenue.minus(totalCost);
 
-    state.stats.realizedPnl = new Decimal(state.stats.realizedPnl).plus(profit).toString();
+    state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+      .plus(profit)
+      .toString();
     state.stats.completedCycles++;
     state.stats.totalSells++;
     if (profit.gt(0)) state.stats.winningCycles++;
     this._addFee(feeQuote);
-    this._logTrade("sell", sellPrice.toString(), totalQty.toString(), orderId, "tp", profit.toFixed(2), feeQuote.gt(0) ? feeQuote.toString() : undefined);
+    this._logTrade(
+      "sell",
+      sellPrice.toString(),
+      totalQty.toString(),
+      orderId,
+      "tp",
+      profit.toFixed(2),
+      feeQuote.gt(0) ? feeQuote.toString() : undefined,
+    );
     this._resetCycle();
   }
 
@@ -673,11 +757,17 @@ export class ForegroundMartingaleBot {
       const cancels: Promise<void>[] = [];
       for (const level of state.levels) {
         for (const id of level.buyOrderIds) {
-          cancels.push(client.cancelOrder(id).catch((err) => rethrowIfInsecureKey(err)));
+          cancels.push(
+            client.cancelOrder(id).catch((err) => rethrowIfInsecureKey(err)),
+          );
         }
       }
       if (state.tpOrderId) {
-        cancels.push(client.cancelOrder(state.tpOrderId).catch((err) => rethrowIfInsecureKey(err)));
+        cancels.push(
+          client
+            .cancelOrder(state.tpOrderId)
+            .catch((err) => rethrowIfInsecureKey(err)),
+        );
       }
       await Promise.all(cancels);
     }
@@ -686,8 +776,10 @@ export class ForegroundMartingaleBot {
     state.tpOrderId = null;
 
     const baseStep = this._getBaseStep();
-    const totalQty = new Decimal(state.totalQty)
-      .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+    const totalQty = new Decimal(state.totalQty).toDecimalPlaces(
+      baseStep.decimalPlaces(),
+      Decimal.ROUND_DOWN,
+    );
 
     if (totalQty.gt(0)) {
       if (!this._config.dryRun && client) {
@@ -702,22 +794,45 @@ export class ForegroundMartingaleBot {
           const filledAmount = this._filledAmount(filled, currentPrice);
           const revenue = filledAmount.minus(feeQuote);
           const profit = revenue.minus(new Decimal(state.totalCost));
-          state.stats.realizedPnl = new Decimal(state.stats.realizedPnl).plus(profit).toString();
+          state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+            .plus(profit)
+            .toString();
           state.stats.totalSells++;
           state.stats.completedCycles++;
           this._addFee(feeQuote);
-          this._logTrade("sell", currentPrice.toString(), totalQty.toString(), filled.id, "sl", profit.toFixed(2), feeQuote.gt(0) ? feeQuote.toString() : undefined);
+          this._logTrade(
+            "sell",
+            currentPrice.toString(),
+            totalQty.toString(),
+            filled.id,
+            "sl",
+            profit.toFixed(2),
+            feeQuote.gt(0) ? feeQuote.toString() : undefined,
+          );
         } catch (err) {
           rethrowIfInsecureKey(err);
-          this._warnings.push(`Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`);
+          this._warnings.push(
+            `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       } else if (this._config.dryRun) {
-        const revenue = totalQty.times(currentPrice).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const revenue = totalQty
+          .times(currentPrice)
+          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(new Decimal(state.totalCost));
-        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl).plus(profit).toString();
+        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+          .plus(profit)
+          .toString();
         state.stats.totalSells++;
         state.stats.completedCycles++;
-        this._logTrade("sell", currentPrice.toString(), totalQty.toString(), "dry-sl", "sl", profit.toFixed(2));
+        this._logTrade(
+          "sell",
+          currentPrice.toString(),
+          totalQty.toString(),
+          "dry-sl",
+          "sl",
+          profit.toFixed(2),
+        );
       }
     }
 
@@ -749,7 +864,11 @@ export class ForegroundMartingaleBot {
         tick = await source.next();
       } catch (err) {
         if (err instanceof InsecureKeyPermissionsError) {
-          console.log(chalk.red(`\n  Halting: credential file permissions are unsafe.\n  ${err.message}`));
+          console.log(
+            chalk.red(
+              `\n  Halting: credential file permissions are unsafe.\n  ${err.message}`,
+            ),
+          );
           this.stop();
           throw err;
         }
@@ -773,7 +892,11 @@ export class ForegroundMartingaleBot {
         this._lastError = null;
       } catch (err) {
         if (err instanceof InsecureKeyPermissionsError) {
-          console.log(chalk.red(`\n  Halting: credential file permissions are unsafe.\n  ${err.message}`));
+          console.log(
+            chalk.red(
+              `\n  Halting: credential file permissions are unsafe.\n  ${err.message}`,
+            ),
+          );
           this.stop();
           throw err;
         }
@@ -790,13 +913,19 @@ export class ForegroundMartingaleBot {
     await this._priceSource?.close?.();
   }
 
-  private async _paceSleep(cycleStart: number, paceIntervalSec: number | undefined): Promise<void> {
+  private async _paceSleep(
+    cycleStart: number,
+    paceIntervalSec: number | undefined,
+  ): Promise<void> {
     if (paceIntervalSec === undefined) return;
     const elapsed = (performance.now() - cycleStart) / 1000;
     const delay = Math.max(0, paceIntervalSec - elapsed) * 1000;
     if (delay <= 0) return;
     await new Promise<void>((resolve) => {
-      this._timer = setTimeout(() => { this._timer = null; resolve(); }, delay);
+      this._timer = setTimeout(() => {
+        this._timer = null;
+        resolve();
+      }, delay);
     });
   }
 
@@ -837,7 +966,9 @@ export class ForegroundMartingaleBot {
         cursor = resp.metadata?.next_cursor as string | undefined;
       } while (cursor);
     } catch (err) {
-      throw new Error(`Failed to fetch active orders: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(
+        `Failed to fetch active orders: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // 3. Check buy order fills
@@ -848,18 +979,28 @@ export class ForegroundMartingaleBot {
           const resp = await client.getOrder(buyOrderId);
           const order = resp.data;
           if (FILLED_STATUSES.has(order.status)) {
-            level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             level.filled = true;
 
             const levelPrice = new Decimal(level.price);
             const netBase = this._netBase(order);
             const filledAmount = this._filledAmount(order, levelPrice);
             const feeQuote = this._feeQuote(order, levelPrice);
-            this._applyBuyFill(level, netBase, filledAmount, feeQuote, order.id);
+            this._applyBuyFill(
+              level,
+              netBase,
+              filledAmount,
+              feeQuote,
+              order.id,
+            );
 
             const base = this._config.pair.split("-")[0] ?? "";
             const cs = this._cs;
-            const feeStr = feeQuote.gt(0) ? ` | fee ${cs}${feeQuote.toFixed(2)}` : "";
+            const feeStr = feeQuote.gt(0)
+              ? ` | fee ${cs}${feeQuote.toFixed(2)}`
+              : "";
             this._notify(
               `Martingale ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${netBase} ${base} | ` +
                 `avg entry ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr}`,
@@ -867,24 +1008,36 @@ export class ForegroundMartingaleBot {
 
             // Move TP order
             if (state.tpOrderId) {
-              try { await client.cancelOrder(state.tpOrderId); } catch { /* ignore */ }
+              try {
+                await client.cancelOrder(state.tpOrderId);
+              } catch {
+                /* ignore */
+              }
               state.tpOrderId = null;
             }
             await this._placeTpOrder();
 
             // Arm next safety order level
             const nextLevel = state.levels[level.index + 1];
-            if (nextLevel && !nextLevel.filled && nextLevel.buyOrderIds.length === 0) {
+            if (
+              nextLevel &&
+              !nextLevel.filled &&
+              nextLevel.buyOrderIds.length === 0
+            ) {
               try {
                 const orderId = await this._placeBuyOrder(nextLevel);
                 nextLevel.buyOrderIds.push(orderId);
               } catch (err) {
                 rethrowIfInsecureKey(err);
-                this._warnings.push(`Safety order #${nextLevel.index + 1}: ${err instanceof Error ? err.message : String(err)}`);
+                this._warnings.push(
+                  `Safety order #${nextLevel.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+                );
               }
             }
           } else if (DEAD_STATUSES.has(order.status)) {
-            level.buyOrderIds = level.buyOrderIds.filter((id) => id !== buyOrderId);
+            level.buyOrderIds = level.buyOrderIds.filter(
+              (id) => id !== buyOrderId,
+            );
             // Re-place if level not yet filled
             if (!level.filled) {
               try {
@@ -892,13 +1045,17 @@ export class ForegroundMartingaleBot {
                 level.buyOrderIds.push(orderId);
               } catch (err) {
                 rethrowIfInsecureKey(err);
-                this._warnings.push(`Re-buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`);
+                this._warnings.push(
+                  `Re-buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+                );
               }
             }
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
-          this._warnings.push(`Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`);
+          this._warnings.push(
+            `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     }
@@ -914,10 +1071,14 @@ export class ForegroundMartingaleBot {
           );
           const filledAmount = this._filledAmount(order, tpPrice);
           const feeQuote = this._feeQuote(order, tpPrice);
-          const profit = filledAmount.minus(feeQuote).minus(new Decimal(state.totalCost));
+          const profit = filledAmount
+            .minus(feeQuote)
+            .minus(new Decimal(state.totalCost));
 
           const cs = this._cs;
-          const feeStr = feeQuote.gt(0) ? ` | fee ${cs}${feeQuote.toFixed(2)}` : "";
+          const feeStr = feeQuote.gt(0)
+            ? ` | fee ${cs}${feeQuote.toFixed(2)}`
+            : "";
           this._notify(
             `Martingale ${this._config.pair}: TAKE PROFIT @ ${cs}${tpPrice.toFixed(2)} | ` +
               `profit ${cs}${profit.toFixed(2)} | ` +
@@ -936,7 +1097,9 @@ export class ForegroundMartingaleBot {
             newLevels[0].buyOrderIds.push(orderId);
           } catch (err) {
             rethrowIfInsecureKey(err);
-            this._warnings.push(`New cycle initial buy: ${err instanceof Error ? err.message : String(err)}`);
+            this._warnings.push(
+              `New cycle initial buy: ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
         } else if (DEAD_STATUSES.has(order.status)) {
           state.tpOrderId = null;
@@ -945,7 +1108,9 @@ export class ForegroundMartingaleBot {
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
-        this._warnings.push(`Check TP: ${err instanceof Error ? err.message : String(err)}`);
+        this._warnings.push(
+          `Check TP: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -956,7 +1121,9 @@ export class ForegroundMartingaleBot {
         state.levels[0].buyOrderIds.push(orderId);
       } catch (err) {
         rethrowIfInsecureKey(err);
-        this._warnings.push(`Orphan recovery buy: ${err instanceof Error ? err.message : String(err)}`);
+        this._warnings.push(
+          `Orphan recovery buy: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -988,7 +1155,13 @@ export class ForegroundMartingaleBot {
 
       level.buyOrderIds = [];
       level.filled = true;
-      this._applyBuyFill(level, filledQty, quoteSize, new Decimal(0), `dry-buy-${randomUUID().slice(0, 8)}`);
+      this._applyBuyFill(
+        level,
+        filledQty,
+        quoteSize,
+        new Decimal(0),
+        `dry-buy-${randomUUID().slice(0, 8)}`,
+      );
 
       const base = this._config.pair.split("-")[0] ?? "";
       const cs = this._cs;
@@ -998,7 +1171,11 @@ export class ForegroundMartingaleBot {
 
       // Arm next safety order
       const nextLevel = state.levels[level.index + 1];
-      if (nextLevel && !nextLevel.filled && nextLevel.buyOrderIds.length === 0) {
+      if (
+        nextLevel &&
+        !nextLevel.filled &&
+        nextLevel.buyOrderIds.length === 0
+      ) {
         nextLevel.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
       }
 
@@ -1006,7 +1183,11 @@ export class ForegroundMartingaleBot {
     }
 
     // After buy fills: re-check stop-loss (price may have dropped below SL in same tick as entry)
-    if (state.inPosition && state.stopLossPrice && currentPrice.lte(new Decimal(state.stopLossPrice))) {
+    if (
+      state.inPosition &&
+      state.stopLossPrice &&
+      currentPrice.lte(new Decimal(state.stopLossPrice))
+    ) {
       await this._triggerStopLoss(currentPrice);
       return;
     }
@@ -1018,7 +1199,9 @@ export class ForegroundMartingaleBot {
       );
       if (currentPrice.gte(tpPrice)) {
         const totalQty = new Decimal(state.totalQty);
-        const revenue = totalQty.times(tpPrice).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const revenue = totalQty
+          .times(tpPrice)
+          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(new Decimal(state.totalCost));
 
         const cs = this._cs;
@@ -1028,7 +1211,12 @@ export class ForegroundMartingaleBot {
         );
 
         state.tpOrderId = null;
-        this._applyTpFill(revenue, new Decimal(0), `dry-sell-${randomUUID().slice(0, 8)}`, tpPrice);
+        this._applyTpFill(
+          revenue,
+          new Decimal(0),
+          `dry-sell-${randomUUID().slice(0, 8)}`,
+          tpPrice,
+        );
 
         // Rebuild for new cycle
         const newLevels = this._buildLevels(currentPrice);
@@ -1070,8 +1258,10 @@ export class ForegroundMartingaleBot {
       .times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
       .toDecimalPlaces(this._getQuoteStep().decimalPlaces(), Decimal.ROUND_UP);
 
-    const totalQty = new Decimal(state.totalQty)
-      .toDecimalPlaces(this._getBaseStep().decimalPlaces(), Decimal.ROUND_DOWN);
+    const totalQty = new Decimal(state.totalQty).toDecimalPlaces(
+      this._getBaseStep().decimalPlaces(),
+      Decimal.ROUND_DOWN,
+    );
 
     if (this._config.dryRun) {
       state.tpOrderId = `dry-sell-tp-${randomUUID().slice(0, 8)}`;
@@ -1091,13 +1281,18 @@ export class ForegroundMartingaleBot {
       state.tpOrderId = resp.data.venue_order_id;
     } catch (err) {
       rethrowIfInsecureKey(err);
-      this._warnings.push(`TP order @${tpPrice}: ${err instanceof Error ? err.message : String(err)}`);
+      this._warnings.push(
+        `TP order @${tpPrice}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   // --------------- awaiting fills ---------------
 
-  private async _awaitOrderFill(orderId: string, timeoutMs = 30_000): Promise<OrderDetails> {
+  private async _awaitOrderFill(
+    orderId: string,
+    timeoutMs = 30_000,
+  ): Promise<OrderDetails> {
     const client = this._client!;
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -1105,13 +1300,17 @@ export class ForegroundMartingaleBot {
         const resp = await client.getOrder(orderId);
         const order = resp.data;
         if (FILLED_STATUSES.has(order.status)) return order;
-        if (DEAD_STATUSES.has(order.status)) throw new Error(`Order ${order.status}: ${orderId}`);
+        if (DEAD_STATUSES.has(order.status))
+          throw new Error(`Order ${order.status}: ${orderId}`);
       } catch (err) {
-        if (err instanceof Error && !err.message.startsWith("Order ")) throw err;
+        if (err instanceof Error && !err.message.startsWith("Order "))
+          throw err;
       }
       await sleep(500);
     }
-    throw new Error(`Order did not fill within ${timeoutMs / 1000}s: ${orderId}`);
+    throw new Error(
+      `Order did not fill within ${timeoutMs / 1000}s: ${orderId}`,
+    );
   }
 
   // --------------- fees ---------------
@@ -1127,7 +1326,9 @@ export class ForegroundMartingaleBot {
       const filledAmount = order.filled_amount
         ? new Decimal(order.filled_amount)
         : filledQty.times(fallbackPrice);
-      const price = filledQty.gt(0) ? filledAmount.div(filledQty) : fallbackPrice;
+      const price = filledQty.gt(0)
+        ? filledAmount.div(filledQty)
+        : fallbackPrice;
       return fee.times(price);
     }
     return new Decimal(0);
@@ -1168,7 +1369,9 @@ export class ForegroundMartingaleBot {
     const position = new Decimal(state.totalQty);
     const costBasis = new Decimal(state.totalCost);
     const realizedPnl = new Decimal(state.stats.realizedPnl ?? "0");
-    const unrealized = position.gt(0) ? position.times(currentPrice).minus(costBasis) : new Decimal(0);
+    const unrealized = position.gt(0)
+      ? position.times(currentPrice).minus(costBasis)
+      : new Decimal(0);
     const totalPnl = realizedPnl.plus(unrealized);
     const netValue = new Decimal(state.config.investment).plus(totalPnl);
 
@@ -1176,14 +1379,22 @@ export class ForegroundMartingaleBot {
     for (const level of state.levels) openOrders += level.buyOrderIds.length;
     if (state.tpOrderId) openOrders++;
 
-    return { position, realizedPnl, unrealized, totalPnl, netValue, openOrders };
+    return {
+      position,
+      realizedPnl,
+      unrealized,
+      totalPnl,
+      netValue,
+      openOrders,
+    };
   }
 
   // --------------- state & rendering ---------------
 
   private _saveRunningState(): void {
     const state = this._state!;
-    if (this._statusReporter) state.statusMessages = this._statusReporter.snapshot();
+    if (this._statusReporter)
+      state.statusMessages = this._statusReporter.snapshot();
     saveMartingaleState(state);
   }
 
@@ -1192,9 +1403,12 @@ export class ForegroundMartingaleBot {
     const fills: string[] = [];
     const newEntries = this._state.tradeLog.slice(this._tradeLogStart);
     for (const e of newEntries) {
-      fills.push(`${e.side.toUpperCase()} ${e.quantity}@${e.price} [${e.reason}]`);
+      fills.push(
+        `${e.side.toUpperCase()} ${e.quantity}@${e.price} [${e.reason}]`,
+      );
     }
-    const { position, realizedPnl, unrealized, openOrders } = this._computePnl(price);
+    const { position, realizedPnl, unrealized, openOrders } =
+      this._computePnl(price);
     const state = this._state;
     this._onTick({
       index: this._tickCount,
@@ -1202,12 +1416,17 @@ export class ForegroundMartingaleBot {
       price,
       fills,
       position,
-      avgEntryPrice: state.inPosition ? new Decimal(state.avgEntryPrice) : new Decimal(0),
+      avgEntryPrice: state.inPosition
+        ? new Decimal(state.avgEntryPrice)
+        : new Decimal(0),
       realizedPnl,
       unrealizedPnl: unrealized,
-      tpPrice: state.tpOrderId && state.avgEntryPrice !== "0"
-        ? new Decimal(state.avgEntryPrice).times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
-        : null,
+      tpPrice:
+        state.tpOrderId && state.avgEntryPrice !== "0"
+          ? new Decimal(state.avgEntryPrice).times(
+              new Decimal(1).plus(new Decimal(this._config.takeProfit)),
+            )
+          : null,
       slPrice: state.stopLossPrice ? new Decimal(state.stopLossPrice) : null,
       safetyOrdersFilled: state.safetyOrdersFilled,
       openOrders,
@@ -1218,16 +1437,21 @@ export class ForegroundMartingaleBot {
     const state = this._state!;
     const cs = this._cs;
     const price = this._currentPrice ?? new Decimal(0);
-    const { position, realizedPnl, unrealized, totalPnl, netValue } = this._computePnl(price);
+    const { position, realizedPnl, unrealized, totalPnl, netValue } =
+      this._computePnl(price);
     const investment = new Decimal(state.config.investment);
-    const totalPct = investment.gt(0) ? totalPnl.div(investment).times(100) : new Decimal(0);
+    const totalPct = investment.gt(0)
+      ? totalPnl.div(investment).times(100)
+      : new Decimal(0);
 
     let glyph: string;
     let label: string;
     if (this._lifecycle === "finished") {
-      glyph = "✅"; label = "Finished";
+      glyph = "✅";
+      label = "Finished";
     } else if (this._lifecycle === "stopped") {
-      glyph = "\u{1f534}"; label = "Stopped (stop-loss)";
+      glyph = "\u{1f534}";
+      label = "Stopped (stop-loss)";
     } else {
       glyph = "\u{1f7e2}";
       const dir = totalPnl.gt(0) ? "▲" : totalPnl.lt(0) ? "▼" : "━";
@@ -1237,25 +1461,36 @@ export class ForegroundMartingaleBot {
     const mode = state.config.dryRun ? " [DRY RUN]" : "";
     const base = state.pair.split("-")[0] ?? "";
     const s = state.stats;
-    const tpPrice = state.inPosition && state.avgEntryPrice !== "0"
-      ? new Decimal(state.avgEntryPrice).times(new Decimal(1).plus(new Decimal(state.config.takeProfit)))
-      : null;
+    const tpPrice =
+      state.inPosition && state.avgEntryPrice !== "0"
+        ? new Decimal(state.avgEntryPrice).times(
+            new Decimal(1).plus(new Decimal(state.config.takeProfit)),
+          )
+        : null;
 
-    const soBar = Array.from({ length: state.config.maxSafetyOrders + 1 }, (_, i) =>
-      i < state.safetyOrdersFilled + (state.inPosition ? 1 : 0) ? "■" : "□",
+    const soBar = Array.from(
+      { length: state.config.maxSafetyOrders + 1 },
+      (_, i) =>
+        i < state.safetyOrdersFilled + (state.inPosition ? 1 : 0) ? "■" : "□",
     ).join("");
 
     const body = [
       `${glyph} Martingale ${state.pair}${mode}  ${label}`,
       `Price ${fmtPrice(price, cs)} · Pos ${position.toFixed()} ${base}`,
-      state.inPosition ? `Avg Entry ${fmtPrice(new Decimal(state.avgEntryPrice), cs)} · SO [${soBar}]` : `Waiting for entry · SO [${soBar}]`,
-      tpPrice ? `TP ${fmtPrice(tpPrice, cs)} · SL ${state.stopLossPrice ? fmtPrice(new Decimal(state.stopLossPrice), cs) : "—"}` : "",
+      state.inPosition
+        ? `Avg Entry ${fmtPrice(new Decimal(state.avgEntryPrice), cs)} · SO [${soBar}]`
+        : `Waiting for entry · SO [${soBar}]`,
+      tpPrice
+        ? `TP ${fmtPrice(tpPrice, cs)} · SL ${state.stopLossPrice ? fmtPrice(new Decimal(state.stopLossPrice), cs) : "—"}`
+        : "",
       `Realized ${fmtSignedPnl(realizedPnl, cs)} · Unreal ${fmtSignedPnl(unrealized, cs)}`,
       `Total ${fmtSignedPnl(totalPnl, cs)} · Net ${fmtMoney(netValue, cs)}`,
       `Cycles ${s.completedCycles} (${s.winningCycles} wins) · Up ${fmtUptime(Date.now() - this._startTime)}`,
       "",
       `Updated ${fmtLocalDateTime()}`,
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     return "```\n" + mdV2CodeEscape(body) + "\n```";
   }
@@ -1293,10 +1528,13 @@ export class ForegroundMartingaleBot {
   private async _notifyAndWait(message: string): Promise<void> {
     if (this._connections.length === 0) return;
     const results = await Promise.allSettled(
-      this._connections.map((tc) => sendWithRetries(tc.bot_token, tc.chat_id, message)),
+      this._connections.map((tc) =>
+        sendWithRetries(tc.bot_token, tc.chat_id, message),
+      ),
     );
     for (const r of results) {
-      if (r.status === "fulfilled" && r.value.success) this._lastNotifyOk = Date.now();
+      if (r.status === "fulfilled" && r.value.success)
+        this._lastNotifyOk = Date.now();
     }
   }
 
@@ -1309,7 +1547,14 @@ export class ForegroundMartingaleBot {
     profit?: string,
     fee?: string,
   ): void {
-    const entry: MartingaleTradeEntry = { ts: new Date().toISOString(), side, price, quantity, orderId, reason };
+    const entry: MartingaleTradeEntry = {
+      ts: new Date().toISOString(),
+      side,
+      price,
+      quantity,
+      orderId,
+      reason,
+    };
     if (profit !== undefined) entry.profit = profit;
     if (fee !== undefined) entry.fee = fee;
     this._state!.tradeLog.push(entry);
