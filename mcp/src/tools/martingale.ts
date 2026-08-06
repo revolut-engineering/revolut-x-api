@@ -66,7 +66,10 @@ async function fetchMartingaleCandles(
   symbol: string,
   resolution: string,
   days: number,
-  doFetch: (opts: { interval: string; startDate: number }) => Promise<{ data: Candle[] }>,
+  doFetch: (opts: {
+    interval: string;
+    startDate: number;
+  }) => Promise<{ data: Candle[] }>,
   setupGuide: string,
 ): Promise<
   | { error: ReturnType<typeof textResult> }
@@ -125,12 +128,19 @@ export function registerMartingaleTools(server: McpServer): void {
         resolution: z
           .string()
           .default("1h")
-          .describe("Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d (default 1h)"),
-        days: z.number().default(30).describe("Days of historical data (default 30)"),
+          .describe(
+            "Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d (default 1h)",
+          ),
+        days: z
+          .number()
+          .default(30)
+          .describe("Days of historical data (default 30)"),
         price_deviation_pct: z
           .number()
           .default(2)
-          .describe("% price drop between safety orders, e.g. 2 means 2% (default 2)"),
+          .describe(
+            "% price drop between safety orders, e.g. 2 means 2% (default 2)",
+          ),
         safety_order_volume_scale: z
           .number()
           .default(2.0)
@@ -178,15 +188,19 @@ export function registerMartingaleTools(server: McpServer): void {
       if (resErr) return resErr;
       const pair = symbol.trim().toUpperCase();
 
-      if (days < 1 || days > 365) return textResult(`days must be between 1 and 365, got ${days}.`);
-      if (max_safety_orders < 0 || max_safety_orders > 30) return textResult(`max_safety_orders must be between 0 and 30.`);
+      if (days < 1 || days > 365)
+        return textResult(`days must be between 1 and 365, got ${days}.`);
+      if (max_safety_orders < 0 || max_safety_orders > 30)
+        return textResult(`max_safety_orders must be between 0 and 30.`);
 
       const priceDeviation = new Decimal(price_deviation_pct).div(100);
       const scale = new Decimal(safety_order_volume_scale);
       const takeProfit = new Decimal(take_profit_pct).div(100);
       const stopLoss = new Decimal(stop_loss_pct).div(100);
 
-      const minSlRequired = new Decimal(1).minus(new Decimal(1).minus(priceDeviation).pow(max_safety_orders + 1));
+      const minSlRequired = new Decimal(1).minus(
+        new Decimal(1).minus(priceDeviation).pow(max_safety_orders + 1),
+      );
       if (stopLoss.lte(minSlRequired)) {
         return textResult(
           `stop_loss_pct (${stop_loss_pct}%) must exceed ${minSlRequired.times(100).toFixed(2)}% to place the stop-loss below all safety order levels. ` +
@@ -199,7 +213,9 @@ export function registerMartingaleTools(server: McpServer): void {
         investDec = new Decimal(investment);
         if (investDec.lte(0)) return textResult("investment must be positive.");
       } catch {
-        return textResult(`investment must be a valid number, got '${investment}'.`);
+        return textResult(
+          `investment must be a valid number, got '${investment}'.`,
+        );
       }
 
       const fetchResult = await fetchMartingaleCandles(
@@ -224,7 +240,8 @@ export function registerMartingaleTools(server: McpServer): void {
 
       const cs = getCurrSymbol(pair);
       const annualizedPct =
-        (Math.pow(1 + r.returnPct.toNumber() / 100, 365 / actualDays) - 1) * 100;
+        (Math.pow(1 + r.returnPct.toNumber() / 100, 365 / actualDays) - 1) *
+        100;
 
       const lines: string[] = [
         `Martingale Backtest — ${pair}`,
@@ -250,7 +267,8 @@ export function registerMartingaleTools(server: McpServer): void {
       if (r.tradeLog.length > 0) {
         lines.push("", "Recent Trades (last 10):");
         for (const t of r.tradeLog.slice(-10)) lines.push(`  ${t}`);
-        if (r.tradeLog.length > 10) lines.push(`  … and ${r.tradeLog.length - 10} more`);
+        if (r.tradeLog.length > 10)
+          lines.push(`  … and ${r.tradeLog.length - 10} more`);
       }
 
       lines.push(llmNotice);
@@ -271,17 +289,27 @@ export function registerMartingaleTools(server: McpServer): void {
         resolution: z
           .string()
           .default("1h")
-          .describe("Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d (default 1h)"),
-        days: z.number().default(30).describe("Days of historical data (default 30)"),
+          .describe(
+            "Candle interval: 1m, 5m, 15m, 30m, 1h, 4h, 1d (default 1h)",
+          ),
+        days: z
+          .number()
+          .default(30)
+          .describe("Days of historical data (default 30)"),
         stop_loss_pct: z
           .number()
           .default(15)
-          .describe("Fixed stop-loss % below initial buy, applied to all combinations (default 15)"),
+          .describe(
+            "Fixed stop-loss % below initial buy, applied to all combinations (default 15)",
+          ),
         investment: z
           .string()
           .default("1000")
           .describe('Total investment in quote currency (default "1000")'),
-        top: z.number().default(10).describe("Number of top results to return (default 10)"),
+        top: z
+          .number()
+          .default(10)
+          .describe("Number of top results to return (default 10)"),
       },
       annotations: {
         title: "Optimize Martingale Parameters",
@@ -299,7 +327,8 @@ export function registerMartingaleTools(server: McpServer): void {
       if (resErr) return resErr;
       const pair = symbol.trim().toUpperCase();
 
-      if (days < 1 || days > 365) return textResult(`days must be between 1 and 365, got ${days}.`);
+      if (days < 1 || days > 365)
+        return textResult(`days must be between 1 and 365, got ${days}.`);
 
       const stopLoss = new Decimal(stop_loss_pct).div(100);
 
@@ -308,7 +337,9 @@ export function registerMartingaleTools(server: McpServer): void {
         investDec = new Decimal(investment);
         if (investDec.lte(0)) return textResult("investment must be positive.");
       } catch {
-        return textResult(`investment must be a valid number, got '${investment}'.`);
+        return textResult(
+          `investment must be a valid number, got '${investment}'.`,
+        );
       }
 
       const fetchResult = await fetchMartingaleCandles(
