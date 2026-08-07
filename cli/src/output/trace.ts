@@ -3,6 +3,7 @@ import type {
   BacktestFill,
   BacktestTickEvent,
 } from "../shared/backtest/index.js";
+import type { MartingaleBacktestTickEvent } from "../shared/backtest/martingale-engine.js";
 import type { GridBotTickEvent } from "../engine/grid-bot.js";
 import { fmtPrice } from "../engine/grid-renderer.js";
 
@@ -102,6 +103,44 @@ export function emitGridBotTraceJson(
       realizedPnl: ev.realizedPnl.toString(),
       unrealizedPnl: ev.unrealizedPnl.toString(),
       openOrders: ev.openOrders,
+    }) + "\n",
+  );
+}
+
+export function emitMartingaleBacktestTracePlain(
+  ev: MartingaleBacktestTickEvent,
+  currencySymbol: string,
+  out: NodeJS.WritableStream = process.stdout,
+): void {
+  const idx = String(ev.index).padStart(6, "0");
+  const fillsTxt = ev.tickFills.length > 0 ? ev.tickFills.join("; ") : "—";
+  out.write(
+    `[t=${idx}] price=${fmtPrice(ev.close, currencySymbol)} pos=${ev.totalQty.toFixed(5)} ` +
+      `cash=${currencySymbol}${ev.cash.toFixed(2)} realized=${ev.realizedPnl.toFixed(2)} ` +
+      `unrealized=${signedFixed(ev.unrealizedPnl)} total=${currencySymbol}${ev.totalValue.toFixed(2)} | ${fillsTxt}\n`,
+  );
+}
+
+export function emitMartingaleBacktestTraceJson(
+  ev: MartingaleBacktestTickEvent,
+  out: NodeJS.WritableStream = process.stdout,
+): void {
+  out.write(
+    JSON.stringify({
+      t: ev.index,
+      timestamp: ev.timestamp,
+      open: ev.open.toString(),
+      high: ev.high.toString(),
+      low: ev.low.toString(),
+      close: ev.close.toString(),
+      fills: ev.tickFills,
+      position: ev.totalQty.toString(),
+      cash: ev.cash.toString(),
+      realizedPnl: ev.realizedPnl.toString(),
+      unrealizedPnl: ev.unrealizedPnl.toString(),
+      totalValue: ev.totalValue.toString(),
+      safetyOrdersFilled: ev.safetyOrdersFilled,
+      cycle: ev.cycle,
     }) + "\n",
   );
 }
