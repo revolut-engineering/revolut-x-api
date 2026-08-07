@@ -11,6 +11,18 @@ export interface MartingaleBacktestParams {
   investment: Decimal;
 }
 
+export interface MartingaleTrade {
+  index: number;
+  side: "buy" | "sell";
+  label: string; // [INITIAL], [SO#1], [TP], [STOP-LOSS]
+  price: Decimal;
+  quantity: Decimal;
+  quoteValue: Decimal;
+  profit?: Decimal;
+  realizedPnl: Decimal;
+  roiPct: Decimal;
+}
+
 export interface MartingaleBacktestResult {
   completedCycles: number;
   winningCycles: number;
@@ -23,6 +35,7 @@ export interface MartingaleBacktestResult {
   totalReturn: Decimal;
   returnPct: Decimal;
   tradeLog: string[];
+  trades: MartingaleTrade[];
 }
 
 export interface MartingaleBacktestTickEvent {
@@ -35,9 +48,12 @@ export interface MartingaleBacktestTickEvent {
   realizedPnl: Decimal;
   unrealizedPnl: Decimal;
   totalValue: Decimal;
+  totalQty: Decimal;
+  cash: Decimal;
   inPosition: boolean;
   safetyOrdersFilled: number;
   cycle: number;
+  tickFills: string[];
 }
 
 export type MartingaleBacktestOnTick = (
@@ -55,6 +71,7 @@ export interface MartingaleOptimizationResult {
   completedCycles: number;
   stopLossCount: number;
   maxDrawdown: Decimal;
+  calmarApprox: Decimal;
 }
 
 interface CycleState {
@@ -145,11 +162,13 @@ export function runMartingaleBacktest(
       totalReturn: new Decimal(0),
       returnPct: new Decimal(0),
       tradeLog: [],
+      trades: [],
     };
   }
 
-  const { takeProfit, stopLoss } = params;
+  const { takeProfit } = params;
   const tradeLog: string[] = [];
+  const trades: MartingaleTrade[] = [];
   let completedCycles = 0;
   let winningCycles = 0;
   let stopLossCount = 0;
@@ -169,6 +188,8 @@ export function runMartingaleBacktest(
 
     // Bearish candle: check sells first then buys; bullish: buys first then sells
     const bearish = close.lt(candle.open);
+
+    const tickFills: string[] = [];
 
     const runBuys = (): void => {
       for (const level of state.levels) {
@@ -199,6 +220,21 @@ export function runMartingaleBacktest(
         tradeLog.push(
           `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} BUY  $${level.price.toFixed(2)} qty=${qty.toFixed(5)} [${reason}] avgEntry=$${state.avgEntryPrice.toFixed(2)}`,
         );
+        trades.push({
+          index: totalTrades,
+          side: "buy",
+          label: reason,
+          price: level.price,
+          quantity: qty,
+          quoteValue: level.quoteSize,
+          realizedPnl,
+          roiPct: params.investment.gt(0)
+            ? realizedPnl.div(params.investment).times(100)
+            : new Decimal(0),
+        });
+        tickFills.push(
+          `BUY [${reason}] @${level.price.toFixed(2)} qty=${qty.toFixed(5)}`,
+        );
       }
     };
 
@@ -219,6 +255,22 @@ export function runMartingaleBacktest(
         tradeLog.push(
           `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} SELL $${slFillPrice.toFixed(2)} qty=${state.totalQty.toFixed(5)} [STOP-LOSS] pnl=${profit.gte(0) ? "+" : ""}${profit.toFixed(2)}`,
         );
+        trades.push({
+          index: totalTrades,
+          side: "sell",
+          label: "STOP-LOSS",
+          price: slFillPrice,
+          quantity: state.totalQty,
+          quoteValue: revenue,
+          profit,
+          realizedPnl,
+          roiPct: params.investment.gt(0)
+            ? realizedPnl.div(params.investment).times(100)
+            : new Decimal(0),
+        });
+        tickFills.push(
+          `SELL [STOP-LOSS] @${slFillPrice.toFixed(2)} pnl=${profit.gte(0) ? "+" : ""}${profit.toFixed(2)}`,
+        );
         resetCycleState(state);
         stopped = true;
         return;
@@ -237,6 +289,22 @@ export function runMartingaleBacktest(
         totalTrades++;
         tradeLog.push(
           `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} SELL $${tpFillPrice.toFixed(2)} qty=${state.totalQty.toFixed(5)} [TP] profit=+${profit.toFixed(2)}`,
+        );
+        trades.push({
+          index: totalTrades,
+          side: "sell",
+          label: "TP",
+          price: tpFillPrice,
+          quantity: state.totalQty,
+          quoteValue: revenue,
+          profit,
+          realizedPnl,
+          roiPct: params.investment.gt(0)
+            ? realizedPnl.div(params.investment).times(100)
+            : new Decimal(0),
+        });
+        tickFills.push(
+          `SELL [TP] @${tpFillPrice.toFixed(2)} profit=+${profit.toFixed(2)}`,
         );
         // Start a new cycle at current close price
         state = initCycle(close, params);
@@ -262,6 +330,7 @@ export function runMartingaleBacktest(
 
     if (onTick) {
       const ts = typeof candle.start === "number" ? candle.start : i * 60000;
+      const cash = params.investment.minus(state.totalCost).plus(realizedPnl);
       onTick({
         index: i,
         timestamp: ts,
@@ -272,9 +341,12 @@ export function runMartingaleBacktest(
         realizedPnl,
         unrealizedPnl: unrealized,
         totalValue,
+        totalQty: state.totalQty,
+        cash,
         inPosition: state.inPosition,
         safetyOrdersFilled: state.safetyOrdersFilled,
         cycle: completedCycles,
+        tickFills,
       });
     }
   }
@@ -300,6 +372,7 @@ export function runMartingaleBacktest(
     totalReturn,
     returnPct,
     tradeLog,
+    trades,
   };
 }
 
@@ -313,6 +386,7 @@ export function optimizeMartingaleParams(
     takeProfits?: Decimal[];
     stopLoss?: Decimal;
     maxCombinations?: number;
+    days?: number;
   },
 ): MartingaleOptimizationResult[] {
   const priceDeviations = opts?.priceDeviations ?? [
@@ -363,9 +437,17 @@ export function optimizeMartingaleParams(
     }
   }
 
+  const days = opts?.days ?? 1;
   const results: MartingaleOptimizationResult[] = [];
   for (const params of combinations) {
     const r = runMartingaleBacktest(candles, params);
+    const annualizedReturn = r.returnPct.div(100).times(365).div(days);
+    const maxDrawdownRatio = investment.gt(0)
+      ? r.maxDrawdown.div(investment)
+      : new Decimal(0);
+    const calmar = maxDrawdownRatio.gt(0)
+      ? annualizedReturn.div(maxDrawdownRatio)
+      : annualizedReturn;
     results.push({
       priceDeviation: params.priceDeviation,
       safetyOrderVolumeScale: params.safetyOrderVolumeScale,
@@ -377,6 +459,7 @@ export function optimizeMartingaleParams(
       completedCycles: r.completedCycles,
       stopLossCount: r.stopLossCount,
       maxDrawdown: r.maxDrawdown,
+      calmarApprox: calmar,
     });
   }
 
