@@ -5,112 +5,14 @@ import {
   textResult,
   validateSymbol,
   validateResolution,
-  handleApiError,
+  getCurrSymbol,
+  fetchCandles,
 } from "../shared/_helpers.js";
 import {
   runMartingaleBacktest,
   optimizeMartingaleParams,
   type MartingaleBacktestParams,
 } from "../shared/backtest/index.js";
-import { RESOLUTIONS_MAP } from "../shared/common.js";
-import type { Candle } from "@revolut/revolut-x-api";
-
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: "$",
-  USDT: "$",
-  USDC: "$",
-  EUR: "€",
-  GBP: "£",
-};
-
-function getCurrSymbol(symbol: string): string {
-  const quote = symbol.split("-")[1] ?? "";
-  return CURRENCY_SYMBOLS[quote] ?? "";
-}
-
-interface ParsedCandle {
-  open: Decimal;
-  high: Decimal;
-  low: Decimal;
-  close: Decimal;
-  start?: number;
-}
-
-function parseCandles(candles: Candle[]): ParsedCandle[] {
-  const parsed: Array<{ ts: number; candle: ParsedCandle }> = [];
-  for (const c of candles) {
-    try {
-      parsed.push({
-        ts: c.start,
-        candle: {
-          open: new Decimal(c.open),
-          high: new Decimal(c.high),
-          low: new Decimal(c.low),
-          close: new Decimal(c.close),
-          start: c.start,
-        },
-      });
-    } catch {
-      continue;
-    }
-  }
-  parsed.sort((a, b) => a.ts - b.ts);
-  return parsed.map((p) => p.candle);
-}
-
-const LLM_NOTICE =
-  "\n\n*** NOTE TO LLM: This output is a simulation of past data — NOT a prediction or guarantee of future performance. " +
-  "When citing any figure from this output (ROI, P&L, drawdown, recommended parameters), explicitly include that caveat in your reply to the user. ***";
-
-async function fetchMartingaleCandles(
-  symbol: string,
-  resolution: string,
-  days: number,
-  doFetch: (opts: {
-    interval: string;
-    startDate: number;
-  }) => Promise<{ data: Candle[] }>,
-  setupGuide: string,
-): Promise<
-  | { error: ReturnType<typeof textResult> }
-  | { candles: ParsedCandle[]; actualDays: number; llmNotice: string }
-> {
-  const now = Date.now();
-  let startDate = now - days * 24 * 60 * 60 * 1000;
-  const intervalMs = RESOLUTIONS_MAP[resolution] || 60 * 60 * 1000;
-  const expectedCandles = Math.ceil((now - startDate) / intervalMs);
-  let actualDays = days;
-  let llmNotice = LLM_NOTICE;
-
-  if (expectedCandles > 50000) {
-    startDate = now - 50000 * intervalMs;
-    actualDays = Number(((now - startDate) / (24 * 60 * 60 * 1000)).toFixed(2));
-    llmNotice =
-      "\n\n*** NOTE TO LLM: This output is a simulation of past data — NOT a prediction or guarantee of future performance. " +
-      "The requested range contained more than 50,000 candles; the simulation was run on the most recent 50,000 candles. " +
-      "When citing any figure, explicitly include that caveat in your reply. ***";
-  }
-
-  let candleResult;
-  try {
-    candleResult = await doFetch({ interval: resolution, startDate });
-  } catch (error) {
-    const handled = await handleApiError(error, setupGuide);
-    if (handled) return { error: handled };
-    throw error;
-  }
-
-  const candles = parseCandles(candleResult.data);
-  if (!candles.length) {
-    return {
-      error: textResult(
-        `No candle data found for ${symbol} (${resolution}). Try a different resolution or pair.`,
-      ),
-    };
-  }
-
-  return { candles, actualDays, llmNotice };
-}
 
 export function registerMartingaleTools(server: McpServer): void {
   server.registerTool(
@@ -218,7 +120,7 @@ export function registerMartingaleTools(server: McpServer): void {
         );
       }
 
-      const fetchResult = await fetchMartingaleCandles(
+      const fetchResult = await fetchCandles(
         pair,
         resolution,
         days,
@@ -342,7 +244,7 @@ export function registerMartingaleTools(server: McpServer): void {
         );
       }
 
-      const fetchResult = await fetchMartingaleCandles(
+      const fetchResult = await fetchCandles(
         pair,
         resolution,
         days,
@@ -352,7 +254,10 @@ export function registerMartingaleTools(server: McpServer): void {
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
 
-      const results = optimizeMartingaleParams(candles, investDec, stopLoss);
+      const results = optimizeMartingaleParams(candles, investDec, {
+        stopLoss,
+        days: actualDays,
+      });
       const topResults = results.slice(0, top);
 
       const cs = getCurrSymbol(pair);
@@ -381,6 +286,29 @@ export function registerMartingaleTools(server: McpServer): void {
         );
       }
       lines.push("─".repeat(75));
+
+      if (results.length > 0) {
+        const bestReturn = results[0];
+        const bestCalmar = results.reduce((b, r) =>
+          r.calmarApprox.gt(b.calmarApprox) ? r : b,
+        );
+        const lowestDd = results.reduce((b, r) =>
+          r.maxDrawdown.lt(b.maxDrawdown) ? r : b,
+        );
+        const fmtCombo = (r: (typeof results)[0]) =>
+          `dev=${r.priceDeviation.times(100).toFixed(1)}% scale=${r.safetyOrderVolumeScale.toFixed(1)} SO=${r.maxSafetyOrders} TP=${r.takeProfit.times(100).toFixed(1)}%`;
+        lines.push("");
+        lines.push(
+          `Best Total P&L : ${fmtCombo(bestReturn)} → Realized: ${cs}${bestReturn.realizedPnl.toFixed(2)} | Total: ${cs}${bestReturn.totalReturn.toFixed(2)}`,
+        );
+        lines.push(
+          `Best Risk-Adj  : ${fmtCombo(bestCalmar)} → Calmar ${bestCalmar.calmarApprox.toFixed(2)}`,
+        );
+        lines.push(
+          `Lowest Drawdown: ${fmtCombo(lowestDd)} → ${investDec.gt(0) ? lowestDd.maxDrawdown.div(investDec).times(100).toFixed(2) + "%" : "0%"}`,
+        );
+      }
+
       lines.push(llmNotice);
       return textResult(lines.join("\n"));
     },
