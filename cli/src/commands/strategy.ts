@@ -23,6 +23,16 @@ import {
 } from "../engine/grid-bot.js";
 import { getCurrSymbol, fmtPrice } from "../engine/grid-renderer.js";
 import {
+  ForegroundMartingaleBot,
+  type MartingaleBotConfig,
+} from "../engine/martingale-bot.js";
+import {
+  runMartingaleBacktest,
+  optimizeMartingaleParams,
+  type MartingaleBacktestParams,
+  type MartingaleBacktestTickEvent,
+} from "../shared/backtest/martingale-engine.js";
+import {
   parseSpec,
   loadBatch,
   createLiveProvider,
@@ -34,6 +44,8 @@ import {
 import {
   emitBacktestTracePlain,
   emitBacktestTraceJson,
+  emitMartingaleBacktestTracePlain,
+  emitMartingaleBacktestTraceJson,
   emitGridBotTracePlain,
   emitGridBotTraceJson,
 } from "../output/trace.js";
@@ -1042,4 +1054,745 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
       "Output as JSON. Combined with --trace, emits NDJSON per-tick records.",
     )
     .action(handleRun);
+
+  // ── Martingale strategy ──────────────────────────────────────────────────
+
+  const martingale = strategy
+    .command("martingale")
+    .description(
+      "Martingale DCA strategy — accumulates with geometric sizing, sells all at unified take-profit",
+    );
+
+  martingale
+    .command("backtest <pair>")
+    .description("Run a martingale backtest on historical candle data")
+    .option(
+      "--price-deviation <pct>",
+      "% price drop between safety orders, e.g. 2 for 2%",
+      "2",
+    )
+    .option("--scale <n>", "Safety order volume scale multiplier", "2.0")
+    .option("--max-safety-orders <n>", "Maximum number of safety orders", "5")
+    .option(
+      "--take-profit <pct>",
+      "Take profit % above avg entry, e.g. 1.5",
+      "1.5",
+    )
+    .option("--stop-loss <pct>", "Stop loss % below initial buy, e.g. 15", "15")
+    .option("--investment <amount>", "Capital in quote currency", "1000")
+    .option("--days <n>", "Days of historical data", "3")
+    .option(
+      "--interval <res>",
+      "Candle resolution (1m, 5m, 15m, 30m, 1h, 4h, 1d)",
+      "1m",
+    )
+    .option(
+      "--prices <spec>",
+      "Price source (api, file:<path>, inline:<csv>, gen:<type>?<params>)",
+      "api",
+    )
+    .option("--trace", "Emit per-tick trace")
+    .option("--json", "Output as JSON")
+    .option("-o, --output <format>", "Output format (json)")
+    .action(handleMartingaleBacktest);
+
+  martingale
+    .command("optimize <pair>")
+    .description("Sweep martingale parameter combinations and rank by return")
+    .option(
+      "--price-deviation <csv>",
+      "Price deviation % values to test, e.g. '1,1.5,2,2.5,3'",
+      "1,1.5,2,2.5,3",
+    )
+    .option(
+      "--scale <csv>",
+      "Safety order volume scale values to test, e.g. '1.5,2,2.5'",
+      "1.5,2.0,2.5",
+    )
+    .option(
+      "--max-safety-orders <csv>",
+      "Max safety order counts to test, e.g. '3,5,7'",
+      "3,5,7",
+    )
+    .option(
+      "--take-profit <csv>",
+      "Take profit % values to test, e.g. '1,1.5,2,2.5'",
+      "1,1.5,2,2.5",
+    )
+    .option(
+      "--stop-loss <pct>",
+      "Stop loss % below initial buy (fixed across sweep)",
+      "15",
+    )
+    .option("--investment <amount>", "Capital in quote currency", "1000")
+    .option("--days <n>", "Days of historical data", "3")
+    .option("--interval <res>", "Candle resolution", "1m")
+    .option("--top <n>", "Number of top results to show", "10")
+    .option("--prices <spec>", "Price source", "api")
+    .option("--json", "Output as JSON")
+    .option("-o, --output <format>", "Output format (json)")
+    .action(handleMartingaleOptimize);
+
+  martingale
+    .command("run <pair>")
+    .description("Run a live martingale trading bot (foreground process)")
+    .requiredOption(
+      "--investment <amount>",
+      "Capital in quote currency to deploy",
+    )
+    .option(
+      "--price-deviation <pct>",
+      "% price drop between safety orders",
+      "2",
+    )
+    .option("--scale <n>", "Safety order volume scale multiplier", "2.0")
+    .option("--max-safety-orders <n>", "Maximum number of safety orders", "5")
+    .option("--take-profit <pct>", "Take profit % above avg entry", "1.5")
+    .option(
+      "--stop-loss <pct>",
+      "Stop loss % below current price at cycle start, e.g. 15",
+      "15",
+    )
+    .option("--interval <sec>", "Polling interval in seconds", "10")
+    .option("--dry-run", "Simulate without placing real orders")
+    .option("--reset", "Discard saved state and start a fresh cycle")
+    .option(
+      "--prices <spec>",
+      "[Dry-run only] Synthetic price sequence instead of live order book",
+      "api",
+    )
+    .option("--json", "Output as JSON")
+    .action(handleMartingaleRun);
+}
+
+// ── Martingale handlers ──────────────────────────────────────────────────────
+
+async function handleMartingaleBacktest(
+  pair: string,
+  opts: {
+    priceDeviation: string;
+    scale: string;
+    maxSafetyOrders: string;
+    takeProfit: string;
+    stopLoss: string;
+    investment: string;
+    days: string;
+    interval: string;
+    prices?: string;
+    trace?: boolean;
+    json?: boolean;
+    output?: string;
+  },
+): Promise<void> {
+  pair = validatePair(pair);
+
+  if (!VALID_RESOLUTIONS.has(opts.interval)) {
+    printError(
+      `Invalid resolution '${chalk.cyan(opts.interval)}'. Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
+    );
+    process.exit(1);
+  }
+
+  const priceDeviation = parseDecimalArg(
+    opts.priceDeviation,
+    "--price-deviation",
+  ).div(100);
+  const scale = parseDecimalArg(opts.scale, "--scale");
+  const maxSafetyOrders = parseInt(opts.maxSafetyOrders, 10);
+  if (isNaN(maxSafetyOrders) || maxSafetyOrders < 0 || maxSafetyOrders > 30) {
+    printError("--max-safety-orders must be between 0 and 30.");
+    process.exit(1);
+  }
+  const takeProfit = parseDecimalArg(opts.takeProfit, "--take-profit").div(100);
+  const stopLoss = parseDecimalArg(opts.stopLoss, "--stop-loss").div(100);
+  const investment = parseDecimalArg(opts.investment, "--investment");
+  const days = parseInt(opts.days, 10) || 3;
+  const spec = parsePriceSpec(opts.prices);
+  const traceEnabled = opts.trace === true;
+
+  const minSlRequired = new Decimal(1).minus(
+    new Decimal(1).minus(priceDeviation).pow(maxSafetyOrders),
+  );
+  if (stopLoss.lte(minSlRequired)) {
+    printError(
+      `Stop-loss (${stopLoss.times(100).toFixed(1)}%) must exceed ${minSlRequired.times(100).toFixed(2)}% to be below all safety order levels.`,
+    );
+    process.exit(1);
+  }
+
+  if (isScenarioSpec(spec)) {
+    console.log(
+      chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
+    );
+  } else {
+    console.log(
+      chalk.gray(
+        `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
+      ),
+    );
+  }
+  const candles = await loadScenarioCandles(spec, pair, opts.interval, days);
+
+  if (candles.length === 0) {
+    printError(
+      `No candle data found for ${chalk.cyan(pair)} (${opts.interval}).`,
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.gray(
+      `  ↳ Running martingale backtest on ${candles.length} candles...\n`,
+    ),
+  );
+
+  const params: MartingaleBacktestParams = {
+    priceDeviation,
+    safetyOrderVolumeScale: scale,
+    maxSafetyOrders,
+    takeProfit,
+    stopLoss,
+    investment,
+  };
+  const cs = getCurrSymbol(pair);
+  const traceJson = traceEnabled && isJsonOutput(opts);
+  const tracePlain = traceEnabled && !isJsonOutput(opts);
+
+  if (tracePlain) {
+    console.log(chalk.cyan.bold("\n❖ Trace (per-tick)"));
+    console.log(chalk.dim("─".repeat(50)));
+  }
+
+  const onTick = traceEnabled
+    ? (ev: MartingaleBacktestTickEvent) => {
+        if (traceJson) {
+          emitMartingaleBacktestTraceJson(ev);
+        } else {
+          emitMartingaleBacktestTracePlain(ev, cs);
+        }
+      }
+    : undefined;
+
+  const result = runMartingaleBacktest(candles, params, onTick);
+
+  if (traceJson) return;
+
+  if (isJsonOutput(opts)) {
+    printJson({
+      pair,
+      priceDeviation: priceDeviation.times(100).toNumber(),
+      scale: scale.toNumber(),
+      maxSafetyOrders,
+      takeProfit: takeProfit.times(100).toNumber(),
+      stopLoss: stopLoss.times(100).toNumber(),
+      investment: investment.toNumber(),
+      candles: candles.length,
+      resolution: opts.interval,
+      completedCycles: result.completedCycles,
+      winningCycles: result.winningCycles,
+      stopLossCount: result.stopLossCount,
+      totalTrades: result.totalTrades,
+      realizedPnl: result.realizedPnl.toNumber(),
+      totalReturn: result.totalReturn.toNumber(),
+      returnPct: result.returnPct.toNumber(),
+      maxDrawdown: investment.gt(0)
+        ? result.maxDrawdown.div(investment).times(100).toNumber()
+        : 0,
+    });
+    return;
+  }
+
+  const w = 56;
+  const h = "═";
+  const dimV = chalk.dim("║");
+
+  console.log(chalk.dim(`╔${h.repeat(w)}╗`));
+  console.log(
+    `${dimV}${chalk.bold.cyan("  MARTINGALE BACKTEST RESULTS")}${" ".repeat(w - 29)}${dimV}`,
+  );
+  console.log(chalk.dim(`╠${h.repeat(w)}╣`));
+  console.log(`${dimV}${" ".repeat(w)}${dimV}`);
+
+  const pad = (label: string, value: string) => {
+    const content = `   ${chalk.gray(label.padEnd(18))}${value}`;
+    // eslint-disable-next-line no-control-regex
+    const visible = content.replace(/\[[0-9;]*m/g, "").length;
+    const right = Math.max(0, w - visible);
+    return `${dimV}${content}${" ".repeat(right)}${dimV}`;
+  };
+
+  console.log(pad("Pair", chalk.white(pair)));
+  console.log(pad("Candles", `${candles.length} (${opts.interval})`));
+  console.log(
+    pad(
+      "Price Deviation",
+      chalk.cyan(`${priceDeviation.times(100).toFixed(2)}%`),
+    ),
+  );
+  console.log(pad("Scale", chalk.cyan(scale.toFixed(2))));
+  console.log(pad("Max Safety Orders", chalk.cyan(String(maxSafetyOrders))));
+  console.log(
+    pad("Take Profit", chalk.green(`${takeProfit.times(100).toFixed(2)}%`)),
+  );
+  console.log(
+    pad("Stop Loss", chalk.red(`${stopLoss.times(100).toFixed(2)}%`)),
+  );
+  console.log(pad("Investment", `${cs}${investment.toFixed(2)}`));
+  console.log(`${dimV}${" ".repeat(w)}${dimV}`);
+  console.log(chalk.dim(`╠${h.repeat(w)}╣`));
+  console.log(
+    `${dimV}${chalk.bold.cyan("  PERFORMANCE")}${" ".repeat(w - 13)}${dimV}`,
+  );
+  console.log(chalk.dim(`╠${h.repeat(w)}╣`));
+  console.log(`${dimV}${" ".repeat(w)}${dimV}`);
+  console.log(
+    pad(
+      "Completed Cycles",
+      `${result.completedCycles} (${chalk.green(String(result.winningCycles))} wins)`,
+    ),
+  );
+  console.log(pad("Stop-Loss Hits", chalk.red(String(result.stopLossCount))));
+  console.log(pad("Total Trades", String(result.totalTrades)));
+  const pnlColor = result.realizedPnl.gte(0) ? chalk.green : chalk.red;
+  console.log(
+    pad("Realized P&L", pnlColor(`${cs}${result.realizedPnl.toFixed(2)}`)),
+  );
+  const retColor = result.returnPct.gte(0) ? chalk.green : chalk.red;
+  console.log(
+    pad("Total Return", retColor(`${cs}${result.totalReturn.toFixed(2)}`)),
+  );
+  console.log(pad("ROI", retColor(`${result.returnPct.toFixed(2)}%`)));
+  const ddPct = investment.gt(0)
+    ? result.maxDrawdown.div(investment).times(100)
+    : new Decimal(0);
+  console.log(pad("Max Drawdown", chalk.red(`${ddPct.toFixed(2)}%`)));
+  const annualizedPct =
+    (Math.pow(1 + result.returnPct.toNumber() / 100, 365 / days) - 1) * 100;
+  const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
+  console.log(pad("Annualized", annColor(`${annualizedPct.toFixed(2)}%`)));
+  console.log(`${dimV}${" ".repeat(w)}${dimV}`);
+  console.log(chalk.dim(`╚${h.repeat(w)}╝`));
+
+  if (result.trades.length > 0) {
+    console.log("");
+    console.log(chalk.bold.cyan(`  Trades (${result.trades.length})`));
+    printTable(result.trades, [
+      { header: "#", accessor: (t) => String(t.index), align: "right" },
+      {
+        header: "Side",
+        accessor: (t) => {
+          const label =
+            t.label === "STOP-LOSS"
+              ? `${t.side.toUpperCase()} (SL)`
+              : t.label === "TP"
+                ? `${t.side.toUpperCase()} (TP)`
+                : `${t.side.toUpperCase()} [${t.label}]`;
+          return t.side === "buy" ? chalk.green(label) : chalk.red(label);
+        },
+      },
+      {
+        header: "Price",
+        accessor: (t) => fmtPrice(t.price, cs),
+        align: "right",
+      },
+      {
+        header: "Qty",
+        accessor: (t) => t.quantity.toFixed(5),
+        align: "right",
+      },
+      {
+        header: "Quote",
+        accessor: (t) =>
+          t.side === "buy"
+            ? `-${cs}${t.quoteValue.toFixed(2)}`
+            : `+${cs}${t.quoteValue.toFixed(2)}`,
+        align: "right",
+      },
+      {
+        header: "Profit",
+        accessor: (t) => {
+          if (t.profit === undefined) return "";
+          const v = `${cs}${t.profit.toFixed(2)}`;
+          return t.profit.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+      {
+        header: "Realized",
+        accessor: (t) => {
+          const v = `${cs}${t.realizedPnl.toFixed(2)}`;
+          return t.realizedPnl.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+      {
+        header: "ROI",
+        accessor: (t) => {
+          const v = `${t.roiPct.toFixed(2)}%`;
+          return t.roiPct.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+    ]);
+  }
+  console.log(
+    chalk.gray(
+      "\n  ↳ Note: Backtest does not model spread/slippage or partial fills.\n" +
+        "    Live performance will differ, especially in illiquid or fast-moving markets.",
+    ),
+  );
+}
+
+async function handleMartingaleOptimize(
+  pair: string,
+  opts: {
+    priceDeviation: string;
+    scale: string;
+    maxSafetyOrders: string;
+    takeProfit: string;
+    stopLoss: string;
+    investment: string;
+    days: string;
+    interval: string;
+    top: string;
+    prices?: string;
+    json?: boolean;
+    output?: string;
+  },
+): Promise<void> {
+  pair = validatePair(pair);
+
+  if (!VALID_RESOLUTIONS.has(opts.interval)) {
+    printError(
+      `Invalid resolution '${chalk.cyan(opts.interval)}'. Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
+    );
+    process.exit(1);
+  }
+
+  let deviationsList: Decimal[];
+  try {
+    deviationsList = opts.priceDeviation
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => new Decimal(x).div(100));
+    if (deviationsList.length === 0) throw new Error();
+  } catch {
+    printError(
+      "--price-deviation must be comma-separated numbers, e.g. '1,1.5,2,2.5,3'.",
+    );
+    process.exit(1);
+  }
+
+  let scalesList: Decimal[];
+  try {
+    scalesList = opts.scale
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => new Decimal(x));
+    if (scalesList.length === 0) throw new Error();
+  } catch {
+    printError("--scale must be comma-separated numbers, e.g. '1.5,2,2.5'.");
+    process.exit(1);
+  }
+
+  let maxSafetyOrdersList: number[];
+  try {
+    maxSafetyOrdersList = opts.maxSafetyOrders
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => {
+        const n = parseInt(x, 10);
+        if (isNaN(n) || n < 0 || n > 30) throw new Error();
+        return n;
+      });
+    if (maxSafetyOrdersList.length === 0) throw new Error();
+  } catch {
+    printError(
+      "--max-safety-orders must be comma-separated integers (0–30), e.g. '3,5,7'.",
+    );
+    process.exit(1);
+  }
+
+  let takeProfitsList: Decimal[];
+  try {
+    takeProfitsList = opts.takeProfit
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => new Decimal(x).div(100));
+    if (takeProfitsList.length === 0) throw new Error();
+  } catch {
+    printError(
+      "--take-profit must be comma-separated numbers, e.g. '1,1.5,2,2.5'.",
+    );
+    process.exit(1);
+  }
+
+  const totalCombos =
+    deviationsList.length *
+    scalesList.length *
+    maxSafetyOrdersList.length *
+    takeProfitsList.length;
+  if (totalCombos > 200) {
+    printError(
+      `Too many combinations (${chalk.cyan(totalCombos)}). Max 200. Reduce --deviations, --scales, --max-safety-orders, or --take-profits.`,
+    );
+    process.exit(1);
+  }
+
+  const stopLoss = parseDecimalArg(opts.stopLoss, "--stop-loss").div(100);
+  const investment = parseDecimalArg(opts.investment, "--investment");
+  const days = parseInt(opts.days, 10) || 3;
+  const topN = parseInt(opts.top, 10) || 10;
+  const spec = parsePriceSpec(opts.prices);
+
+  if (isScenarioSpec(spec)) {
+    console.log(
+      chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
+    );
+  } else {
+    console.log(
+      chalk.gray(
+        `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
+      ),
+    );
+  }
+  const candles = await loadScenarioCandles(spec, pair, opts.interval, days);
+
+  if (candles.length === 0) {
+    printError(
+      `No candle data found for ${chalk.cyan(pair)} (${opts.interval}).`,
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.gray(
+      `  ↳ Running martingale optimization on ${candles.length} candles (${totalCombos} combinations)...\n`,
+    ),
+  );
+
+  const results = optimizeMartingaleParams(candles, investment, {
+    priceDeviations: deviationsList,
+    scales: scalesList,
+    maxSafetyOrdersList,
+    takeProfits: takeProfitsList,
+    stopLoss,
+    days,
+  });
+
+  if (isJsonOutput(opts)) {
+    printJson(
+      results.slice(0, topN).map((r) => ({
+        priceDeviation: r.priceDeviation.times(100).toNumber(),
+        scale: r.safetyOrderVolumeScale.toNumber(),
+        maxSafetyOrders: r.maxSafetyOrders,
+        takeProfit: r.takeProfit.times(100).toNumber(),
+        realizedPnl: r.realizedPnl.toNumber(),
+        totalReturn: r.totalReturn.toNumber(),
+        returnPct: r.returnPct.toNumber(),
+        completedCycles: r.completedCycles,
+        stopLossCount: r.stopLossCount,
+        maxDrawdown: r.maxDrawdown.toNumber(),
+      })),
+    );
+    return;
+  }
+
+  const cs = getCurrSymbol(pair);
+
+  printSectionHeader(`Martingale Optimization Results: ${pair}`);
+  console.log(
+    chalk.gray(
+      `  ↳ ${candles.length} candles (${opts.interval}) | ${results.length} combinations tested\n`,
+    ),
+  );
+
+  const show = results.slice(0, topN);
+
+  printTable(
+    show.map((r, i) => {
+      const isProfitable = r.totalReturn.gte(0);
+      const isRealizedPos = r.realizedPnl.gte(0);
+      const ddPct = investment.gt(0)
+        ? r.maxDrawdown.div(investment).times(100)
+        : new Decimal(0);
+      const perCycle =
+        r.completedCycles > 0
+          ? r.realizedPnl.div(r.completedCycles)
+          : new Decimal(0);
+      return {
+        rank: i + 1,
+        dev: r.priceDeviation.times(100).toFixed(2) + "%",
+        scale: r.safetyOrderVolumeScale.toFixed(2),
+        so: r.maxSafetyOrders,
+        tp: r.takeProfit.times(100).toFixed(2) + "%",
+        realized: isRealizedPos
+          ? chalk.green(`${cs}${r.realizedPnl.toFixed(2)}`)
+          : chalk.red(`${cs}${r.realizedPnl.toFixed(2)}`),
+        return_: isProfitable
+          ? chalk.green(`${cs}${r.totalReturn.toFixed(2)}`)
+          : chalk.red(`${cs}${r.totalReturn.toFixed(2)}`),
+        returnPct: isProfitable
+          ? chalk.green(`+${r.returnPct.toFixed(2)}%`)
+          : chalk.red(`${r.returnPct.toFixed(2)}%`),
+        cycles: r.completedCycles,
+        slHits: r.stopLossCount,
+        drawdown: chalk.red(`${ddPct.toFixed(2)}%`),
+        perCycle: `${cs}${perCycle.toFixed(2)}`,
+      };
+    }),
+    [
+      { header: "#", accessor: (r) => String(r.rank), align: "right" as const },
+      { header: "Dev%", key: "dev", align: "right" as const },
+      { header: "Scale", key: "scale", align: "right" as const },
+      { header: "SO", accessor: (r) => String(r.so), align: "right" as const },
+      { header: "TP%", key: "tp", align: "right" as const },
+      { header: "Realized", key: "realized", align: "right" as const },
+      { header: "Total P&L", key: "return_", align: "right" as const },
+      { header: "ROI", key: "returnPct", align: "right" as const },
+      {
+        header: "Cycles",
+        accessor: (r) => String(r.cycles),
+        align: "right" as const,
+      },
+      {
+        header: "SL Hits",
+        accessor: (r) => String(r.slHits),
+        align: "right" as const,
+      },
+      { header: "Drawdown", key: "drawdown", align: "right" as const },
+      { header: "$/Cycle", key: "perCycle", align: "right" as const },
+    ],
+  );
+
+  if (results.length > 0) {
+    console.log("");
+    const bestReturn = results[0];
+    const bestCalmar = results.reduce((b, r) =>
+      r.calmarApprox.gt(b.calmarApprox) ? r : b,
+    );
+    const lowestDd = results.reduce((b, r) =>
+      r.maxDrawdown.lt(b.maxDrawdown) ? r : b,
+    );
+
+    const fmtCombo = (r: (typeof results)[0]) =>
+      `dev=${chalk.white(r.priceDeviation.times(100).toFixed(1) + "%")} ` +
+      `scale=${chalk.white(r.safetyOrderVolumeScale.toFixed(1))} ` +
+      `SO=${chalk.white(String(r.maxSafetyOrders))} ` +
+      `TP=${chalk.white(r.takeProfit.times(100).toFixed(1) + "%")}`;
+
+    printKeyValue([
+      [
+        "Best Total P&L",
+        `${fmtCombo(bestReturn)} → Realized: ${chalk.green(cs + bestReturn.realizedPnl.toFixed(2))} | Total: ${chalk.green(cs + bestReturn.totalReturn.toFixed(2))}`,
+      ],
+      [
+        "Best Risk-Adj",
+        `${fmtCombo(bestCalmar)} → ${chalk.cyan("Calmar " + bestCalmar.calmarApprox.toFixed(2))}`,
+      ],
+      [
+        "Lowest Drawdown",
+        `${fmtCombo(lowestDd)} → ${chalk.green(investment.gt(0) ? lowestDd.maxDrawdown.div(investment).times(100).toFixed(2) + "%" : "0%")}`,
+      ],
+    ]);
+    console.log("");
+  }
+}
+
+async function handleMartingaleRun(
+  pair: string,
+  opts: {
+    investment: string;
+    priceDeviation: string;
+    scale: string;
+    maxSafetyOrders: string;
+    takeProfit: string;
+    stopLoss: string;
+    interval: string;
+    dryRun?: boolean;
+    reset?: boolean;
+    prices?: string;
+    json?: boolean;
+  },
+): Promise<void> {
+  pair = validatePair(pair);
+
+  const investment = parseDecimalArg(opts.investment, "--investment");
+  const priceDeviation = parseDecimalArg(
+    opts.priceDeviation,
+    "--price-deviation",
+  ).div(100);
+  const scale = parseDecimalArg(opts.scale, "--scale");
+  const maxSafetyOrders = parseInt(opts.maxSafetyOrders, 10);
+  if (isNaN(maxSafetyOrders) || maxSafetyOrders < 0 || maxSafetyOrders > 30) {
+    printError("--max-safety-orders must be between 0 and 30.");
+    process.exit(1);
+  }
+  const takeProfit = parseDecimalArg(opts.takeProfit, "--take-profit").div(100);
+  const stopLoss = parseDecimalArg(opts.stopLoss, "--stop-loss").div(100);
+  // SL is measured from currentPrice; lowest level is at currentPrice × (1-dev)^(N+1)
+  const minSlRequired = new Decimal(1).minus(
+    new Decimal(1).minus(priceDeviation).pow(maxSafetyOrders + 1),
+  );
+  if (stopLoss.lte(minSlRequired)) {
+    printError(
+      `--stop-loss (${stopLoss.times(100).toFixed(1)}%) must exceed ${minSlRequired.times(100).toFixed(2)}% to be below all safety order levels.`,
+    );
+    process.exit(1);
+  }
+  const intervalSec = Math.max(1, parseInt(opts.interval, 10) || 10);
+  const dryRun = opts.dryRun === true;
+  const reset = opts.reset === true;
+
+  const spec = parsePriceSpec(opts.prices);
+  if (!dryRun && isScenarioSpec(spec)) {
+    printError(
+      "--prices can only be used with --dry-run. Real orders must use the live market.",
+    );
+    process.exit(1);
+  }
+
+  let priceSource = undefined;
+  if (isScenarioSpec(spec)) {
+    priceSource = await createLiveProvider(spec);
+  }
+
+  const config: MartingaleBotConfig = {
+    pair,
+    priceDeviation: priceDeviation.toString(),
+    safetyOrderVolumeScale: scale.toString(),
+    maxSafetyOrders,
+    takeProfit: takeProfit.toString(),
+    stopLoss: stopLoss.toString(),
+    investment: investment.toString(),
+    intervalSec,
+    dryRun,
+    reset,
+  };
+
+  const bot = new ForegroundMartingaleBot(config, { priceSource });
+
+  const shutdown = async () => {
+    console.log(chalk.yellow("\n  ↳ Shutting down martingale bot..."));
+    bot.stop();
+    await bot.shutdown();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+
+  try {
+    await bot.run();
+    if (isScenarioSpec(spec)) {
+      await bot.shutdown();
+    }
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
 }

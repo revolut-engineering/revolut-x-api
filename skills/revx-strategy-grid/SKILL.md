@@ -1,5 +1,5 @@
 ---
-name: revx-strategy
+name: revx-strategy-grid
 description: >
   Revolut X grid trading strategy. Use when the user asks to "backtest a grid strategy",
   "optimize grid parameters", "run a grid bot", "grid trading", "dry run grid",
