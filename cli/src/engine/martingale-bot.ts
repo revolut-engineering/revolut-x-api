@@ -9,7 +9,7 @@ import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
 import type { LivePriceSource } from "../shared/price-source/index.js";
 import {
-  OrderBookMidProvider,
+  TickerPriceProvider,
   withCachedPeek,
 } from "../shared/price-source/index.js";
 import {
@@ -164,7 +164,7 @@ export class ForegroundMartingaleBot {
     if (this._priceSource) {
       this._priceSource = withCachedPeek(this._priceSource);
     } else {
-      this._priceSource = new OrderBookMidProvider({
+      this._priceSource = new TickerPriceProvider({
         client: this._client,
         pair: this._config.pair,
         intervalSec: this._config.intervalSec,
@@ -610,6 +610,18 @@ export class ForegroundMartingaleBot {
               );
           const filledAmount = this._filledAmount(order, tpPrice);
           const feeQuote = this._feeQuote(order, tpPrice);
+          // Cancel any still-open safety buy orders before resetting the cycle.
+          // TP filled means the current cycle is complete — any pending safety orders
+          // that were placed but not yet filled must be cancelled so they don't
+          // execute spuriously in the next cycle.
+          for (const level of this._state.levels) {
+            for (const buyId of [...level.buyOrderIds]) {
+              if (!buyId.startsWith("dry-")) {
+                await this._client!.cancelOrder(buyId).catch(() => {});
+                await sleep(ORDER_DELAY_MS);
+              }
+            }
+          }
           this._applyTpFill(filledAmount, feeQuote, order.id, tpPrice);
         } else if (DEAD_STATUSES.has(order.status)) {
           this._state.tpOrderId = null;
@@ -1086,6 +1098,15 @@ export class ForegroundMartingaleBot {
           );
 
           state.tpOrderId = null;
+          // Cancel any pending safety order before resetting the cycle so it
+          // doesn't linger on the exchange and fill unexpectedly in a new cycle.
+          await Promise.all(
+            state.levels.flatMap((level) =>
+              level.buyOrderIds.map((id) =>
+                client.cancelOrder(id).catch(() => {}),
+              ),
+            ),
+          );
           this._applyTpFill(filledAmount, feeQuote, order.id, tpPrice);
 
           // Rebuild levels for new cycle and place initial buy
