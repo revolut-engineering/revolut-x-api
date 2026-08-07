@@ -25,7 +25,6 @@ import { getCurrSymbol, fmtPrice } from "../engine/grid-renderer.js";
 import {
   ForegroundMartingaleBot,
   type MartingaleBotConfig,
-  type MartingaleBotTickEvent,
 } from "../engine/martingale-bot.js";
 import {
   runMartingaleBacktest,
@@ -45,6 +44,8 @@ import {
 import {
   emitBacktestTracePlain,
   emitBacktestTraceJson,
+  emitMartingaleBacktestTracePlain,
+  emitMartingaleBacktestTraceJson,
   emitGridBotTracePlain,
   emitGridBotTraceJson,
 } from "../output/trace.js";
@@ -1099,6 +1100,26 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .command("optimize <pair>")
     .description("Sweep martingale parameter combinations and rank by return")
     .option(
+      "--price-deviation <csv>",
+      "Price deviation % values to test, e.g. '1,1.5,2,2.5,3'",
+      "1,1.5,2,2.5,3",
+    )
+    .option(
+      "--scale <csv>",
+      "Safety order volume scale values to test, e.g. '1.5,2,2.5'",
+      "1.5,2.0,2.5",
+    )
+    .option(
+      "--max-safety-orders <csv>",
+      "Max safety order counts to test, e.g. '3,5,7'",
+      "3,5,7",
+    )
+    .option(
+      "--take-profit <csv>",
+      "Take profit % values to test, e.g. '1,1.5,2,2.5'",
+      "1,1.5,2,2.5",
+    )
+    .option(
       "--stop-loss <pct>",
       "Stop loss % below initial buy (fixed across sweep)",
       "15",
@@ -1245,14 +1266,9 @@ async function handleMartingaleBacktest(
   const onTick = traceEnabled
     ? (ev: MartingaleBacktestTickEvent) => {
         if (traceJson) {
-          process.stdout.write(JSON.stringify(ev) + "\n");
+          emitMartingaleBacktestTraceJson(ev);
         } else {
-          const pnlStr = ev.realizedPnl.gte(0)
-            ? chalk.green(`+${cs}${ev.realizedPnl.toFixed(2)}`)
-            : chalk.red(`${cs}${ev.realizedPnl.toFixed(2)}`);
-          console.log(
-            `  [${ev.index}] price=${cs}${ev.close.toFixed(2)}  pos=${ev.inPosition ? "Y" : "N"}  SO=${ev.safetyOrdersFilled}  cycle=${ev.cycle}  pnl=${pnlStr}`,
-          );
+          emitMartingaleBacktestTracePlain(ev, cs);
         }
       }
     : undefined;
@@ -1279,7 +1295,9 @@ async function handleMartingaleBacktest(
       realizedPnl: result.realizedPnl.toNumber(),
       totalReturn: result.totalReturn.toNumber(),
       returnPct: result.returnPct.toNumber(),
-      maxDrawdown: result.maxDrawdown.toNumber(),
+      maxDrawdown: investment.gt(0)
+        ? result.maxDrawdown.div(investment).times(100).toNumber()
+        : 0,
     });
     return;
   }
@@ -1344,9 +1362,10 @@ async function handleMartingaleBacktest(
     pad("Total Return", retColor(`${cs}${result.totalReturn.toFixed(2)}`)),
   );
   console.log(pad("ROI", retColor(`${result.returnPct.toFixed(2)}%`)));
-  console.log(
-    pad("Max Drawdown", chalk.red(`${cs}${result.maxDrawdown.toFixed(2)}`)),
-  );
+  const ddPct = investment.gt(0)
+    ? result.maxDrawdown.div(investment).times(100)
+    : new Decimal(0);
+  console.log(pad("Max Drawdown", chalk.red(`${ddPct.toFixed(2)}%`)));
   const annualizedPct =
     (Math.pow(1 + result.returnPct.toNumber() / 100, 365 / days) - 1) * 100;
   const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
@@ -1354,20 +1373,83 @@ async function handleMartingaleBacktest(
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
   console.log(chalk.dim(`╚${h.repeat(w)}╝`));
 
-  if (traceEnabled && result.tradeLog.length > 0) {
-    printSectionHeader("Trade Log");
-    for (const entry of result.tradeLog.slice(-20)) {
-      console.log(chalk.dim(`  ${entry}`));
-    }
-    if (result.tradeLog.length > 20) {
-      console.log(chalk.dim(`  … and ${result.tradeLog.length - 20} more`));
-    }
+  if (result.trades.length > 0) {
+    console.log("");
+    console.log(chalk.bold.cyan(`  Trades (${result.trades.length})`));
+    printTable(result.trades, [
+      { header: "#", accessor: (t) => String(t.index), align: "right" },
+      {
+        header: "Side",
+        accessor: (t) => {
+          const label =
+            t.label === "STOP-LOSS"
+              ? `${t.side.toUpperCase()} (SL)`
+              : t.label === "TP"
+                ? `${t.side.toUpperCase()} (TP)`
+                : `${t.side.toUpperCase()} [${t.label}]`;
+          return t.side === "buy" ? chalk.green(label) : chalk.red(label);
+        },
+      },
+      {
+        header: "Price",
+        accessor: (t) => fmtPrice(t.price, cs),
+        align: "right",
+      },
+      {
+        header: "Qty",
+        accessor: (t) => t.quantity.toFixed(5),
+        align: "right",
+      },
+      {
+        header: "Quote",
+        accessor: (t) =>
+          t.side === "buy"
+            ? `-${cs}${t.quoteValue.toFixed(2)}`
+            : `+${cs}${t.quoteValue.toFixed(2)}`,
+        align: "right",
+      },
+      {
+        header: "Profit",
+        accessor: (t) => {
+          if (t.profit === undefined) return "";
+          const v = `${cs}${t.profit.toFixed(2)}`;
+          return t.profit.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+      {
+        header: "Realized",
+        accessor: (t) => {
+          const v = `${cs}${t.realizedPnl.toFixed(2)}`;
+          return t.realizedPnl.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+      {
+        header: "ROI",
+        accessor: (t) => {
+          const v = `${t.roiPct.toFixed(2)}%`;
+          return t.roiPct.gte(0) ? chalk.green(v) : chalk.red(v);
+        },
+        align: "right",
+      },
+    ]);
   }
+  console.log(
+    chalk.gray(
+      "\n  ↳ Note: Backtest does not model spread/slippage or partial fills.\n" +
+        "    Live performance will differ, especially in illiquid or fast-moving markets.",
+    ),
+  );
 }
 
 async function handleMartingaleOptimize(
   pair: string,
   opts: {
+    priceDeviation: string;
+    scale: string;
+    maxSafetyOrders: string;
+    takeProfit: string;
     stopLoss: string;
     investment: string;
     days: string;
@@ -1383,6 +1465,80 @@ async function handleMartingaleOptimize(
   if (!VALID_RESOLUTIONS.has(opts.interval)) {
     printError(
       `Invalid resolution '${chalk.cyan(opts.interval)}'. Use one of: ${[...VALID_RESOLUTIONS].sort().join(", ")}`,
+    );
+    process.exit(1);
+  }
+
+  let deviationsList: Decimal[];
+  try {
+    deviationsList = opts.priceDeviation
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => new Decimal(x).div(100));
+    if (deviationsList.length === 0) throw new Error();
+  } catch {
+    printError(
+      "--price-deviation must be comma-separated numbers, e.g. '1,1.5,2,2.5,3'.",
+    );
+    process.exit(1);
+  }
+
+  let scalesList: Decimal[];
+  try {
+    scalesList = opts.scale
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => new Decimal(x));
+    if (scalesList.length === 0) throw new Error();
+  } catch {
+    printError("--scale must be comma-separated numbers, e.g. '1.5,2,2.5'.");
+    process.exit(1);
+  }
+
+  let maxSafetyOrdersList: number[];
+  try {
+    maxSafetyOrdersList = opts.maxSafetyOrders
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => {
+        const n = parseInt(x, 10);
+        if (isNaN(n) || n < 0 || n > 30) throw new Error();
+        return n;
+      });
+    if (maxSafetyOrdersList.length === 0) throw new Error();
+  } catch {
+    printError(
+      "--max-safety-orders must be comma-separated integers (0–30), e.g. '3,5,7'.",
+    );
+    process.exit(1);
+  }
+
+  let takeProfitsList: Decimal[];
+  try {
+    takeProfitsList = opts.takeProfit
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x)
+      .map((x) => new Decimal(x).div(100));
+    if (takeProfitsList.length === 0) throw new Error();
+  } catch {
+    printError(
+      "--take-profit must be comma-separated numbers, e.g. '1,1.5,2,2.5'.",
+    );
+    process.exit(1);
+  }
+
+  const totalCombos =
+    deviationsList.length *
+    scalesList.length *
+    maxSafetyOrdersList.length *
+    takeProfitsList.length;
+  if (totalCombos > 200) {
+    printError(
+      `Too many combinations (${chalk.cyan(totalCombos)}). Max 200. Reduce --deviations, --scales, --max-safety-orders, or --take-profits.`,
     );
     process.exit(1);
   }
@@ -1415,11 +1571,18 @@ async function handleMartingaleOptimize(
 
   console.log(
     chalk.gray(
-      `  ↳ Running martingale optimization on ${candles.length} candles...\n`,
+      `  ↳ Running martingale optimization on ${candles.length} candles (${totalCombos} combinations)...\n`,
     ),
   );
 
-  const results = optimizeMartingaleParams(candles, investment, { stopLoss });
+  const results = optimizeMartingaleParams(candles, investment, {
+    priceDeviations: deviationsList,
+    scales: scalesList,
+    maxSafetyOrdersList,
+    takeProfits: takeProfitsList,
+    stopLoss,
+    days,
+  });
 
   if (isJsonOutput(opts)) {
     printJson(
@@ -1509,20 +1672,12 @@ async function handleMartingaleOptimize(
   if (results.length > 0) {
     console.log("");
     const bestReturn = results[0];
+    const bestCalmar = results.reduce((b, r) =>
+      r.calmarApprox.gt(b.calmarApprox) ? r : b,
+    );
     const lowestDd = results.reduce((b, r) =>
       r.maxDrawdown.lt(b.maxDrawdown) ? r : b,
     );
-    const bestPerCycle = results.reduce((b, r) => {
-      const bpc =
-        b.completedCycles > 0
-          ? b.realizedPnl.div(b.completedCycles)
-          : new Decimal(0);
-      const rpc =
-        r.completedCycles > 0
-          ? r.realizedPnl.div(r.completedCycles)
-          : new Decimal(0);
-      return rpc.gt(bpc) ? r : b;
-    });
 
     const fmtCombo = (r: (typeof results)[0]) =>
       `dev=${chalk.white(r.priceDeviation.times(100).toFixed(1) + "%")} ` +
@@ -1536,8 +1691,8 @@ async function handleMartingaleOptimize(
         `${fmtCombo(bestReturn)} → Realized: ${chalk.green(cs + bestReturn.realizedPnl.toFixed(2))} | Total: ${chalk.green(cs + bestReturn.totalReturn.toFixed(2))}`,
       ],
       [
-        "Best $/Cycle",
-        `${fmtCombo(bestPerCycle)} → ${chalk.cyan(cs + (bestPerCycle.completedCycles > 0 ? bestPerCycle.realizedPnl.div(bestPerCycle.completedCycles).toFixed(2) : "0.00"))} per cycle`,
+        "Best Risk-Adj",
+        `${fmtCombo(bestCalmar)} → ${chalk.cyan("Calmar " + bestCalmar.calmarApprox.toFixed(2))}`,
       ],
       [
         "Lowest Drawdown",
