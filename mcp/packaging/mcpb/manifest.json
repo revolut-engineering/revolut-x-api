@@ -112,6 +112,14 @@
       "description": "Test multiple grid parameter combinations and return ranked results. Runs grid backtest for every combination of grid levels and range percentages, then ranks by total return, Calmar ratio, and drawdown."
     },
     {
+      "name": "martingale_backtest",
+      "description": "Simulate a martingale DCA strategy against historical candle data from Revolut X (no live orders are placed). The martingale strategy places a series of buy orders at geometrically increasing sizes as price drops, and sells the entire accumulated position when price reaches avgEntry × (1+takeProfit). A stop-loss exits if price falls below initialBuyPrice × (1-stopLoss). IMPORTANT: Confirm parameters with the user before running — they materially change the simulated outcome."
+    },
+    {
+      "name": "martingale_optimize",
+      "description": "Sweep multiple martingale parameter combinations (priceDeviation × scale × maxSafetyOrders × takeProfit) and rank by total return. Useful for finding optimal DCA parameters for a given pair and time period. The stop-loss percentage is fixed across all combinations."
+    },
+    {
       "name": "get_order_by_id",
       "description": "Get the full details of a single order by its venue order ID. Supports market, limit, conditional, and tpsl orders. Includes total fees paid (`total_fee` and `fee_currency`) when the venue has reported them — this is the only tool that surfaces per-order fee data."
     },

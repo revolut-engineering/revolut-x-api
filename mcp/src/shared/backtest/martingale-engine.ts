@@ -34,6 +34,7 @@ export interface MartingaleOptimizationResult {
   completedCycles: number;
   stopLossCount: number;
   maxDrawdown: Decimal;
+  calmarApprox: Decimal;
 }
 
 export interface BacktestCandle {
@@ -139,7 +140,7 @@ export function runMartingaleBacktest(
     };
   }
 
-  const { takeProfit, stopLoss } = params;
+  const { takeProfit } = params;
   const tradeLog: string[] = [];
   let completedCycles = 0;
   let winningCycles = 0;
@@ -265,24 +266,38 @@ export function runMartingaleBacktest(
 export function optimizeMartingaleParams(
   candles: BacktestCandle[],
   investment: Decimal,
-  stopLoss: Decimal,
-  maxCombinations = 200,
+  opts?: {
+    priceDeviations?: Decimal[];
+    scales?: Decimal[];
+    maxSafetyOrdersList?: number[];
+    takeProfits?: Decimal[];
+    stopLoss?: Decimal;
+    maxCombinations?: number;
+    days?: number;
+  },
 ): MartingaleOptimizationResult[] {
-  const priceDeviations = [
+  const priceDeviations = opts?.priceDeviations ?? [
     new Decimal("0.01"),
     new Decimal("0.015"),
     new Decimal("0.02"),
     new Decimal("0.025"),
     new Decimal("0.03"),
   ];
-  const scales = [new Decimal("1.5"), new Decimal("2.0"), new Decimal("2.5")];
-  const maxSafetyOrdersList = [3, 5, 7];
-  const takeProfits = [
+  const scales = opts?.scales ?? [
+    new Decimal("1.5"),
+    new Decimal("2.0"),
+    new Decimal("2.5"),
+  ];
+  const maxSafetyOrdersList = opts?.maxSafetyOrdersList ?? [3, 5, 7];
+  const takeProfits = opts?.takeProfits ?? [
     new Decimal("0.01"),
     new Decimal("0.015"),
     new Decimal("0.02"),
     new Decimal("0.025"),
   ];
+  const stopLoss = opts?.stopLoss ?? new Decimal("0.15");
+  const maxCombinations = opts?.maxCombinations ?? 200;
+  const days = opts?.days ?? 1;
 
   const combinations: MartingaleBacktestParams[] = [];
   outer: for (const dev of priceDeviations) {
@@ -308,21 +323,30 @@ export function optimizeMartingaleParams(
     }
   }
 
-  return combinations
-    .map((params) => {
-      const r = runMartingaleBacktest(candles, params);
-      return {
-        priceDeviation: params.priceDeviation,
-        safetyOrderVolumeScale: params.safetyOrderVolumeScale,
-        maxSafetyOrders: params.maxSafetyOrders,
-        takeProfit: params.takeProfit,
-        realizedPnl: r.realizedPnl,
-        totalReturn: r.totalReturn,
-        returnPct: r.returnPct,
-        completedCycles: r.completedCycles,
-        stopLossCount: r.stopLossCount,
-        maxDrawdown: r.maxDrawdown,
-      };
-    })
-    .sort((a, b) => b.totalReturn.minus(a.totalReturn).toNumber());
+  const results: MartingaleOptimizationResult[] = [];
+  for (const params of combinations) {
+    const r = runMartingaleBacktest(candles, params);
+    const annualizedReturn = r.returnPct.div(100).times(365).div(days);
+    const maxDrawdownRatio = investment.gt(0)
+      ? r.maxDrawdown.div(investment)
+      : new Decimal(0);
+    const calmar = maxDrawdownRatio.gt(0)
+      ? annualizedReturn.div(maxDrawdownRatio)
+      : annualizedReturn;
+    results.push({
+      priceDeviation: params.priceDeviation,
+      safetyOrderVolumeScale: params.safetyOrderVolumeScale,
+      maxSafetyOrders: params.maxSafetyOrders,
+      takeProfit: params.takeProfit,
+      realizedPnl: r.realizedPnl,
+      totalReturn: r.totalReturn,
+      returnPct: r.returnPct,
+      completedCycles: r.completedCycles,
+      stopLossCount: r.stopLossCount,
+      maxDrawdown: r.maxDrawdown,
+      calmarApprox: calmar,
+    });
+  }
+
+  return results.sort((a, b) => b.totalReturn.minus(a.totalReturn).toNumber());
 }
