@@ -1,6 +1,10 @@
 import { Decimal } from "decimal.js";
 import type { GridLevelState } from "../db/grid-store.js";
 
+export function levelsPerSide(totalLevels: number): number {
+  return totalLevels / 2;
+}
+
 export function trailUpTriggerFromBounds(
   lower: Decimal,
   upper: Decimal,

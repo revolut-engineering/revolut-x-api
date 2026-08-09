@@ -1,7 +1,7 @@
 import { Decimal } from "decimal.js";
 import chalk from "chalk";
 import type { GridState, GridLevelPosition } from "../db/grid-store.js";
-import { trailUpTriggerPrice } from "./grid-math.js";
+import { levelsPerSide, trailUpTriggerPrice } from "./grid-math.js";
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: "$",
@@ -250,6 +250,20 @@ function fmtDistance(target: Decimal, currentPrice: Decimal): string {
   return ` (${pct.gte(0) ? "+" : ""}${pct.toFixed(1)}%)`;
 }
 
+export function renderStartedMessage(
+  pair: string,
+  config: GridState["config"],
+): string {
+  const rangePctDisplay = new Decimal(config.rangePct).times(100).toFixed(1);
+  const modeLabel = config.dryRun ? " [DRY RUN]" : "";
+  const quote = pair.split("-")[1] ?? "";
+  return (
+    `Grid Bot started${modeLabel}: ${pair} | ` +
+    `${levelsPerSide(config.levels)} levels/side | \u00B1${rangePctDisplay}% | ` +
+    `${config.investment} ${quote}`
+  );
+}
+
 export function renderRiskLine(
   state: GridState,
   currentPrice: Decimal,
@@ -376,7 +390,7 @@ export function renderDashboard(data: DashboardData): string {
   }
   lines.push(
     padLine(
-      `  ${chalk.dim("Levels".padEnd(14))}${state.config.levels / 2} per side`,
+      `  ${chalk.dim("Levels".padEnd(14))}${levelsPerSide(state.config.levels)} per side`,
       innerW,
     ),
   );

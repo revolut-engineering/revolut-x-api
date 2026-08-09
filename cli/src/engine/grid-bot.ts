@@ -35,9 +35,10 @@ import {
   fmtMoney,
   renderOrderLadder,
   renderRiskLine,
+  renderStartedMessage,
   type DashboardData,
 } from "./grid-renderer.js";
-import { trailUpTriggerPrice } from "./grid-math.js";
+import { levelsPerSide, trailUpTriggerPrice } from "./grid-math.js";
 
 export interface GridBotConfig {
   pair: string;
@@ -172,8 +173,8 @@ export class ForegroundGridBot {
         const savedRangePct = new Decimal(savedRange).times(100).toFixed(1);
         const newRangePct = new Decimal(newRange).times(100).toFixed(1);
         throw new Error(
-          `Saved grid has ${savedLevels} levels with ${savedRangePct}% range ` +
-            `but you requested ${newLevels} levels with ${newRangePct}% range. ` +
+          `Saved grid has ${levelsPerSide(savedLevels)} levels/side with ${savedRangePct}% range ` +
+            `but you requested ${levelsPerSide(newLevels)} levels/side with ${newRangePct}% range. ` +
             `Use --reset to discard saved state and start fresh.`,
         );
       }
@@ -236,16 +237,7 @@ export class ForegroundGridBot {
     } else {
       await this._initNewGrid();
     }
-    const activeConfig = this._state!.config;
-    const rangePctDisplay = new Decimal(activeConfig.rangePct)
-      .times(100)
-      .toFixed(1);
-    const modeLabel = activeConfig.dryRun ? " [DRY RUN]" : "";
-    this._notify(
-      `Grid Bot started${modeLabel}: ${this._state!.pair} | ` +
-        `${activeConfig.levels} levels | ±${rangePctDisplay}% | ` +
-        `${activeConfig.investment} ${this._state!.pair.split("-")[1] ?? ""}`,
-    );
+    this._notify(renderStartedMessage(this._state!.pair, this._state!.config));
     if (this._connections.length > 0) {
       this._statusReporter = new LiveStatusReporter({
         connections: this._connections,

@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { Decimal } from "decimal.js";
 import {
+  levelsPerSide,
   trailUpTriggerFromBounds,
   trailUpTriggerPrice,
 } from "../src/engine/grid-math.js";
 import {
   renderDashboard,
   renderRiskLine,
+  renderStartedMessage,
 } from "../src/engine/grid-renderer.js";
 import type { GridState, GridLevelState } from "../src/db/grid-store.js";
 
@@ -99,6 +101,49 @@ describe("trailUpTriggerFromBounds", () => {
     expect(trailUpTriggerFromBounds(new Decimal(0), UPPER, 6)).toBeNull();
     expect(trailUpTriggerFromBounds(LOWER, new Decimal(0), 6)).toBeNull();
     expect(trailUpTriggerFromBounds(new Decimal(-1), UPPER, 6)).toBeNull();
+  });
+});
+
+describe("levelsPerSide", () => {
+  it("halves the stored total, which the CLI builds as perSide * 2", () => {
+    expect(levelsPerSide(6)).toBe(3);
+    expect(levelsPerSide(10)).toBe(5);
+    expect(levelsPerSide(2)).toBe(1);
+  });
+});
+
+describe("renderStartedMessage", () => {
+  it("reports the level count the user passed to --levels, not the stored total", () => {
+    const state = makeState({ dryRun: false });
+    expect(renderStartedMessage(state.pair, state.config)).toBe(
+      "Grid Bot started: BTC-USD | 3 levels/side | \u00B15.0% | 1000 USD",
+    );
+  });
+
+  it("tags dry-run mode", () => {
+    const state = makeState();
+    expect(renderStartedMessage(state.pair, state.config)).toBe(
+      "Grid Bot started [DRY RUN]: BTC-USD | 3 levels/side | \u00B15.0% | 1000 USD",
+    );
+  });
+
+  it("agrees with the level count the dashboard shows", () => {
+    const state = makeState();
+    const dash = renderDashboard({
+      state,
+      currentPrice: PRICE,
+      uptime: 1000,
+      tickCount: 1,
+      lastError: null,
+      warnings: [],
+      telegramConnections: 0,
+      intervalSec: 10,
+      lastNotifyOk: 0,
+    });
+    expect(dash).toContain("3 per side");
+    expect(renderStartedMessage(state.pair, state.config)).toContain(
+      "3 levels/side",
+    );
   });
 });
 
