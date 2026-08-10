@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { floorToStep } from "../../engine/grid-plan.js";
 
 interface SimOrder {
   id: string;
@@ -36,6 +37,17 @@ export class SimulatedExchange {
   private _filledBuysThisTick: SimFill[] = [];
   private _filledSellsThisTick: SimFill[] = [];
   private _cashBalance: Decimal = new Decimal(0);
+  private readonly _cancelledOrderIds = new Set<string>();
+  private readonly _baseStep: Decimal;
+  private readonly _quoteStep: Decimal;
+
+  constructor(
+    baseStep = new Decimal("0.00001"),
+    quoteStep = new Decimal("0.01"),
+  ) {
+    this._baseStep = baseStep;
+    this._quoteStep = quoteStep;
+  }
 
   /** Must be called before constructing to avoid ID collisions across instances */
   static resetIdCounter(): void {
@@ -136,9 +148,7 @@ export class SimulatedExchange {
 
       // Record market fill immediately
       if (params.side === "buy" && order.quoteSize) {
-        const qty = order.quoteSize
-          .div(fillPrice)
-          .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+        const qty = floorToStep(order.quoteSize.div(fillPrice), this._baseStep);
         this._filledBuysThisTick.push({
           price: fillPrice,
           quantity: qty,
@@ -146,9 +156,10 @@ export class SimulatedExchange {
         });
         this._cashBalance = this._cashBalance.minus(order.quoteSize);
       } else if (params.side === "sell" && order.baseSize) {
-        const quoteReceived = order.baseSize
-          .times(fillPrice)
-          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+        const quoteReceived = floorToStep(
+          order.baseSize.times(fillPrice),
+          this._quoteStep,
+        );
         this._filledSellsThisTick.push({
           price: fillPrice,
           quantity: order.baseSize,
@@ -163,6 +174,7 @@ export class SimulatedExchange {
 
   async cancelOrder(id: string): Promise<void> {
     this._orders.delete(id);
+    this._cancelledOrderIds.add(id);
   }
 
   async getActiveOrders(): Promise<{
@@ -188,6 +200,18 @@ export class SimulatedExchange {
       fee_currency: string;
     };
   }> {
+    if (this._cancelledOrderIds.has(id)) {
+      return {
+        data: {
+          id,
+          status: "cancelled",
+          filled_quantity: "0",
+          filled_amount: "0",
+          total_fee: "0",
+          fee_currency: "USD",
+        },
+      };
+    }
     const order = this._orders.get(id);
     if (!order || !this._isFilled(order)) {
       return {
@@ -208,9 +232,7 @@ export class SimulatedExchange {
 
     if (order.side === "buy") {
       const quoteSize = order.quoteSize ?? new Decimal(0);
-      filledQuantity = quoteSize
-        .div(order.price)
-        .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+      filledQuantity = floorToStep(quoteSize.div(order.price), this._baseStep);
       filledAmount = quoteSize;
 
       // Track fill for this tick (limit buys only — market fills tracked at placement)
@@ -225,9 +247,7 @@ export class SimulatedExchange {
     } else {
       const baseSize = order.baseSize ?? new Decimal(0);
       filledQuantity = baseSize;
-      filledAmount = baseSize
-        .times(order.price)
-        .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+      filledAmount = floorToStep(baseSize.times(order.price), this._quoteStep);
 
       // Track fill for this tick (limit sells only — market fills tracked at placement)
       if (order.type === "limit") {

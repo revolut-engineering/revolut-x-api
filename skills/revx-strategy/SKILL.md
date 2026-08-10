@@ -31,7 +31,7 @@ revx strategy grid backtest BTC-USD --json
 
 | Flag | Default | Description |
 |---|---|---|
-| `--levels <n>` | 5 | Grid levels per side (1-25) |
+| `--levels <n>` | 5 | Grid levels per side (1-100) |
 | `--range <pct>` | 10 | Grid range +/- % from mid price |
 | `--investment <amount>` | 1000 | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
@@ -70,7 +70,7 @@ revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 
 | Flag | Default | Description |
 |---|---|---|
-| `--levels <csv>` | 3,5,8,10,15 | Level counts to test |
+| `--levels <csv>` | 3,5,8,10,15 | Per-side level counts to test (each 1-100) |
 | `--ranges <csv>` | 3,5,7,10,12,15,20 | Range percentages to test |
 | `--top <n>` | 10 | Top results to display |
 | `--investment <amount>` | 1000 | Capital in quote currency |
@@ -81,9 +81,23 @@ revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 | `--stop-loss <price>` | off | Skip combinations where the stop-loss sits inside the grid; stop each backtest run when price reaches this absolute value |
 | `--json` | off | Output as JSON |
 
-Max 200 parameter combinations. **Not long-running** — completes and returns results.
+Max 200 parameter combinations. Every combination is validated before any backtest runs. If any combination violates pair constraints or stop-loss placement, the entire optimize command fails; invalid combinations are not skipped. **Not long-running** — completes and returns results.
 
 **Always confirm** these key parameters before running: **pair**, **investment**, and **split mode**. These affect capital and strategy behavior — never assume them silently. Other parameters (levels list, ranges list, days, interval, top) can use defaults unless the user specifies otherwise.
+
+---
+
+## Pair Constraints and Validation
+
+Backtest, optimize, dry-run, and live run all build the same exchange-aware grid plan before execution:
+
+- Grid prices are rounded to the pair's quote step and must remain strictly increasing and unique.
+- Quote per level is floored to the quote step; base amounts are floored to the base step.
+- Every order must satisfy the pair's minimum quote value and minimum/maximum base size.
+- Split mode must fit the initial market buy and each allocated sell amount within the pair limits.
+- Stop-loss must be strictly below the lowest aligned grid level, and its maximum liquidation size must not exceed the maximum base order size.
+
+Invalid parameters fail before simulation or order placement. Optimize validates all requested combinations first and fails as a whole if any one is invalid. Increasing levels reduces capital per level, so a 100-level-per-side grid may require a larger investment than a smaller grid.
 
 ---
 
@@ -145,7 +159,7 @@ revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 | Flag | Default | Description |
 |---|---|---|
 | `--investment <amount>` | **required** | Capital in quote currency |
-| `--levels <n>` | 5 | Grid levels per side (1-25) |
+| `--levels <n>` | 5 | Grid levels per side (1-100) |
 | `--range <pct>` | 5 | Grid range +/- % from mid |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above current price) |
 | `--interval <sec>` | 10 | Polling interval in seconds |
@@ -156,7 +170,7 @@ revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 
 Ctrl+C for graceful shutdown (cancels open orders, prints summary).
 
-**Persistence:** State auto-saved for crash recovery. Clean shutdown deletes state. Crashed sessions auto-reconcile on restart.
+The dashboard displays at most 24 grid rows in a price-centred window and reports how many higher and lower levels are hidden, so 100-level-per-side grids remain readable.
 
 If Telegram connectors are configured (see `revx-telegram` skill), notifications are sent on startup, shutdown, fills, and P&L changes.
 

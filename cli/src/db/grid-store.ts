@@ -14,6 +14,8 @@ export interface GridLevelPosition {
   baseHeld: string;
   fillCost: string;
   sellOrderId: string | null;
+  sellBaseSize?: string;
+  sellClientOrderId?: string;
 }
 
 export interface GridLevelState {
@@ -22,6 +24,9 @@ export interface GridLevelState {
   buyOrderIds: string[];
   positions: GridLevelPosition[];
   expectedBuys?: number;
+  pendingBuyClientOrderIds?: string[];
+  pendingBuyQuoteSizes?: Record<string, string>;
+  buyOrderQuoteSizes?: Record<string, string>;
 }
 
 export interface GridTradeEntry {
@@ -51,6 +56,16 @@ export interface GridState {
     stopLoss?: string;
   };
   splitExecuted: boolean;
+  initializing?: boolean;
+  splitOrderId?: string;
+  splitClientOrderId?: string;
+  splitOrderQuoteSize?: string;
+  splitRemainingQuote?: string;
+  splitAccumulatedBase?: string;
+  splitAccumulatedAmount?: string;
+  splitAccumulatedFee?: string;
+  splitAccountingApplied?: boolean;
+  stopLossClientOrderId?: string;
   shiftCount?: number;
   gridPrice: string;
   quotePrecision: string;

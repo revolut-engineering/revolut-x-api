@@ -21,6 +21,7 @@ const BOX = {
   ml: "\u2560",
   mr: "\u2563",
 };
+const DASHBOARD_MAX_LEVEL_ROWS = 24;
 
 export interface DashboardData {
   state: GridState;
@@ -519,10 +520,42 @@ export function renderDashboard(data: DashboardData): string {
     const pb = parseFloat(b.price);
     return pb - pa;
   });
+  const priceBoundaryIndex = sortedLevels.findIndex((level) =>
+    currentPrice.gte(level.price),
+  );
+  const centerIndex =
+    priceBoundaryIndex === -1 ? sortedLevels.length : priceBoundaryIndex;
+  const maximumStartIndex = Math.max(
+    0,
+    sortedLevels.length - DASHBOARD_MAX_LEVEL_ROWS,
+  );
+  const startIndex = Math.min(
+    maximumStartIndex,
+    Math.max(0, centerIndex - Math.floor(DASHBOARD_MAX_LEVEL_ROWS / 2)),
+  );
+  const endIndex = Math.min(
+    sortedLevels.length,
+    startIndex + DASHBOARD_MAX_LEVEL_ROWS,
+  );
+  const displayedLevels = sortedLevels.slice(startIndex, endIndex);
+  const higherLevelsHidden = startIndex;
+  const lowerLevelsHidden = sortedLevels.length - endIndex;
+
+  if (higherLevelsHidden > 0) {
+    lines.push(
+      padLine(
+        `  ${chalk.dim(`\u2026 ${higherLevelsHidden} higher levels hidden`)}`,
+        innerW,
+      ),
+    );
+  }
 
   let priceMarkerInserted = false;
-  for (let si = 0; si < sortedLevels.length; si++) {
-    const level = sortedLevels[si];
+  const levelNumberWidth = Math.max(
+    2,
+    ...displayedLevels.map((level) => String(level.index + 1).length),
+  );
+  for (const level of displayedLevels) {
     const levelPrice = new Decimal(level.price);
 
     if (!priceMarkerInserted && currentPrice.gte(levelPrice)) {
@@ -541,7 +574,7 @@ export function renderDashboard(data: DashboardData): string {
       priceMarkerInserted = true;
     }
 
-    const idx = String(level.index + 1).padStart(2);
+    const idx = String(level.index + 1).padStart(levelNumberWidth);
     const pStr = fmtPrice(levelPrice, cs).padEnd(12);
 
     let statusStr: string;
@@ -596,6 +629,15 @@ export function renderDashboard(data: DashboardData): string {
     lines.push(
       padLine(
         `  ${chalk.dim(`#${idx}`)}  ${pStr}  ${barStr}  ${statusStr}`,
+        innerW,
+      ),
+    );
+  }
+
+  if (lowerLevelsHidden > 0) {
+    lines.push(
+      padLine(
+        `  ${chalk.dim(`\u2026 ${lowerLevelsHidden} lower levels hidden`)}`,
         innerW,
       ),
     );
@@ -740,6 +782,7 @@ export function renderShutdownSummary(
   state: GridState,
   currentPrice: Decimal,
   remainingOrders = 0,
+  stateRetainedForInventory = false,
 ): string {
   const cs = getCurrSymbol(state.pair);
   const lines: string[] = [];
@@ -789,6 +832,10 @@ export function renderShutdownSummary(
   if (remainingOrders > 0) {
     lines.push(
       `  ${chalk.yellow(`\u26A0 ${remainingOrders} order${remainingOrders !== 1 ? "s" : ""} could not be cancelled. State saved for next startup.`)}`,
+    );
+  } else if (stateRetainedForInventory) {
+    lines.push(
+      `  ${chalk.yellow(`\u26A0 Acquired ${base} remains. State saved for the next startup.`)}`,
     );
   } else {
     lines.push(`  ${chalk.dim("All orders cancelled. Clean exit.")}`);

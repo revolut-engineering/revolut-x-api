@@ -3,6 +3,7 @@ import { Decimal } from "decimal.js";
 import chalk from "chalk";
 import type { Candle } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
+import { parsePositiveInt } from "../util/parse.js";
 import {
   isJsonOutput,
   printJson,
@@ -13,7 +14,6 @@ import {
   runBacktest,
   runBacktestBot,
   optimizeGridParams,
-  createGrid,
   type BacktestTickEvent,
 } from "../shared/backtest/index.js";
 import {
@@ -21,7 +21,17 @@ import {
   type GridBotConfig,
   type GridBotTickEvent,
 } from "../engine/grid-bot.js";
-import { getCurrSymbol, fmtPrice } from "../engine/grid-renderer.js";
+import {
+  constraintsFromPair,
+  createGridPlan,
+  parseLevelsPerSide,
+  type GridOrderConstraints,
+} from "../engine/grid-plan.js";
+import {
+  getCurrSymbol,
+  fmtPrice,
+  fmtSignedPnl,
+} from "../engine/grid-renderer.js";
 import {
   parseSpec,
   loadBatch,
@@ -64,6 +74,33 @@ function printSectionHeader(title: string): void {
 
 function printError(msg: string): void {
   console.error(`${chalk.red.bold("✖ Error:")} ${chalk.white(msg)}`);
+}
+
+function printProgress(message: string, jsonOutput: boolean): void {
+  if (jsonOutput) {
+    console.error(message);
+    return;
+  }
+  console.log(message);
+}
+
+function colorSignedMoney(value: Decimal, currencySymbol: string): string {
+  const formatted = fmtSignedPnl(value, currencySymbol);
+  if (value.gt(0)) return chalk.green(formatted);
+  if (value.lt(0)) return chalk.red(formatted);
+  return chalk.dim(formatted);
+}
+
+async function loadGridConstraints(
+  pair: string,
+): Promise<GridOrderConstraints> {
+  const pairClient = getClient({ requireAuth: false });
+  const pairs = await pairClient.getCurrencyPairs();
+  const pairInfo = pairs[pair.replace("-", "/")];
+  if (!pairInfo) {
+    throw new Error(`Pair configuration not found for ${pair}.`);
+  }
+  return constraintsFromPair(pairInfo);
 }
 
 function parseCandles(candles: Candle[]): ParsedCandle[] {
@@ -207,9 +244,11 @@ async function handleBacktest(
 ): Promise<void> {
   pair = validatePair(pair);
 
-  const levelsPerSide = parseInt(opts.levels, 10);
-  if (isNaN(levelsPerSide) || levelsPerSide < 1 || levelsPerSide > 25) {
-    printError("--levels must be between 1 and 25 (per side).");
+  let levelsPerSide: number;
+  try {
+    levelsPerSide = parseLevelsPerSide(opts.levels);
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
   const gridLevels = levelsPerSide * 2;
@@ -223,19 +262,22 @@ async function handleBacktest(
 
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
-  const days = parseInt(opts.days, 10) || 30;
+  const days = parsePositiveInt(opts.days, "--days");
   const spec = parsePriceSpec(opts.prices);
   const traceEnabled = opts.trace === true;
+  const jsonOutput = isJsonOutput(opts);
 
   if (isScenarioSpec(spec)) {
-    console.log(
+    printProgress(
       chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
+      jsonOutput,
     );
   } else {
-    console.log(
+    printProgress(
       chalk.gray(
         `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
       ),
+      jsonOutput,
     );
   }
   const candles = await loadScenarioCandles(spec, pair, opts.interval, days);
@@ -247,8 +289,9 @@ async function handleBacktest(
     process.exit(1);
   }
 
-  console.log(
+  printProgress(
     chalk.gray(`  ↳ Running backtest on ${candles.length} candles...\n`),
+    jsonOutput,
   );
   const useSplit = opts.split === true;
   const useTrailingUp = opts.trailingUp === true;
@@ -256,22 +299,17 @@ async function handleBacktest(
     ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
     : 0;
 
-  // Fetch pair precision from exchange (base_step / quote_step).
-  // Falls back to 5dp/2dp defaults if not available (no auth or unknown pair).
-  let baseStep = new Decimal("0.00001");
-  let quoteStep = new Decimal("0.01");
+  let constraints: GridOrderConstraints;
   try {
-    const pairClient = getClient({ requireAuth: false });
-    const pairs = await pairClient.getCurrencyPairs();
-    const slashPair = pair.replace("-", "/");
-    const pairInfo = pairs[slashPair];
-    if (pairInfo) {
-      baseStep = new Decimal(pairInfo.base_step);
-      quoteStep = new Decimal(pairInfo.quote_step);
-    }
-  } catch {
-    // use defaults
+    constraints = await loadGridConstraints(pair);
+  } catch (err) {
+    printError(
+      `Unable to validate grid order sizes: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
   }
+  const baseStep = constraints.baseStep;
+  const quoteStep = constraints.quoteStep;
 
   if (stopLossPrice > 0) {
     const startPrice = candles[0].open;
@@ -286,8 +324,8 @@ async function handleBacktest(
     }
   }
 
-  const traceJson = traceEnabled && isJsonOutput(opts);
-  const tracePlain = traceEnabled && !isJsonOutput(opts);
+  const traceJson = traceEnabled && jsonOutput;
+  const tracePlain = traceEnabled && !jsonOutput;
   const csTrace = getCurrSymbol(pair);
   const onTick = traceEnabled
     ? (ev: BacktestTickEvent) => {
@@ -316,6 +354,7 @@ async function handleBacktest(
         onTick,
         baseStep,
         quoteStep,
+        constraints,
       )
     : runBacktest(
         candles,
@@ -328,13 +367,14 @@ async function handleBacktest(
         onTick,
         baseStep,
         quoteStep,
+        constraints,
       );
 
   if (traceJson) {
     return;
   }
 
-  if (isJsonOutput(opts)) {
+  if (jsonOutput) {
     const finalPrice = candles[candles.length - 1].close;
     const baseVal = result.finalBase.times(finalPrice);
     const totalVal = result.finalQuote.plus(baseVal);
@@ -365,8 +405,17 @@ async function handleBacktest(
 
   const startPrice = candles[0].open;
   const finalPrice = candles[candles.length - 1].close;
-  const lower = startPrice.times(new Decimal(1).minus(rangePct));
-  const upper = startPrice.times(new Decimal(1).plus(rangePct));
+  const plan = createGridPlan({
+    startPrice,
+    totalLevels: gridLevels,
+    rangePct,
+    investment,
+    split: useSplit,
+    stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
+    constraints,
+  });
+  const lower = plan.levels[0].price;
+  const upper = plan.levels[plan.levels.length - 1].price;
   const baseValue = result.finalBase.times(finalPrice);
   const totalValue = result.finalQuote.plus(baseValue);
   const netReturn = totalValue.minus(investment);
@@ -374,16 +423,15 @@ async function handleBacktest(
     ? new Decimal(0)
     : netReturn.div(investment).times(100);
 
-  const levels = createGrid(startPrice, gridLevels, rangePct);
-  const buyLevels = levels.filter((lv) => lv.buyCount > 0).length;
-  const sellLevels = useSplit
-    ? levels.filter((lv) => lv.price.gt(startPrice)).length
-    : 0;
-  const totalCapitalLevels = useSplit ? buyLevels + sellLevels : buyLevels;
+  const buyLevels = plan.buyLevelIndices.length;
   const [base, quote] = pair.split("-");
-  const quotePerLevel = investment
-    .div(Math.max(totalCapitalLevels, 1))
-    .toDecimalPlaces(2);
+  const quotePerLevel = plan.quotePerLevel;
+  const cycleReturns = plan.buyLevelIndices.map((index) =>
+    plan.levels[index + 1].price.div(plan.levels[index].price).minus(1),
+  );
+  const averageCycleReturn = cycleReturns
+    .reduce((sum, value) => sum.plus(value), new Decimal(0))
+    .div(cycleReturns.length);
 
   const w = 56;
   const h = "\u2550";
@@ -420,10 +468,14 @@ async function handleBacktest(
       `${gridLevels / 2} per side (${chalk.green(`${buyLevels} buy`)}, ${chalk.red(`${gridLevels - buyLevels} sell`)})`,
     ),
   );
-  console.log(pad(`${quote} / Level`, `${cs}${quotePerLevel}`));
-  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
-  const profitPct = ratio.minus(1).times(100);
-  const profitDollar = quotePerLevel.times(ratio.minus(1));
+  console.log(
+    pad(
+      `${quote} / Level`,
+      `${cs}${quotePerLevel.toFixed(constraints.quoteStep.decimalPlaces())}`,
+    ),
+  );
+  const profitPct = averageCycleReturn.times(100);
+  const profitDollar = quotePerLevel.times(averageCycleReturn);
   console.log(
     pad(
       "Profit/Grid",
@@ -444,10 +496,7 @@ async function handleBacktest(
     ),
   );
 
-  const pnlColor = result.realizedPnl.gte(0) ? chalk.green : chalk.red;
-  console.log(
-    pad("Realized P&L", pnlColor(`${cs}${result.realizedPnl.toFixed(2)}`)),
-  );
+  console.log(pad("Realized P&L", colorSignedMoney(result.realizedPnl, cs)));
   console.log(pad(`Final ${quote}`, `${cs}${result.finalQuote.toFixed(2)}`));
   console.log(
     pad(
@@ -457,9 +506,9 @@ async function handleBacktest(
   );
   console.log(pad("Portfolio Value", `${cs}${totalValue.toFixed(2)}`));
 
-  const returnColor = netReturn.gte(0) ? chalk.green : chalk.red;
-  console.log(pad("Total P&L", returnColor(`${cs}${netReturn.toFixed(2)}`)));
-  console.log(pad("ROI", returnColor(`${returnPct.toFixed(2)}%`)));
+  console.log(pad("Total P&L", colorSignedMoney(netReturn, cs)));
+  const roiColor = returnPct.gte(0) ? chalk.green : chalk.red;
+  console.log(pad("ROI", roiColor(`${returnPct.toFixed(2)}%`)));
   console.log(
     pad(
       "Max Drawdown",
@@ -525,16 +574,14 @@ async function handleBacktest(
         header: "Profit",
         accessor: (t) => {
           if (t.profit === undefined) return "";
-          const v = `${cs}${t.profit.toFixed(2)}`;
-          return t.profit.gte(0) ? chalk.green(v) : chalk.red(v);
+          return colorSignedMoney(t.profit, cs);
         },
         align: "right",
       },
       {
         header: "Realized",
         accessor: (t) => {
-          const v = `${cs}${t.realizedPnl.toFixed(2)}`;
-          return t.realizedPnl.gte(0) ? chalk.green(v) : chalk.red(v);
+          return colorSignedMoney(t.realizedPnl, cs);
         },
         align: "right",
       },
@@ -583,8 +630,8 @@ async function handleOptimize(
   }
 
   const investment = parseDecimalArg(opts.investment, "--investment");
-  const days = parseInt(opts.days, 10) || 30;
-  const topN = Math.max(1, Math.min(parseInt(opts.top, 10) || 10, 50));
+  const days = parsePositiveInt(opts.days, "--days");
+  const topN = Math.min(parsePositiveInt(opts.top, "--top"), 50);
 
   let levelsList: number[];
   try {
@@ -593,13 +640,14 @@ async function handleOptimize(
       .map((x) => x.trim())
       .filter((x) => x)
       .map((x) => {
-        const n = parseInt(x, 10);
-        if (isNaN(n) || n < 1 || n > 25) throw new Error();
-        return n * 2;
+        return parseLevelsPerSide(x) * 2;
       });
+    if (levelsList.length === 0) {
+      throw new Error("No level values provided.");
+    }
   } catch {
     printError(
-      "--levels must be comma-separated integers between 1 and 25 (per side).",
+      "--levels must be comma-separated integers between 1 and 100 (per side).",
     );
     process.exit(1);
   }
@@ -611,6 +659,9 @@ async function handleOptimize(
       .map((x) => x.trim())
       .filter((x) => x)
       .map((x) => new Decimal(x).div(100));
+    if (rangesList.length === 0) {
+      throw new Error("No range values provided.");
+    }
   } catch {
     printError("--ranges must be comma-separated numbers, e.g. '3,5,10'.");
     process.exit(1);
@@ -625,15 +676,18 @@ async function handleOptimize(
   }
 
   const spec = parsePriceSpec(opts.prices);
+  const jsonOutput = isJsonOutput(opts);
   if (isScenarioSpec(spec)) {
-    console.log(
+    printProgress(
       chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
+      jsonOutput,
     );
   } else {
-    console.log(
+    printProgress(
       chalk.gray(
         `\n  ↳ Fetching ${opts.interval} candles for ${chalk.white(pair)} (last ${days} days)...`,
       ),
+      jsonOutput,
     );
   }
   const candles = await loadScenarioCandles(spec, pair, opts.interval, days);
@@ -645,10 +699,11 @@ async function handleOptimize(
     process.exit(1);
   }
 
-  console.log(
+  printProgress(
     chalk.gray(
       `  ↳ Testing ${totalCombos} parameter combinations on ${candles.length} candles...\n`,
     ),
+    jsonOutput,
   );
   const useSplit = opts.split === true;
   const useTrailingUp = opts.trailingUp === true;
@@ -667,19 +722,14 @@ async function handleOptimize(
     }
   }
 
-  let optBaseStep = new Decimal("0.00001");
-  let optQuoteStep = new Decimal("0.01");
+  let constraints: GridOrderConstraints;
   try {
-    const pairClient = getClient({ requireAuth: false });
-    const pairs = await pairClient.getCurrencyPairs();
-    const slashPair = pair.replace("-", "/");
-    const pairInfo = pairs[slashPair];
-    if (pairInfo) {
-      optBaseStep = new Decimal(pairInfo.base_step);
-      optQuoteStep = new Decimal(pairInfo.quote_step);
-    }
-  } catch {
-    // use defaults
+    constraints = await loadGridConstraints(pair);
+  } catch (err) {
+    printError(
+      `Unable to validate grid order sizes: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
   }
 
   const results = optimizeGridParams(
@@ -691,11 +741,12 @@ async function handleOptimize(
     useSplit,
     useTrailingUp,
     stopLossPrice,
-    optBaseStep,
-    optQuoteStep,
+    constraints.baseStep,
+    constraints.quoteStep,
+    constraints,
   );
 
-  if (isJsonOutput(opts)) {
+  if (jsonOutput) {
     printJson(
       results.slice(0, topN).map((r) => {
         const annualized =
@@ -731,23 +782,18 @@ async function handleOptimize(
   printTable(
     show.map((r, i) => {
       const isProfitable = r.totalReturn.gte(0);
-      const isRealizedPos = r.realizedPnl.gte(0);
       return {
         rank: i + 1,
         levels: r.gridLevels / 2,
         range: `${r.rangePct.times(100).toFixed(1)}%`,
-        realized: isRealizedPos
-          ? chalk.green(`${cs}${r.realizedPnl.toFixed(2)}`)
-          : chalk.red(`${cs}${r.realizedPnl.toFixed(2)}`),
-        return_: isProfitable
-          ? chalk.green(`${cs}${r.totalReturn.toFixed(2)}`)
-          : chalk.red(`${cs}${r.totalReturn.toFixed(2)}`),
+        realized: colorSignedMoney(r.realizedPnl, cs),
+        return_: colorSignedMoney(r.totalReturn, cs),
         returnPct: isProfitable
           ? chalk.green(`${r.returnPct.toFixed(2)}%`)
           : chalk.red(`${r.returnPct.toFixed(2)}%`),
         trades: r.totalTrades,
         drawdown: chalk.red(`${r.maxDrawdown.times(100).toFixed(2)}%`),
-        perTrade: `${cs}${r.profitPerTrade.toFixed(2)}`,
+        perTrade: colorSignedMoney(r.profitPerTrade, cs),
       };
     }),
     [
@@ -776,7 +822,7 @@ async function handleOptimize(
     printKeyValue([
       [
         "Best Total P&L",
-        `${chalk.white(bestReturn.gridLevels / 2)} levels/side, ${chalk.white(bestReturn.rangePct.times(100).toFixed(1) + "%")} range \u2192 Realized: ${chalk.green(cs + bestReturn.realizedPnl.toFixed(2))} | Total: ${chalk.green(cs + bestReturn.totalReturn.toFixed(2))}`,
+        `${chalk.white(bestReturn.gridLevels / 2)} levels/side, ${chalk.white(bestReturn.rangePct.times(100).toFixed(1) + "%")} range \u2192 Realized: ${colorSignedMoney(bestReturn.realizedPnl, cs)} | Total: ${colorSignedMoney(bestReturn.totalReturn, cs)}`,
       ],
       [
         "Best Risk-Adj",
@@ -809,9 +855,11 @@ async function handleRun(
 ): Promise<void> {
   pair = validatePair(pair);
 
-  const levelsPerSide = parseInt(opts.levels, 10);
-  if (isNaN(levelsPerSide) || levelsPerSide < 1 || levelsPerSide > 25) {
-    printError("--levels must be between 1 and 25 (per side).");
+  let levelsPerSide: number;
+  try {
+    levelsPerSide = parseLevelsPerSide(opts.levels);
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
   const gridLevels = levelsPerSide * 2;
@@ -865,22 +913,25 @@ async function handleRun(
       }
     : undefined;
 
-  const suppressDashboard = isScenarioSpec(spec) && traceEnabled;
+  const suppressDashboard = traceEnabled;
+  const humanOutput = traceJson ? process.stderr : process.stdout;
   const bot = new ForegroundGridBot(config, {
     priceSource,
     onTick,
     suppressDashboard,
+    humanOutput,
   });
 
   const shutdown = async () => {
-    console.log(chalk.yellow("\n  ↳ Shutting down grid bot..."));
+    humanOutput.write(chalk.yellow("\n  ↳ Shutting down grid bot...\n"));
     bot.stop();
     await bot.shutdown();
     process.exit(0);
   };
+  const requestShutdown = () => void shutdown();
 
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGINT", requestShutdown);
+  process.on("SIGTERM", requestShutdown);
 
   try {
     await bot.run();
@@ -890,6 +941,9 @@ async function handleRun(
   } catch (err) {
     printError(err instanceof Error ? err.message : String(err));
     process.exit(1);
+  } finally {
+    process.off("SIGINT", requestShutdown);
+    process.off("SIGTERM", requestShutdown);
   }
 }
 

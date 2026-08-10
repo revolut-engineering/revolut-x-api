@@ -6,15 +6,28 @@ import type {
 import type { GridBotTickEvent } from "../engine/grid-bot.js";
 import { fmtPrice } from "../engine/grid-renderer.js";
 
+const MAX_PLAIN_TRACE_ITEMS = 4;
+
+function summarizeItems<T>(items: T[], format: (item: T) => string): string {
+  if (items.length === 0) return "—";
+  if (items.length <= MAX_PLAIN_TRACE_ITEMS) {
+    return items.map(format).join("; ");
+  }
+  const edgeItems = MAX_PLAIN_TRACE_ITEMS / 2;
+  const hiddenItems = items.length - MAX_PLAIN_TRACE_ITEMS;
+  return [
+    ...items.slice(0, edgeItems).map(format),
+    `… +${hiddenItems} more`,
+    ...items.slice(-edgeItems).map(format),
+  ].join("; ");
+}
+
 export function formatBacktestFills(fills: BacktestFill[]): string {
-  if (fills.length === 0) return "—";
-  return fills
-    .map((f) => {
-      const side = f.side === "buy" ? "BUY" : "SELL";
-      const tag = f.trigger === "grid" ? "" : ` (${f.trigger})`;
-      return `${side}${tag} ${f.quantity}@${f.price}`;
-    })
-    .join("; ");
+  return summarizeItems(fills, (f) => {
+    const side = f.side === "buy" ? "BUY" : "SELL";
+    const tag = f.trigger === "grid" ? "" : ` (${f.trigger})`;
+    return `${side}${tag} ${f.quantity}@${f.price}`;
+  });
 }
 
 export function emitBacktestTracePlain(
@@ -65,7 +78,7 @@ export function emitGridBotTracePlain(
   currencySymbol: string,
   out: NodeJS.WritableStream = process.stdout,
 ): void {
-  const fills = ev.fills.length === 0 ? "—" : ev.fills.join("; ");
+  const fills = summarizeItems(ev.fills, (fill) => fill);
   out.write(
     chalk.dim(
       `[t=${String(ev.index).padStart(6, "0")}] price=${fmtPrice(ev.price, currencySymbol)} ` +

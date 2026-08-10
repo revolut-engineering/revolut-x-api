@@ -4,7 +4,12 @@ interface GridLevel {
   price: Decimal;
   index: number;
   buyCount: number; // pending buy orders at this level
-  positions: Decimal[]; // baseHeld for each open position
+  positions: BacktestPosition[];
+}
+
+interface BacktestPosition {
+  baseHeld: Decimal;
+  costBasis: Decimal;
 }
 
 export interface BacktestResult {
@@ -56,15 +61,28 @@ export function createGrid(
 ): GridLevel[] {
   const lower = startPrice.times(new Decimal(1).minus(rangePct));
   const upper = startPrice.times(new Decimal(1).plus(rangePct));
-  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
+  const levelsPerSide = gridLevels / 2;
+  const sideIntervals = new Decimal(levelsPerSide).minus("0.5");
+  const lowerRatio = startPrice
+    .div(lower)
+    .pow(new Decimal(1).div(sideIntervals));
+  const upperRatio = upper
+    .div(startPrice)
+    .pow(new Decimal(1).div(sideIntervals));
 
   const levels: GridLevel[] = [];
   for (let i = 0; i < gridLevels; i++) {
-    const price = lower.times(ratio.pow(i)).toDecimalPlaces(quoteDp);
+    const rawPrice =
+      i < levelsPerSide
+        ? lower.times(lowerRatio.pow(i))
+        : startPrice.times(
+            upperRatio.pow(new Decimal(i - levelsPerSide).plus("0.5")),
+          );
+    const price = rawPrice.toDecimalPlaces(quoteDp, Decimal.ROUND_HALF_UP);
     const level: GridLevel = {
       price,
       index: i,
-      buyCount: price.lt(startPrice) ? 1 : 0,
+      buyCount: i < levelsPerSide ? 1 : 0,
       positions: [],
     };
     levels.push(level);
@@ -76,8 +94,8 @@ export function createGrid(
 function sumBaseHeld(levels: GridLevel[]): Decimal {
   let total = new Decimal(0);
   for (const lv of levels) {
-    for (const baseHeld of lv.positions) {
-      total = total.plus(baseHeld);
+    for (const position of lv.positions) {
+      total = total.plus(position.baseHeld);
     }
   }
   return total;
@@ -104,7 +122,10 @@ function runBuyPass(
         .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
 
       for (let i = 0; i < level.buyCount; i++) {
-        level.positions.push(baseBought);
+        level.positions.push({
+          baseHeld: baseBought,
+          costBasis: quotePerLevel,
+        });
         quoteBalance = quoteBalance.minus(quotePerLevel);
         result.totalBuys += 1;
         result.totalTrades += 1;
@@ -142,11 +163,12 @@ function runSellPass(
       if (high.gte(sellLevel.price)) {
         const positionsToSell = level.positions.splice(0);
 
-        for (const baseHeld of positionsToSell) {
+        for (const position of positionsToSell) {
+          const baseHeld = position.baseHeld;
           const quoteReceived = baseHeld
             .times(sellLevel.price)
             .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-          const profit = quoteReceived.minus(quotePerLevel);
+          const profit = quoteReceived.minus(position.costBasis);
 
           level.buyCount++;
           quoteBalance = quoteBalance.plus(quoteReceived);
@@ -277,19 +299,43 @@ export function runBacktest(
   let peakValue = investment;
 
   if (split && sellLevelIndices.length > 0) {
-    const basePerLevel = quotePerLevel
+    const splitCost = quotePerLevel.times(sellLevelIndices.length);
+    const splitBase = splitCost
       .div(startPrice)
       .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
+    const baseStep = new Decimal(1).div(new Decimal(10).pow(baseDp));
+    const basePerLevel = splitBase
+      .div(sellLevelIndices.length)
+      .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
+    const baseByLevel = Array.from(
+      { length: sellLevelIndices.length },
+      () => basePerLevel,
+    );
+    const remainderSteps = splitBase
+      .minus(basePerLevel.times(sellLevelIndices.length))
+      .div(baseStep)
+      .toNumber();
+    for (let index = 0; index < remainderSteps; index++) {
+      baseByLevel[index] = baseByLevel[index].plus(baseStep);
+    }
+    const splitCostByLevel = baseByLevel.map((baseAmount) =>
+      splitBase.gt(0)
+        ? splitCost.times(baseAmount).div(splitBase)
+        : quotePerLevel,
+    );
 
-    for (const sellIdx of sellLevelIndices) {
+    for (let index = 0; index < sellLevelIndices.length; index++) {
+      const sellIdx = sellLevelIndices[index];
       const buyLevel = levels[sellIdx - 1];
       if (buyLevel) {
-        buyLevel.positions.push(basePerLevel);
+        buyLevel.positions.push({
+          baseHeld: baseByLevel[index],
+          costBasis: splitCostByLevel[index],
+        });
         // NOTE: buyCount NOT cleared — split init does not consume the buy slot
       }
     }
 
-    const splitCost = quotePerLevel.times(sellLevelIndices.length);
     quoteBalance = quoteBalance.minus(splitCost);
 
     result.tradeLog.push(
@@ -307,11 +353,12 @@ export function runBacktest(
       // Simulate market sell of all held positions at the stop-loss price
       for (const level of levels) {
         while (level.positions.length > 0) {
-          const baseHeld = level.positions.pop()!;
+          const position = level.positions.pop()!;
+          const baseHeld = position.baseHeld;
           const quoteReceived = baseHeld
             .times(fixedSlPrice)
             .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-          const profit = quoteReceived.minus(quotePerLevel);
+          const profit = quoteReceived.minus(position.costBasis);
           quoteBalance = quoteBalance.plus(quoteReceived);
           result.realizedPnl = result.realizedPnl.plus(profit);
           result.totalSells++;
@@ -345,37 +392,22 @@ export function runBacktest(
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
       const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
+      const hasOpenPositions = levels.some(
+        (level) => level.positions.length > 0,
+      );
       if (
         candle.high.gte(
           upper
             .times(ratio)
             .plus(upper.times(ratio.pow(2)))
             .div(2),
-        )
+        ) &&
+        !hasOpenPositions
       ) {
         const rebuildPrice = candle.close;
 
         // Save buyCount before sell pass clears things (used to restore split slots)
         const savedBuyCounts = levels.map((l) => l.buyCount);
-
-        // Sell all held positions at the rebuild price
-        for (const level of levels) {
-          while (level.positions.length > 0) {
-            const baseHeld = level.positions.pop()!;
-            const quoteReceived = baseHeld
-              .times(rebuildPrice)
-              .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-            const profit = quoteReceived.minus(quotePerLevel);
-            quoteBalance = quoteBalance.plus(quoteReceived);
-            result.realizedPnl = result.realizedPnl.plus(profit);
-            result.totalSells++;
-            result.totalTrades++;
-            result.tradeLog.push(
-              `#${result.totalTrades}  TRAILING-UP SELL @ ${rebuildPrice.toFixed(2)} | ` +
-                `profit=${profit.toFixed(2)}`,
-            );
-          }
-        }
 
         // Shift the grid by ratio^k steps (preserves geometric spacing)
         let k: number;
@@ -391,7 +423,7 @@ export function runBacktest(
         for (let i = 0; i < levels.length; i++) {
           levels[i].price = levels[i].price
             .times(ratioK)
-            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
+            .toDecimalPlaces(quoteDp, Decimal.ROUND_HALF_UP);
         }
 
         // Reset buy counts and positions based on new prices

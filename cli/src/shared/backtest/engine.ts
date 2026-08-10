@@ -1,8 +1,19 @@
 import { Decimal } from "decimal.js";
 import { randomUUID } from "node:crypto";
 import { ForegroundGridBot } from "../../engine/grid-bot.js";
-import type { GridBotConfig } from "../../engine/grid-bot.js";
+import type {
+  GridBotConfig,
+  GridExchangeRateLimiter,
+} from "../../engine/grid-bot.js";
 import { trailUpTriggerFromBounds } from "../../engine/grid-math.js";
+import {
+  createGridPlan,
+  createGridPrices,
+  floorToStep,
+  normalizeBaseOrderSize,
+  roundToStep,
+  type GridOrderConstraints,
+} from "../../engine/grid-plan.js";
 import { SimulatedExchange } from "./simulated-exchange.js";
 import type {
   GridState,
@@ -23,7 +34,12 @@ interface GridLevel {
   price: Decimal;
   index: number;
   buyCount: number; // pending buy orders at this level
-  positions: Decimal[]; // baseHeld for each open position
+  positions: BacktestPosition[];
+}
+
+interface BacktestPosition {
+  baseHeld: Decimal;
+  costBasis: Decimal;
 }
 
 interface BacktestResult {
@@ -39,6 +55,13 @@ interface BacktestResult {
   trailingUpShifts: number;
   stopLossTriggered: boolean;
 }
+
+const MAX_BACKTEST_LEVEL_EVALUATIONS = 30_000_000;
+const PASSTHROUGH_RATE_LIMITER: GridExchangeRateLimiter = {
+  place: (operation) => operation(),
+  cancel: (operation) => operation(),
+  query: (operation) => operation(),
+};
 
 export type BacktestFillTrigger = "grid" | "stop-loss" | "trailing-up";
 
@@ -109,36 +132,50 @@ function createEmptyResult(): BacktestResult {
   };
 }
 
+function unboundedConstraints(
+  baseStep: Decimal,
+  quoteStep: Decimal,
+): GridOrderConstraints {
+  return {
+    baseStep,
+    quoteStep,
+    minBase: new Decimal(0),
+    maxBase: new Decimal(Infinity),
+    minQuote: new Decimal(0),
+  };
+}
+
+function validateBacktestWorkload(levelEvaluations: number): void {
+  if (levelEvaluations > MAX_BACKTEST_LEVEL_EVALUATIONS) {
+    throw new Error(
+      `Backtest workload is too large (${levelEvaluations.toLocaleString()} level evaluations). ` +
+        `Reduce --levels, --ranges, --days, or use a wider candle interval.`,
+    );
+  }
+}
+
 export function createGrid(
   startPrice: Decimal,
   gridLevels: number,
   rangePct: Decimal,
   quoteDp = 2,
 ): GridLevel[] {
-  const lower = startPrice.times(new Decimal(1).minus(rangePct));
-  const upper = startPrice.times(new Decimal(1).plus(rangePct));
-  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
-
-  const levels: GridLevel[] = [];
-  for (let i = 0; i < gridLevels; i++) {
-    const price = lower.times(ratio.pow(i)).toDecimalPlaces(quoteDp);
-    const level: GridLevel = {
-      price,
-      index: i,
-      buyCount: price.lt(startPrice) ? 1 : 0,
+  const quoteStep = new Decimal(10).pow(-quoteDp);
+  return createGridPrices(startPrice, gridLevels, rangePct, quoteStep).map(
+    (level) => ({
+      price: level.price,
+      index: level.index,
+      buyCount: level.index < gridLevels / 2 ? 1 : 0,
       positions: [],
-    };
-    levels.push(level);
-  }
-
-  return levels;
+    }),
+  );
 }
 
 function sumBaseHeld(levels: GridLevel[]): Decimal {
   let total = new Decimal(0);
   for (const lv of levels) {
-    for (const baseHeld of lv.positions) {
-      total = total.plus(baseHeld);
+    for (const position of lv.positions) {
+      total = total.plus(position.baseHeld);
     }
   }
   return total;
@@ -161,9 +198,9 @@ function emitTick(
   let position = new Decimal(0);
   let costBasis = new Decimal(0);
   for (const lv of levels) {
-    for (const baseHeld of lv.positions) {
-      position = position.plus(baseHeld);
-      costBasis = costBasis.plus(baseHeld.times(lv.price));
+    for (const openPosition of lv.positions) {
+      position = position.plus(openPosition.baseHeld);
+      costBasis = costBasis.plus(openPosition.costBasis);
     }
   }
   const markPrice = candle.close;
@@ -194,16 +231,17 @@ function runBuyPass(
   quoteBalance: Decimal,
   investment: Decimal,
   tickFills: BacktestFill[],
-  baseDp = 5,
+  baseStep: Decimal,
 ): Decimal {
   for (const level of levels) {
     if (level.buyCount > 0 && low.lte(level.price)) {
-      const baseBought = quotePerLevel
-        .div(level.price)
-        .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
+      const baseBought = floorToStep(quotePerLevel.div(level.price), baseStep);
 
       for (let i = 0; i < level.buyCount; i++) {
-        level.positions.push(baseBought);
+        level.positions.push({
+          baseHeld: baseBought,
+          costBasis: quotePerLevel,
+        });
         quoteBalance = quoteBalance.minus(quotePerLevel);
         result.totalBuys += 1;
         result.totalTrades += 1;
@@ -251,7 +289,7 @@ function runSellPass(
   quoteBalance: Decimal,
   investment: Decimal,
   tickFills: BacktestFill[],
-  quoteDp = 2,
+  quoteStep: Decimal,
 ): Decimal {
   for (const level of levels) {
     if (level.positions.length > 0 && level.index + 1 < levels.length) {
@@ -259,11 +297,13 @@ function runSellPass(
       if (high.gte(sellLevel.price)) {
         const positionsToSell = level.positions.splice(0);
 
-        for (const baseHeld of positionsToSell) {
-          const quoteReceived = baseHeld
-            .times(sellLevel.price)
-            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-          const profit = quoteReceived.minus(quotePerLevel);
+        for (const position of positionsToSell) {
+          const baseHeld = position.baseHeld;
+          const quoteReceived = floorToStep(
+            baseHeld.times(sellLevel.price),
+            quoteStep,
+          );
+          const profit = quoteReceived.minus(position.costBasis);
 
           level.buyCount++;
           quoteBalance = quoteBalance.plus(quoteReceived);
@@ -321,8 +361,8 @@ function simulateCandle(
   quoteBalance: Decimal,
   investment: Decimal,
   tickFills: BacktestFill[],
-  baseDp = 5,
-  quoteDp = 2,
+  baseStep: Decimal,
+  quoteStep: Decimal,
 ): Decimal {
   const bearish = open.gt(close);
   if (bearish) {
@@ -334,7 +374,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
-      quoteDp,
+      quoteStep,
     );
     quoteBalance = runBuyPass(
       levels,
@@ -344,7 +384,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
-      baseDp,
+      baseStep,
     );
   } else {
     quoteBalance = runBuyPass(
@@ -355,7 +395,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
-      baseDp,
+      baseStep,
     );
     quoteBalance = runSellPass(
       levels,
@@ -365,7 +405,7 @@ function simulateCandle(
       quoteBalance,
       investment,
       tickFills,
-      quoteDp,
+      quoteStep,
     );
   }
 
@@ -383,20 +423,31 @@ export function runBacktest(
   onTick?: BacktestOnTick,
   baseStep = new Decimal("0.00001"),
   quoteStep = new Decimal("0.01"),
+  orderConstraints?: GridOrderConstraints,
 ): BacktestResult {
-  const baseDp = baseStep.decimalPlaces() ?? 5;
-  const quoteDp = quoteStep.decimalPlaces() ?? 2;
   if (candles.length === 0) {
     return createEmptyResult();
   }
+  validateBacktestWorkload(candles.length * gridLevels);
 
   const startPrice = candles[0].open;
-  const levels = createGrid(startPrice, gridLevels, rangePct, quoteDp);
-
-  let buyLevelCount = 0;
-  for (const lv of levels) {
-    if (lv.buyCount > 0) buyLevelCount++;
-  }
+  const constraints =
+    orderConstraints ?? unboundedConstraints(baseStep, quoteStep);
+  const plan = createGridPlan({
+    startPrice,
+    totalLevels: gridLevels,
+    rangePct,
+    investment,
+    split,
+    stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
+    constraints,
+  });
+  const levels: GridLevel[] = plan.levels.map((level) => ({
+    price: level.price,
+    index: level.index,
+    buyCount: level.index < gridLevels / 2 ? 1 : 0,
+    positions: [],
+  }));
 
   const sellLevelIndices: number[] = [];
   if (split) {
@@ -407,27 +458,21 @@ export function runBacktest(
     }
   }
 
-  const totalCapitalLevels = split
-    ? buyLevelCount + sellLevelIndices.length
-    : buyLevelCount;
-
-  const quotePerLevel = investment
-    .div(Math.max(totalCapitalLevels, 1))
-    .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+  const quotePerLevel = plan.quotePerLevel;
 
   const result = createEmptyResult();
   let quoteBalance = investment;
   let peakValue = investment;
 
   if (split && sellLevelIndices.length > 0) {
-    const basePerLevel = quotePerLevel
-      .div(startPrice)
-      .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
-
-    for (const sellIdx of sellLevelIndices) {
+    for (let index = 0; index < sellLevelIndices.length; index++) {
+      const sellIdx = sellLevelIndices[index];
       const buyLevel = levels[sellIdx - 1];
       if (buyLevel) {
-        buyLevel.positions.push(basePerLevel);
+        buyLevel.positions.push({
+          baseHeld: plan.splitBaseByLevel[index],
+          costBasis: plan.splitCostByLevel[index],
+        });
         // NOTE: buyCount NOT cleared — split init does not consume the buy slot
       }
     }
@@ -452,11 +497,13 @@ export function runBacktest(
       // Simulate market sell of all held positions at the stop-loss price
       for (const level of levels) {
         while (level.positions.length > 0) {
-          const baseHeld = level.positions.pop()!;
-          const quoteReceived = baseHeld
-            .times(fixedSlPrice)
-            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-          const profit = quoteReceived.minus(quotePerLevel);
+          const position = level.positions.pop()!;
+          const baseHeld = position.baseHeld;
+          const quoteReceived = floorToStep(
+            baseHeld.times(fixedSlPrice),
+            quoteStep,
+          );
+          const profit = quoteReceived.minus(position.costBasis);
           quoteBalance = quoteBalance.plus(quoteReceived);
           result.realizedPnl = result.realizedPnl.plus(profit);
           result.totalSells++;
@@ -519,8 +566,8 @@ export function runBacktest(
       quoteBalance,
       investment,
       tickFills,
-      baseDp,
-      quoteDp,
+      baseStep,
+      quoteStep,
     );
 
     // Trailing up check: did the candle's high breach the upper boundary + one step?
@@ -529,58 +576,15 @@ export function runBacktest(
       const lower = levels[0].price;
       const ratio = upper.div(lower).pow(new Decimal(1).div(levels.length - 1));
       const trigger = trailUpTriggerFromBounds(lower, upper, levels.length);
-      if (trigger !== null && candle.high.gte(trigger)) {
+      const hasOpenPositions = levels.some(
+        (level) => level.positions.length > 0,
+      );
+      if (trigger !== null && candle.high.gte(trigger) && !hasOpenPositions) {
         const rebuildPrice = candle.close;
 
         // Save buyCount before sell pass clears things (used to restore split slots)
         const savedBuyCounts = levels.map((l) => l.buyCount);
 
-        // Sell all held positions at the rebuild price
-        for (const level of levels) {
-          while (level.positions.length > 0) {
-            const baseHeld = level.positions.pop()!;
-            const quoteReceived = baseHeld
-              .times(rebuildPrice)
-              .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-            const profit = quoteReceived.minus(quotePerLevel);
-            quoteBalance = quoteBalance.plus(quoteReceived);
-            result.realizedPnl = result.realizedPnl.plus(profit);
-            result.totalSells++;
-            result.totalTrades++;
-            result.tradeLog.push(
-              `#${result.totalTrades}  TRAILING-UP SELL @ ${rebuildPrice.toFixed(2)} | ` +
-                `profit=${profit.toFixed(2)}`,
-            );
-            {
-              const totalPnl = quoteBalance
-                .plus(sumBaseHeld(levels).times(rebuildPrice))
-                .minus(investment);
-              result.trades.push({
-                index: result.totalTrades,
-                side: "sell",
-                trigger: "trailing-up",
-                price: rebuildPrice,
-                quantity: baseHeld,
-                quoteValue: quoteReceived,
-                profit,
-                realizedPnl: result.realizedPnl,
-                roiPct: investment.isZero()
-                  ? new Decimal(0)
-                  : totalPnl.div(investment).times(100),
-              });
-            }
-            tickFills.push({
-              side: "sell",
-              price: rebuildPrice,
-              quantity: baseHeld,
-              quoteValue: quoteReceived,
-              profit,
-              trigger: "trailing-up",
-            });
-          }
-        }
-
-        // Shift the grid by ratio^k steps (preserves geometric spacing)
         let k: number;
         if (split) {
           k = 1;
@@ -591,10 +595,32 @@ export function runBacktest(
           while (sellBoundary.times(ratio.pow(k)).lte(rebuildPrice)) k++;
         }
         const ratioK = ratio.pow(k);
+        const candidatePrices = levels.map((level) =>
+          roundToStep(level.price.times(ratioK), quoteStep),
+        );
+        for (let i = 0; i < candidatePrices.length; i++) {
+          const price = candidatePrices[i];
+          if (!price.gt(0) || (i > 0 && !price.gt(candidatePrices[i - 1]))) {
+            throw new Error(
+              "Trailing grid does not produce unique prices at the pair precision.",
+            );
+          }
+          const buyCount = split ? savedBuyCounts[i] : 1;
+          if (price.lt(rebuildPrice) && buyCount > 0) {
+            const executionPrice =
+              stopLossPrice > 0
+                ? new Decimal(stopLossPrice)
+                : candidatePrices[Math.min(i + 1, candidatePrices.length - 1)];
+            normalizeBaseOrderSize(
+              quotePerLevel.div(price),
+              constraints,
+              executionPrice,
+            );
+          }
+        }
+
         for (let i = 0; i < levels.length; i++) {
-          levels[i].price = levels[i].price
-            .times(ratioK)
-            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
+          levels[i].price = candidatePrices[i];
         }
 
         // Reset buy counts and positions based on new prices
@@ -654,13 +680,14 @@ export function optimizeGridParams(
   stopLossPrice = 0,
   baseStep = new Decimal("0.00001"),
   quoteStep = new Decimal("0.01"),
+  orderConstraints?: GridOrderConstraints,
 ): OptimizationResult[] {
   if (candles.length === 0) {
     return [];
   }
 
   if (!gridLevelsRange) {
-    gridLevelsRange = [5, 8, 10, 12, 15, 20, 25, 30];
+    gridLevelsRange = [6, 10, 16, 20, 30, 40, 50, 60];
   }
   if (!rangePctRange) {
     rangePctRange = [
@@ -673,22 +700,41 @@ export function optimizeGridParams(
       new Decimal("0.20"),
     ];
   }
+  if (gridLevelsRange.length === 0) {
+    throw new Error("At least one grid level option is required.");
+  }
+  if (rangePctRange.length === 0) {
+    throw new Error("At least one grid range option is required.");
+  }
+
+  validateBacktestWorkload(
+    candles.length *
+      rangePctRange.length *
+      gridLevelsRange.reduce((sum, levels) => sum + levels, 0),
+  );
 
   const finalPrice = candles[candles.length - 1].close;
   const startPrice = candles[0].open;
   const results: OptimizationResult[] = [];
+  const constraints =
+    orderConstraints ?? unboundedConstraints(baseStep, quoteStep);
 
   for (const levels of gridLevelsRange) {
     for (const rangePct of rangePctRange) {
-      // Skip combinations where the stop-loss sits inside the grid: the SL
-      // would fire during normal oscillation and produce meaningless results.
-      if (stopLossPrice > 0) {
-        const lowestLevel = startPrice.times(new Decimal(1).minus(rangePct));
-        if (new Decimal(stopLossPrice).gte(lowestLevel)) {
-          continue;
-        }
-      }
+      createGridPlan({
+        startPrice,
+        totalLevels: levels,
+        rangePct,
+        investment,
+        split,
+        stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
+        constraints,
+      });
+    }
+  }
 
+  for (const levels of gridLevelsRange) {
+    for (const rangePct of rangePctRange) {
       const bt = runBacktest(
         candles,
         levels,
@@ -700,6 +746,7 @@ export function optimizeGridParams(
         undefined,
         baseStep,
         quoteStep,
+        constraints,
       );
 
       const totalValue = bt.finalQuote.plus(bt.finalBase.times(finalPrice));
@@ -784,23 +831,27 @@ function buildBotInitialState(
   exchange: SimulatedExchange,
   baseDp = 5,
   quoteDp = 2,
+  orderConstraints?: GridOrderConstraints,
 ): { state: GridState; quotePerLevel: Decimal } {
-  const lower = startPrice.times(new Decimal(1).minus(rangePct));
-  const upper = startPrice.times(new Decimal(1).plus(rangePct));
-  const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
-
-  const levels: GridLevelState[] = [];
-  for (let i = 0; i < gridLevels; i++) {
-    const price = lower
-      .times(ratio.pow(i))
-      .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-    levels.push({
-      index: i,
-      price: price.toString(),
-      buyOrderIds: [],
-      positions: [],
-    });
-  }
+  const defaultBaseStep = new Decimal(10).pow(-baseDp);
+  const defaultQuoteStep = new Decimal(10).pow(-quoteDp);
+  const constraints =
+    orderConstraints ?? unboundedConstraints(defaultBaseStep, defaultQuoteStep);
+  const plan = createGridPlan({
+    startPrice,
+    totalLevels: gridLevels,
+    rangePct,
+    investment,
+    split,
+    stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
+    constraints,
+  });
+  const levels: GridLevelState[] = plan.levels.map((level) => ({
+    index: level.index,
+    price: level.price.toString(),
+    buyOrderIds: [],
+    positions: [],
+  }));
 
   const buyLevelsList = levels.filter((l) =>
     new Decimal(l.price).lt(startPrice),
@@ -814,13 +865,7 @@ function buildBotInitialState(
     }
   }
 
-  const totalCapitalLevels = split
-    ? buyLevelsList.length + sellLevelIndices.length
-    : buyLevelsList.length;
-
-  const quotePerLevel = investment
-    .div(Math.max(totalCapitalLevels, 1))
-    .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+  const quotePerLevel = plan.quotePerLevel;
 
   const state: GridState = {
     id: randomUUID().slice(0, 8),
@@ -842,8 +887,8 @@ function buildBotInitialState(
     splitExecuted: false,
     shiftCount: 0,
     gridPrice: startPrice.toString(),
-    quotePrecision: new Decimal(10).pow(-quoteDp).toFixed(quoteDp),
-    basePrecision: new Decimal(10).pow(-baseDp).toFixed(baseDp),
+    quotePrecision: constraints.quoteStep.toString(),
+    basePrecision: constraints.baseStep.toString(),
     quotePerLevel: quotePerLevel.toString(),
     levels,
     stats: {
@@ -870,20 +915,19 @@ function buildBotInitialState(
 
   // For split mode: create positions and seed sell orders
   if (split && sellLevelIndices.length > 0) {
-    const basePerLevel = quotePerLevel
-      .div(startPrice)
-      .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
-
-    for (const sellIdx of sellLevelIndices) {
+    for (let index = 0; index < sellLevelIndices.length; index++) {
+      const sellIdx = sellLevelIndices[index];
       const buyLevel = levels[sellIdx - 1];
       const sellLevel = levels[sellIdx];
       if (!buyLevel || !sellLevel) continue;
 
+      const baseForLevel = plan.splitBaseByLevel[index];
+
       const sellId = `init-sell-${sellIdx}-${randomUUID().slice(0, 4)}`;
       const pos: GridLevelPosition = {
         id: `split-${sellIdx}`,
-        baseHeld: basePerLevel.toString(),
-        fillCost: quotePerLevel.toFixed(2),
+        baseHeld: baseForLevel.toString(),
+        fillCost: plan.splitCostByLevel[index].toString(),
         sellOrderId: sellId,
       };
       buyLevel.positions.push(pos);
@@ -893,7 +937,7 @@ function buildBotInitialState(
         side: "sell",
         type: "limit",
         price: new Decimal(sellLevel.price),
-        baseSize: basePerLevel,
+        baseSize: baseForLevel,
       });
     }
 
@@ -921,16 +965,23 @@ export async function runBacktestBot(
   onTick?: BacktestOnTick,
   baseStep = new Decimal("0.00001"),
   quoteStep = new Decimal("0.01"),
+  orderConstraints?: GridOrderConstraints,
 ): Promise<BacktestResult> {
   const baseDp = baseStep.decimalPlaces() ?? 5;
   const quoteDp = quoteStep.decimalPlaces() ?? 2;
   if (candles.length === 0) {
     return createEmptyResult();
   }
+  validateBacktestWorkload(candles.length * gridLevels);
 
   const result = createEmptyResult();
   const startPrice = candles[0].open;
-  const exchange = new SimulatedExchange();
+  const constraints =
+    orderConstraints ?? unboundedConstraints(baseStep, quoteStep);
+  const exchange = new SimulatedExchange(
+    constraints.baseStep,
+    constraints.quoteStep,
+  );
 
   const { state, quotePerLevel } = buildBotInitialState(
     startPrice,
@@ -943,6 +994,7 @@ export async function runBacktestBot(
     exchange,
     baseDp,
     quoteDp,
+    constraints,
   );
 
   // Compute initial cash balance
@@ -969,7 +1021,12 @@ export async function runBacktestBot(
       stopLossPrice > 0 ? new Decimal(stopLossPrice).toString() : undefined,
   };
 
-  const bot = new ForegroundGridBot(config, { suppressDashboard: true });
+  const bot = new ForegroundGridBot(config, {
+    suppressDashboard: true,
+    rateLimiter: PASSTHROUGH_RATE_LIMITER,
+    persistState: false,
+    orderConstraints: constraints,
+  });
   const b = bot as unknown as Record<string, unknown>;
   b._client = exchange;
   b._state = state;

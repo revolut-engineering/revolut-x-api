@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Decimal } from "decimal.js";
+import { stripVTControlCharacters } from "node:util";
 import {
   levelsPerSide,
   trailUpTriggerFromBounds,
@@ -223,5 +224,83 @@ describe("renderDashboard trailing-up row", () => {
 
   it("omits the row when trailing-up is disabled", () => {
     expect(dashboard(makeState())).not.toContain("Trail Up");
+  });
+});
+
+describe("renderDashboard large grids", () => {
+  it("shows a bounded window around the current price", () => {
+    // given
+    const state = makeState();
+    state.config.levels = 200;
+    state.levels = Array.from({ length: 200 }, (_, index) => ({
+      index,
+      price: String(50_000 + index * 100),
+      buyOrderIds: index < 100 ? [`buy-${index}`] : [],
+      positions: [],
+    }));
+
+    // when
+    const output = renderDashboard({
+      state,
+      currentPrice: new Decimal("60000"),
+      uptime: 1000,
+      tickCount: 1,
+      lastError: null,
+      warnings: [],
+      telegramConnections: 0,
+      intervalSec: 10,
+      lastNotifyOk: 0,
+    });
+    const plainOutput = stripVTControlCharacters(output);
+    const renderedLevelRows = plainOutput
+      .split("\n")
+      .filter((line) => /║\s+#\s*\d+/.test(line));
+
+    // then
+    expect(renderedLevelRows).toHaveLength(24);
+    expect(plainOutput).toContain("#101");
+    expect(plainOutput).toMatch(/\d+ higher levels hidden/);
+    expect(plainOutput).toMatch(/\d+ lower levels hidden/);
+  });
+
+  it("aligns order bars across two-digit and three-digit level numbers", () => {
+    // given
+    const state = makeState();
+    state.config.levels = 200;
+    state.levels = Array.from({ length: 200 }, (_, index) => ({
+      index,
+      price: String(50_000 + index * 100),
+      buyOrderIds: index < 100 ? [`buy-${index}`] : [],
+      positions: [],
+    }));
+
+    // when
+    const plainOutput = stripVTControlCharacters(
+      renderDashboard({
+        state,
+        currentPrice: new Decimal("60000"),
+        uptime: 1000,
+        tickCount: 1,
+        lastError: null,
+        warnings: [],
+        telegramConnections: 0,
+        intervalSec: 10,
+        lastNotifyOk: 0,
+      }),
+    );
+    const levelRows = plainOutput.split("\n");
+    const level100 = levelRows.find((line) => line.includes("#100"))!;
+    const level99 = levelRows.find((line) => /#\s*99\s/.test(line))!;
+
+    // then
+    expect(level100).toContain("$");
+    expect(level99).toContain("$");
+    expect(level100).toContain("▒▒▒▒▒");
+    expect(level99).toContain("▒▒▒▒▒");
+    expect(level100).toContain("BUY");
+    expect(level99).toContain("BUY");
+    expect(level100.indexOf("$")).toBe(level99.indexOf("$"));
+    expect(level100.indexOf("▒▒▒▒▒")).toBe(level99.indexOf("▒▒▒▒▒"));
+    expect(level100.indexOf("BUY")).toBe(level99.indexOf("BUY"));
   });
 });
