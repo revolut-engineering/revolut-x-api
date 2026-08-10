@@ -70,10 +70,12 @@ const EXPECTED_TOOL_NAMES = [
   "grid_optimize",
   "list_kb_articles",
   "search_kb",
+  "martingale_backtest",
+  "martingale_optimize",
 ];
 
 describe("tool annotations", () => {
-  it("all 21 tools are registered", async () => {
+  it("all 23 tools are registered", async () => {
     const tools = await listTools();
     expect(tools).toHaveLength(23);
     const names = tools.map((t) => t.name).sort();
