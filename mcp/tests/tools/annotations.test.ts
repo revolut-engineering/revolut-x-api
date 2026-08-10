@@ -75,7 +75,7 @@ const EXPECTED_TOOL_NAMES = [
 describe("tool annotations", () => {
   it("all 21 tools are registered", async () => {
     const tools = await listTools();
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(23);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
