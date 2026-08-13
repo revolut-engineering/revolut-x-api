@@ -95,7 +95,7 @@ revx configure path                     # Print config directory path
 ## Next Steps
 
 Once configured, explore:
-- Check your balances and order history — see `revx-account` skill
+- Check your balances, transactions, and order history — see `revx-account` skill
 - View market prices and candles — see `revx-market` skill
 - Place your first order — see `revx-trading` skill
 
@@ -104,7 +104,7 @@ Once configured, explore:
 | Skill | Purpose |
 |---|---|
 | `revx-market` | Currencies, pairs, tickers, candles, order book |
-| `revx-account` | Balances, order queries, trade history, events |
+| `revx-account` | Balances, transaction history, order queries, trade history |
 | `revx-trading` | Place and cancel orders |
 | `revx-monitor` | Live price/indicator alerts |
 | `revx-telegram` | Telegram notification setup |

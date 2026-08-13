@@ -58,6 +58,7 @@ export {
   HISTORICAL_ORDERS_API_LIMIT,
   ACTIVE_ORDERS_API_LIMIT,
   TRADES_API_LIMIT,
+  TRANSACTIONS_API_LIMIT,
   PAGINATED_DATA_MAX_LIMIT,
 } from "./pagination/index.js";
 
@@ -102,6 +103,10 @@ export type {
   HistoricalOrdersOptions,
   Trade,
   TradesOptions,
+  TransactionType,
+  TransactionStatus,
+  Transaction,
+  TransactionsOptions,
   Ticker,
   TickersOptions,
   Candle,

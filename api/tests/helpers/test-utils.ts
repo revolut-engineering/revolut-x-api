@@ -172,3 +172,15 @@ export const mockTrade = {
   s: "buy" as const,
   im: false,
 };
+
+export const mockTransaction = {
+  id: "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+  status: "completed",
+  type: "buy",
+  source_currency: "USD",
+  source_amount: "1000.00",
+  destination_currency: "BTC",
+  destination_amount: "0.01",
+  created_date: 1700000000000,
+  processed_date: 1700000001000,
+};

@@ -14,7 +14,7 @@ openclaw plugins install clawhub:revolut-x
 |---|---|
 | `revx-auth` | install, configure API keys, generate keypair, set passkey |
 | `revx-market` | check prices, view candles, ticker, order book, list pairs |
-| `revx-account` | balances, open orders, order history, fills, trade history |
+| `revx-account` | balances, transaction history, open orders, order history, fills, trade history |
 | `revx-trading` | place / cancel market and limit orders |
 | `revx-monitor` | live price + indicator alerts (RSI, EMA, MACD, Bollinger, OBI, ATR, …) |
 | `revx-telegram` | set up a Telegram connector for alerts |

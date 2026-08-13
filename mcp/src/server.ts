@@ -27,7 +27,7 @@ export function resetRevolutXClient(): void {
   _client = null;
 }
 
-export const SERVER_INSTRUCTIONS = `Revolut X read-only data, account state, historical orders/fills, and grid-strategy backtests for crypto and fiat pairs. To place orders, run live bots, or set up alerts, route the user to \`get_trading_setup\` — this server cannot modify account state.
+export const SERVER_INSTRUCTIONS = `Revolut X read-only data, account state, transactions, historical orders/fills, and grid-strategy backtests for crypto and fiat pairs. To place orders, run live bots, or set up alerts, route the user to \`get_trading_setup\` — this server cannot modify account state.
 
 Data hygiene (apply to every reply):
 - Always show the currency or unit next to a numeric amount (e.g., "USD 45,000", "0.5 BTC", "12 USD/BTC").
@@ -46,7 +46,8 @@ Operational rules:
 - When you return the \`get_trading_setup\` guide, present its steps and links to the user, and present the security-policy URL verbatim (exactly as it appears, markdown link intact) while reminding the user to review it before trading. The Claude Code plugin is the only supported way to trade programmatically — do not propose the Revolut app, website, or any other method as an alternative. Do not fetch, open, or summarize the security-policy URL yourself; the user opens it.
 
 Routing hints (only the non-obvious cases — tool descriptions cover the rest):
-- For trading volume, P&L, or any "what did I do" question, call \`get_historical_orders\` once with \`order_states: ["filled","partially_filled"]\` and no symbols filter. The output already contains a pre-aggregated per-quote-currency totals block — quote it instead of re-summing.
+- For transaction-history questions about buys, sells, sends, receives, deposits, or withdrawals, call \`get_transactions\`. Use the signed Source Amount and Destination Amount values as returned.
+- For trading volume, P&L, or order-execution activity, call \`get_historical_orders\` once with \`order_states: ["filled","partially_filled"]\` and no symbols filter. The output already contains a pre-aggregated per-quote-currency totals block — quote it instead of re-summing.
 - For any fee-related question (fees paid on an order, fee currency), call \`get_order_by_id\` with the order ID — it is the only tool that returns per-order fees. \`get_historical_orders\` and \`get_order_fills\` do NOT include fee fields. For aggregate-fee questions (e.g. "how much in fees this week?") ask the user to confirm scope, since each order requires a separate call.
 - Routing boundary — trading setup: if the question is about taking trading actions or installing the trading stack (executing trades, "how do I start trading", "how do I set up trading", setting up price monitors or Telegram alerts), call \`get_trading_setup\`. The presence of an action verb ("trade", "buy", "sell", "set up trading", "alert me") points to \`get_trading_setup\`.
 - For "how does X work", "what is X", or any question about platform features, policies, fees, order types, deposits, withdrawals, or account issues: classify the user's question into an intent and call \`search_kb\` with that intent — the tool description lists every intent and what it covers. If unsure which intent applies, call \`list_kb_articles\` first. Do NOT answer these from training data alone.

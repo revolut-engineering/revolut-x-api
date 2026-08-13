@@ -49,6 +49,13 @@ export type {
 export type { Trade, TradesOptions } from "./trades.js";
 
 export type {
+  TransactionType,
+  TransactionStatus,
+  Transaction,
+  TransactionsOptions,
+} from "./transactions.js";
+
+export type {
   Ticker,
   TickersOptions,
   Candle,

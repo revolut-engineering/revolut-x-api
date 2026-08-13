@@ -5,6 +5,7 @@ import { registerAccountCommand } from "./commands/account.js";
 import { registerMarketCommand } from "./commands/market.js";
 import { registerOrderCommand } from "./commands/order.js";
 import { registerTradeCommand } from "./commands/trade.js";
+import { registerTransactionCommand } from "./commands/transaction.js";
 import { registerMonitorCommand } from "./commands/monitor.js";
 import { registerEventsCommand } from "./commands/events.js";
 import { registerStrategyCommand } from "./commands/strategy.js";
@@ -72,6 +73,14 @@ Examples:
     $ revx trade public BTC-USD                           All public trades
     $ revx trade public BTC-USD --start-date 7d --limit 200
 
+  Transactions:
+    $ revx transaction list                               Recent transactions
+    $ revx transaction list --start-date 7d              Last 7 days
+    $ revx transaction list --types buy,receive            Filter by type
+    $ revx transaction list --statuses completed           Filter by status
+    $ revx transaction list --currencies BTC,USD           Filter by currency
+    $ revx transaction list --limit 100 --json             Last 100 as JSON
+
   Monitor (runs in foreground, Ctrl-C to stop):
     $ revx monitor price BTC-USD --direction above --threshold 100000
     $ revx monitor rsi ETH-USD --direction above --threshold 70 --period 14
@@ -109,6 +118,7 @@ Examples:
   registerMarketCommand(program);
   registerOrderCommand(program);
   registerTradeCommand(program);
+  registerTransactionCommand(program);
   registerMonitorCommand(program);
   registerEventsCommand(program);
   registerStrategyCommand(program);

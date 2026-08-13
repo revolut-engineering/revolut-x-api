@@ -1,15 +1,16 @@
 ---
 name: revx-account
 description: >
-  Revolut X account and order queries. Use when the user asks to "check my balances",
-  "view open orders", "order history", "TWAP order", "order fills", "my trades", "trade history",
-  or runs revx account, revx order open, revx order history, revx order get,
-  revx order fills, revx trade commands.
+  Revolut X account, transaction, order, and trade queries. Use when the user asks to
+  "check my balances", "transaction history", "deposits", "withdrawals", "buys", "sells",
+  "sends", "receives", "view open orders", "order history", "TWAP order", "order fills",
+  "my trades", "trade history", or runs revx account, revx transaction, revx order open,
+  revx order history, revx order get, revx order fills, or revx trade commands.
 ---
 
-# Account & Order Queries
+# Account, Transaction & Order Queries
 
-> View balances, query orders, browse trade history.
+> View balances and transactions, query orders, browse trade history.
 
 > **Auth required.** Make sure `revx` is installed and configured before running these commands. If any command fails with an auth-related error — `Auth not configured`, `No private key found`, `Authentication failed (401)`, `Invalid signature`, `insecure permissions`, or a missing key/config file at `~/.config/revolut-x/` — **invoke the `revx-auth` skill immediately and apply the fix yourself.** Do not interrupt the user to ask them to run setup. Only escalate to the user for steps only they can perform (pasting the API key, registering the public key in their Revolut X profile, choosing a passphrase). After the fix, retry the original command.
 
@@ -27,6 +28,27 @@ revx account balances --all                    # Include zero balances
 revx account balances BTC                      # Single currency (case-insensitive)
 revx account balances --currencies BTC,ETH,USD # Filter by multiple currencies
 ```
+
+---
+
+## Transactions
+
+```bash
+revx transaction list                              # Last 30 days
+revx transaction list --start-date 7d              # Last 7 days
+revx transaction list --types buy,receive          # Types: buy, sell, send, receive
+revx transaction list --statuses completed,pending # Filter by status
+revx transaction list --currencies BTC,USD         # Filter by either side
+revx transaction list --limit 100 --json            # Limit and JSON output
+```
+
+**Filters:** `--start-date`, `--end-date`, `--types` (buy, sell, send, receive), `--statuses` (pending, completed, rejected, failed, cancelled), `--currencies`, `--limit`
+
+**Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
+
+In table output, show the complete transaction UUID. The source side is `Source Amount` with a minus sign and the destination side is `Destination Amount` with a plus sign. A transaction may contain both sides, only `Source Amount`, or only `Destination Amount`. Do not expect account fields in transaction-list results.
+
+In JSON output, use `source_currency` with `source_amount` for billing and `destination_currency` with `destination_amount` for received funds. Each currency/amount pair is optional as a pair; at least one side is present. Processing time is `processed_date`.
 
 ---
 
@@ -133,6 +155,7 @@ revx market tickers BTC-USD
 
 ### "Review recent trading activity"
 ```bash
+revx transaction list --start-date 7d
 revx order history --start-date 7d
 revx trade private BTC-USD --start-date 7d
 ```

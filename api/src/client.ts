@@ -23,6 +23,7 @@ import {
   ReplaceOrderParams,
 } from "./types/orders.js";
 import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
+import type { Transaction, TransactionsOptions } from "./types/transactions.js";
 import {
   mapPublicTrade,
   mapTrade,
@@ -466,5 +467,24 @@ export class RevolutXClient {
       ...raw,
       data: raw.data.map(mapTrade),
     };
+  }
+
+  async getTransactions(
+    opts?: TransactionsOptions,
+  ): Promise<PaginatedResponse<Transaction>> {
+    this.requireAuth();
+    const params: Record<string, unknown> = {};
+    if (opts?.startDate !== undefined) params.start_date = opts.startDate;
+    if (opts?.endDate !== undefined) params.end_date = opts.endDate;
+    if (opts?.types?.length) params.types = opts.types.join(",");
+    if (opts?.statuses?.length) params.statuses = opts.statuses.join(",");
+    if (opts?.currencies?.length) params.currencies = opts.currencies.join(",");
+    if (opts?.cursor) params.cursor = opts.cursor;
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    return this.request<PaginatedResponse<Transaction>>(
+      "GET",
+      "/transactions",
+      params,
+    );
   }
 }

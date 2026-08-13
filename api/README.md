@@ -21,6 +21,7 @@ Typed HTTP client for the [Revolut X Public Trading API](https://developer.revol
   - [Market Data](#market-data)
   - [Orders](#orders)
   - [Trades](#trades)
+  - [Transactions](#transactions)
 - [Authentication](#authentication)
 - [Logging](#logging)
 - [Error Handling](#error-handling)
@@ -228,6 +229,21 @@ const trades = await client.getAllTrades("BTC-USD", {
 
 // My private trades
 const myTrades = await client.getPrivateTrades("BTC-USD");
+```
+
+---
+
+### Transactions
+
+```typescript
+const transactions = await client.getTransactions({
+  startDate: 1700000000000,
+  endDate: 1700086400000,
+  types: ["buy", "receive"],
+  currencies: ["BTC", "USD"],
+});
+// → { data: Transaction[], metadata: { timestamp, next_cursor? } }
+// A transaction may have source fields, destination fields, or both.
 ```
 
 ---

@@ -150,6 +150,12 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 |------|-------------|
 | `get_balances` | Get all balances (available, reserved, total) for your Revolut X account. |
 
+### Transactions
+
+| Tool | Description |
+|------|-------------|
+| `get_transactions` | Get buys, sells, sends, and receives. Source and destination amounts are signed; either side may be absent. |
+
 ### Market Data
 
 | Tool | Description |
