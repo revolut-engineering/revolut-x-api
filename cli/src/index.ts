@@ -85,11 +85,16 @@ Examples:
     $ revx monitor atr-breakout BTC-USD --period 14 --multiplier 1.5
     $ revx monitor types                                  List all monitor types
 
-  Strategy:
+  Strategy (Grid):
     $ revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
     $ revx strategy grid optimize BTC-USD --investment 1000 --days 30 --interval 1h
     $ revx strategy grid run BTC-USD --investment 500 --levels 10 --range 5
     $ revx strategy grid run BTC-USD --investment 500 --dry-run
+
+  Strategy (Martingale DCA):
+    $ revx strategy martingale backtest BTC-USD --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000
+    $ revx strategy martingale optimize BTC-USD --stop-loss 15 --investment 1000
+    $ revx strategy martingale run BTC-USD --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --investment 500 --dry-run
 
   Connector (Telegram notifications):
     $ revx connector telegram add --token <token> --chat-id <id>

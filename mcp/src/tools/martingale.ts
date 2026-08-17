@@ -41,16 +41,18 @@ export function registerMartingaleTools(server: McpServer): void {
           .number()
           .default(2)
           .describe(
-            "% price drop between safety orders, e.g. 2 means 2% (default 2)",
+            "% price drop between safety orders, >= 1%, e.g. 2 means 2% (default 2)",
           ),
         safety_order_volume_scale: z
           .number()
           .default(2.0)
-          .describe("Capital multiplier per safety order level (default 2.0)"),
+          .describe(
+            "Capital multiplier per safety order level, >= 1 (default 2.0)",
+          ),
         max_safety_orders: z
           .number()
           .default(5)
-          .describe("Maximum number of safety orders (default 5)"),
+          .describe("Maximum number of safety orders, 1–30 (default 5)"),
         take_profit_pct: z
           .number()
           .default(1.5)
@@ -92,8 +94,18 @@ export function registerMartingaleTools(server: McpServer): void {
 
       if (days < 1 || days > 365)
         return textResult(`days must be between 1 and 365, got ${days}.`);
-      if (max_safety_orders < 0 || max_safety_orders > 30)
-        return textResult(`max_safety_orders must be between 0 and 30.`);
+      if (price_deviation_pct < 1)
+        return textResult(
+          `price_deviation_pct must be >= 1%, got ${price_deviation_pct}.`,
+        );
+      if (safety_order_volume_scale < 1)
+        return textResult(
+          `safety_order_volume_scale must be >= 1, got ${safety_order_volume_scale}.`,
+        );
+      if (max_safety_orders < 1 || max_safety_orders > 30)
+        return textResult(
+          `max_safety_orders must be between 1 and 30, got ${max_safety_orders}.`,
+        );
 
       const priceDeviation = new Decimal(price_deviation_pct).div(100);
       const scale = new Decimal(safety_order_volume_scale);
@@ -101,7 +113,7 @@ export function registerMartingaleTools(server: McpServer): void {
       const stopLoss = new Decimal(stop_loss_pct).div(100);
 
       const minSlRequired = new Decimal(1).minus(
-        new Decimal(1).minus(priceDeviation).pow(max_safety_orders + 1),
+        new Decimal(1).minus(priceDeviation).pow(max_safety_orders),
       );
       if (stopLoss.lte(minSlRequired)) {
         return textResult(

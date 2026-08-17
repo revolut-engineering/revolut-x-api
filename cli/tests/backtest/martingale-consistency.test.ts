@@ -32,14 +32,21 @@ const PARAMS: MartingaleBacktestParams = {
 //
 // Both engines implement the same algorithm independently.
 // Flat candles make fill conditions deterministic and identical across engines.
+//
+// With market-entry behavior, tpPrice after entry at 100_000 = 102_107.58,
+// so candle sequences that worked before (targeting 99_995) no longer trigger TP.
 
 describe("B — CLI runMartingaleBacktest ↔ MCP runMartingaleBacktest (exact equality)", () => {
-  // B.1: single TP cycle — all key metrics match
+  // B.1: single TP cycle (market entry only, no safety orders) — all key metrics match
+  //
+  // Before loop: entry at 100_000, tpPrice = 102_107.58
+  // C1 102108: TP fires → profit = 2.14; new cycle entry at 102_108
   it("B.1: single TP cycle: both engines produce identical results", () => {
-    const candles = [flat(100_000), flat(97_999), flat(99_999)];
+    const candles = [flat(100_000), flat(102_108)];
     const cli = runMartingaleBacktest(candles, PARAMS);
     const mcp = runMartingaleBacktestMcp(candles, PARAMS);
 
+    expect(cli.completedCycles).toBe(1);
     expect(cli.realizedPnl.eq(mcp.realizedPnl)).toBe(true);
     expect(cli.completedCycles).toBe(mcp.completedCycles);
     expect(cli.winningCycles).toBe(mcp.winningCycles);
@@ -52,6 +59,10 @@ describe("B — CLI runMartingaleBacktest ↔ MCP runMartingaleBacktest (exact e
   });
 
   // B.2: stop-loss — both engines stop at same candle with same P&L
+  //
+  // Before loop: entry at 100_000
+  // C1 97999: SO#1 fills
+  // C2 84999: SO#2 fills + SL fires at 85_000 → stopped
   it("B.2: stop-loss: both engines trigger on the same candle", () => {
     const candles = [flat(100_000), flat(97_999), flat(84_999)];
     const cli = runMartingaleBacktest(candles, PARAMS);
@@ -65,14 +76,11 @@ describe("B — CLI runMartingaleBacktest ↔ MCP runMartingaleBacktest (exact e
   });
 
   // B.3: multi-cycle — both engines complete the same number of cycles
+  //
+  // Cycle 1: entry at 100_000, TP at 102_107.58 (C1 flat 102_108)
+  // Cycle 2: entry at 102_108, TP at 104_311.34 (C2 flat 104_312)
   it("B.3: two TP cycles: both engines produce identical cycle count and P&L", () => {
-    const candles = [
-      flat(100_000),
-      flat(97_999),
-      flat(99_999),
-      flat(97_999),
-      flat(99_999),
-    ];
+    const candles = [flat(100_000), flat(102_108), flat(104_312)];
     const cli = runMartingaleBacktest(candles, PARAMS);
     const mcp = runMartingaleBacktestMcp(candles, PARAMS);
 
@@ -91,16 +99,14 @@ describe("B — CLI runMartingaleBacktest ↔ MCP runMartingaleBacktest (exact e
 // as a direct runMartingaleBacktest call with the same parameters.
 
 describe("C — runMartingaleBacktest ↔ optimizeMartingaleParams consistency", () => {
-  // C.1: profitable TP cycle — optimize matches backtest exactly
+  // C.1: profitable TP cycles — optimize matches backtest exactly
   //
   // Two complete TP cycles give non-zero realizedPnl to validate P&L propagation.
   it("C.1: single-combo optimize matches direct backtest (TP cycles)", () => {
     const candles = [
       flat(100_000),
-      flat(94_118),
-      flat(96_758), // TP fires (all 3 levels filled)
-      flat(94_118),
-      flat(96_758), // second cycle TP
+      flat(102_108), // Cycle 1 TP fires (entry at 100k, tpPrice=102_107.58)
+      flat(104_312), // Cycle 2 TP fires (entry at 102_108, tpPrice=104_311.34)
     ];
 
     const bt = runMartingaleBacktest(candles, PARAMS);

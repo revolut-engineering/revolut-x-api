@@ -20,7 +20,9 @@ Command-line interface for [Revolut X Public Trading API](https://developer.revo
   - [trade](#trade)
   - [monitor](#monitor)
   - [strategy](#strategy)
-  - [connector](#connector)
+  - [Grid Bot](#grid-bot)
+  - [Martingale DCA Bot](#martingale-dca-bot)
+- [connector](#connector)
   - [events](#events)
 - [Output Formats](#output-formats)
 - [Configuration](#configuration)
@@ -282,6 +284,94 @@ revx strategy grid run BTC-USD --investment 100 --dry-run
 **Persistence:** State is saved periodically during the session. On clean shutdown (`Ctrl+C`), all open orders are cancelled and state is cleared — the next session starts fresh. If orders couldn't be cancelled (e.g. network error), the state file is kept for automatic reconciliation on next startup.
 
 **Reconciliation:** On startup, if a previous crash state exists, the bot reconciles automatically: fills are accounted for, orders matching the new grid are adopted, non-matching ones are cancelled, then a fresh grid is initialized.
+
+---
+
+#### Martingale DCA Bot
+
+Places buy orders at geometrically spaced price levels below the current price, accumulating a position; sells the entire position when price recovers to the average entry by `take-profit %`, or liquidates and stops if price drops below `stop-loss %` from the initial buy.
+
+##### Backtest
+
+Run a backtest on historical candle data:
+
+```bash
+revx strategy martingale backtest BTC-USD \
+  --investment 1000 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
+
+revx strategy martingale backtest ETH-USD \
+  --investment 500 --scale 1.5 --max-safety-orders 3 --take-profit 2 --stop-loss 10 \
+  --days 60 --interval 4h
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--investment <amount>` | Capital in quote currency (required) | — |
+| `--scale <n>` | Volume scale multiplier per safety order level, >= 1 (required) | — |
+| `--max-safety-orders <n>` | Number of safety orders, 1–30 (required) | — |
+| `--take-profit <pct>` | Take-profit % above average entry, e.g. `1.5` (required) | — |
+| `--stop-loss <pct>` | Stop-loss % below initial buy price, e.g. `15` (required) | — |
+| `--price-deviation <pct>` | % drop between consecutive levels, >= 1% | `2` |
+| `--days <n>` | Days of historical data | `3` |
+| `--interval <res>` | Candle resolution (`1m` `5m` `15m` `30m` `1h` `4h` `1d`) | `1m` |
+| `--trace` | Emit per-tick trace of fills and state | — |
+| `--json` | Output as JSON | — |
+
+##### Optimize
+
+Sweeps combinations of deviation, scale, SO count, and take-profit and ranks them by total return:
+
+```bash
+revx strategy martingale optimize BTC-USD \
+  --investment 1000 --stop-loss 15
+
+revx strategy martingale optimize BTC-USD \
+  --investment 1000 --stop-loss 15 \
+  --scale 1.5,2,2.5 --max-safety-orders 3,5,7 --take-profit 1,1.5,2 \
+  --price-deviation 1.5,2,2.5 --days 30 --top 10
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--investment <amount>` | Capital in quote currency (required) | — |
+| `--stop-loss <pct>` | Stop-loss % below initial buy (fixed across sweep, required) | — |
+| `--price-deviation <csv>` | Deviation % values to test, >= 1% each | `1,1.5,2,2.5,3` |
+| `--scale <csv>` | Scale multiplier values to test, >= 1 each | `1.5,2.0,2.5` |
+| `--max-safety-orders <csv>` | SO count values to test (1–30 each) | `3,5,7` |
+| `--take-profit <csv>` | Take-profit % values to test | `1,1.5,2,2.5` |
+| `--days <n>` | Days of historical data | `3` |
+| `--interval <res>` | Candle resolution | `1m` |
+| `--top <n>` | Number of top results to show | `10` |
+| `--json` | Output as JSON | — |
+
+##### Run (Live)
+
+Run a live martingale bot with a real-time TUI dashboard:
+
+```bash
+revx strategy martingale run BTC-USD \
+  --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 \
+  --dry-run
+
+revx strategy martingale run BTC-USD \
+  --investment 1000 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--investment <amount>` | Capital in quote currency (required) | — |
+| `--scale <n>` | Volume scale multiplier per safety order level, >= 1 (required) | — |
+| `--max-safety-orders <n>` | Number of safety orders, 1–30 (required) | — |
+| `--take-profit <pct>` | Take-profit % above average entry, e.g. `1.5` (required) | — |
+| `--stop-loss <pct>` | Stop-loss % below initial buy price, e.g. `15` (required) | — |
+| `--price-deviation <pct>` | % drop between consecutive levels, >= 1% | `2` |
+| `--interval <sec>` | Polling interval in seconds | `10` |
+| `--dry-run` | Simulate without placing real orders | — |
+| `--reset` | Discard saved state and start a fresh cycle | — |
+
+**Persistence:** State is saved after every order event. On clean shutdown (`Ctrl+C`), all open orders are cancelled. On restart without `--reset`, the bot reconciles filled orders against saved state and resumes.
+
+**Reconciliation:** If the bot crashed mid-cycle, it checks each saved order ID on the exchange: filled orders are applied to state, cancelled orders are re-placed, open orders are kept. The bot then resumes the cycle from where it left off.
 
 ---
 

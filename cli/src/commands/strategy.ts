@@ -972,11 +972,17 @@ export function registerStrategyCommand(program: Command): void {
     .addHelpText(
       "after",
       `
-Examples:
+Examples (Grid):
   $ revx strategy grid backtest BTC-USD --levels 5 --range 10 --investment 1000 --days 30
   $ revx strategy grid optimize BTC-USD --investment 1000 --days 30 --interval 1h
   $ revx strategy grid run BTC-USD --levels 5 --range 5 --investment 500 --interval 30
   $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run
+
+Examples (Martingale):
+  $ revx strategy martingale backtest BTC-USD --investment 1000 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15
+  $ revx strategy martingale optimize BTC-USD --investment 1000 --stop-loss 15 --scale 1.5,2,2.5 --take-profit 1,1.5,2
+  $ revx strategy martingale run BTC-USD --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --dry-run
+  $ revx strategy martingale run BTC-USD --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --prices interactive --dry-run
 
 Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-prices.md`,
     );
@@ -1122,18 +1128,26 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .description("Run a martingale backtest on historical candle data")
     .option(
       "--price-deviation <pct>",
-      "% price drop between safety orders, e.g. 2 for 2%",
+      "% price drop between safety orders (>= 1%), e.g. 2 for 2%",
       "2",
     )
-    .option("--scale <n>", "Safety order volume scale multiplier", "2.0")
-    .option("--max-safety-orders <n>", "Maximum number of safety orders", "5")
-    .option(
+    .requiredOption(
+      "--scale <n>",
+      "Safety order volume scale multiplier (>= 1)",
+    )
+    .requiredOption(
+      "--max-safety-orders <n>",
+      "Maximum number of safety orders (1–30)",
+    )
+    .requiredOption(
       "--take-profit <pct>",
       "Take profit % above avg entry, e.g. 1.5",
-      "1.5",
     )
-    .option("--stop-loss <pct>", "Stop loss % below initial buy, e.g. 15", "15")
-    .option("--investment <amount>", "Capital in quote currency", "1000")
+    .requiredOption(
+      "--stop-loss <pct>",
+      "Stop loss % below initial buy, e.g. 15",
+    )
+    .requiredOption("--investment <amount>", "Capital in quote currency")
     .option("--days <n>", "Days of historical data", "3")
     .option(
       "--interval <res>",
@@ -1160,7 +1174,7 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     )
     .option(
       "--scale <csv>",
-      "Safety order volume scale values to test, e.g. '1.5,2,2.5'",
+      "Safety order volume scale values to test (all >= 1), e.g. '1.5,2,2.5'",
       "1.5,2.0,2.5",
     )
     .option(
@@ -1173,12 +1187,11 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
       "Take profit % values to test, e.g. '1,1.5,2,2.5'",
       "1,1.5,2,2.5",
     )
-    .option(
+    .requiredOption(
       "--stop-loss <pct>",
       "Stop loss % below initial buy (fixed across sweep)",
-      "15",
     )
-    .option("--investment <amount>", "Capital in quote currency", "1000")
+    .requiredOption("--investment <amount>", "Capital in quote currency")
     .option("--days <n>", "Days of historical data", "3")
     .option("--interval <res>", "Candle resolution", "1m")
     .option("--top <n>", "Number of top results to show", "10")
@@ -1196,16 +1209,24 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     )
     .option(
       "--price-deviation <pct>",
-      "% price drop between safety orders",
+      "% price drop between safety orders (>= 1%)",
       "2",
     )
-    .option("--scale <n>", "Safety order volume scale multiplier", "2.0")
-    .option("--max-safety-orders <n>", "Maximum number of safety orders", "5")
-    .option("--take-profit <pct>", "Take profit % above avg entry", "1.5")
-    .option(
+    .requiredOption(
+      "--scale <n>",
+      "Safety order volume scale multiplier (>= 1)",
+    )
+    .requiredOption(
+      "--max-safety-orders <n>",
+      "Maximum number of safety orders (1–30)",
+    )
+    .requiredOption(
+      "--take-profit <pct>",
+      "Take profit % above avg entry, e.g. 1.5",
+    )
+    .requiredOption(
       "--stop-loss <pct>",
       "Stop loss % below current price at cycle start, e.g. 15",
-      "15",
     )
     .option("--interval <sec>", "Polling interval in seconds", "10")
     .option("--dry-run", "Simulate without placing real orders")
@@ -1251,10 +1272,20 @@ async function handleMartingaleBacktest(
     opts.priceDeviation,
     "--price-deviation",
   ).div(100);
+  if (priceDeviation.times(100).lt(1)) {
+    printError("--price-deviation must be at least 1%.");
+    process.exit(1);
+  }
   const scale = parseDecimalArg(opts.scale, "--scale");
+  if (scale.lt(1)) {
+    printError(
+      "--scale must be >= 1 (safety orders must be at least as large as the base order).",
+    );
+    process.exit(1);
+  }
   const maxSafetyOrders = parseInt(opts.maxSafetyOrders, 10);
-  if (isNaN(maxSafetyOrders) || maxSafetyOrders < 0 || maxSafetyOrders > 30) {
-    printError("--max-safety-orders must be between 0 and 30.");
+  if (isNaN(maxSafetyOrders) || maxSafetyOrders < 1 || maxSafetyOrders > 30) {
+    printError("--max-safety-orders must be between 1 and 30.");
     process.exit(1);
   }
   const takeProfit = parseDecimalArg(opts.takeProfit, "--take-profit").div(100);
@@ -1529,11 +1560,17 @@ async function handleMartingaleOptimize(
       .split(",")
       .map((x) => x.trim())
       .filter((x) => x)
-      .map((x) => new Decimal(x).div(100));
+      .map((x) => {
+        const d = new Decimal(x);
+        if (d.lt(1)) throw new Error(`deviation value ${x} < 1`);
+        return d.div(100);
+      });
     if (deviationsList.length === 0) throw new Error();
-  } catch {
+  } catch (err) {
     printError(
-      "--price-deviation must be comma-separated numbers, e.g. '1,1.5,2,2.5,3'.",
+      err instanceof Error && err.message.startsWith("deviation value")
+        ? `--price-deviation: all values must be >= 1%. Got: '${opts.priceDeviation}'.`
+        : "--price-deviation must be comma-separated numbers >= 1, e.g. '1,1.5,2,2.5,3'.",
     );
     process.exit(1);
   }
@@ -1544,10 +1581,18 @@ async function handleMartingaleOptimize(
       .split(",")
       .map((x) => x.trim())
       .filter((x) => x)
-      .map((x) => new Decimal(x));
+      .map((x) => {
+        const d = new Decimal(x);
+        if (d.lt(1)) throw new Error(`scale value ${x} < 1`);
+        return d;
+      });
     if (scalesList.length === 0) throw new Error();
-  } catch {
-    printError("--scale must be comma-separated numbers, e.g. '1.5,2,2.5'.");
+  } catch (err) {
+    printError(
+      err instanceof Error && err.message.startsWith("scale value")
+        ? `--scale: all values must be >= 1. Got: '${opts.scale}'.`
+        : "--scale must be comma-separated numbers >= 1, e.g. '1.5,2,2.5'.",
+    );
     process.exit(1);
   }
 
@@ -1559,13 +1604,13 @@ async function handleMartingaleOptimize(
       .filter((x) => x)
       .map((x) => {
         const n = parseInt(x, 10);
-        if (isNaN(n) || n < 0 || n > 30) throw new Error();
+        if (isNaN(n) || n < 1 || n > 30) throw new Error();
         return n;
       });
     if (maxSafetyOrdersList.length === 0) throw new Error();
   } catch {
     printError(
-      "--max-safety-orders must be comma-separated integers (0–30), e.g. '3,5,7'.",
+      "--max-safety-orders must be comma-separated integers (1–30), e.g. '3,5,7'.",
     );
     process.exit(1);
   }
@@ -1780,10 +1825,20 @@ async function handleMartingaleRun(
     opts.priceDeviation,
     "--price-deviation",
   ).div(100);
+  if (priceDeviation.times(100).lt(1)) {
+    printError("--price-deviation must be at least 1%.");
+    process.exit(1);
+  }
   const scale = parseDecimalArg(opts.scale, "--scale");
+  if (scale.lt(1)) {
+    printError(
+      "--scale must be >= 1 (safety orders must be at least as large as the base order).",
+    );
+    process.exit(1);
+  }
   const maxSafetyOrders = parseInt(opts.maxSafetyOrders, 10);
-  if (isNaN(maxSafetyOrders) || maxSafetyOrders < 0 || maxSafetyOrders > 30) {
-    printError("--max-safety-orders must be between 0 and 30.");
+  if (isNaN(maxSafetyOrders) || maxSafetyOrders < 1 || maxSafetyOrders > 30) {
+    printError("--max-safety-orders must be between 1 and 30.");
     process.exit(1);
   }
   const takeProfit = parseDecimalArg(opts.takeProfit, "--take-profit").div(100);

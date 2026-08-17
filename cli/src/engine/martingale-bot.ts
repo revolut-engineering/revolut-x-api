@@ -121,6 +121,8 @@ export class ForegroundMartingaleBot {
   private _suppressDashboard = false;
   private _statusReporter: LiveStatusReporter | null = null;
   private _lifecycle: "running" | "finished" | "stopped" = "running";
+  /** Counts consecutive TP placement failures; resets to 0 on any successful placement. */
+  private _tpFailureCount = 0;
 
   constructor(config: MartingaleBotConfig, options: MartingaleBotOptions = {}) {
     this._config = config;
@@ -355,6 +357,42 @@ export class ForegroundMartingaleBot {
     }
   }
 
+  /**
+   * Called when a critical order (TP or SL sell) has failed the maximum allowed
+   * number of consecutive times. Sends an urgent Telegram notification, saves
+   * state, and stops the bot without starting a new cycle.
+   *
+   * @param type    - "TP" or "SL" — identifies which order type hit the limit.
+   * @param detail  - Additional context shown in the notification (e.g. price).
+   */
+  private async _handleOrderFailureLimit(
+    type: "TP" | "SL",
+    detail: string,
+  ): Promise<void> {
+    const pair = this._config.pair;
+    const cs = this._cs;
+
+    const msg =
+      `${type} order failed 3 times in a row` +
+      (detail ? ` (${cs}${detail})` : "") +
+      `. Bot stopped — no new cycle will be started. ` +
+      `Check the exchange and restart with --reset once resolved.`;
+
+    this._warnings.push(msg);
+    console.log(chalk.red(`\n  ✗ ${msg}`));
+
+    await this._notifyAndWait(
+      `🚨 Martingale ${pair}: ${type} order failed 3 times in a row` +
+        (detail ? ` @ ${cs}${detail}` : "") +
+        `.\nBot stopped — no new cycle started.\n` +
+        `Check the exchange and restart with \`--reset\` once resolved.`,
+    );
+
+    this._lifecycle = "stopped";
+    this._saveRunningState();
+    this.stop();
+  }
+
   // --------------- level geometry ---------------
 
   private _computeSlPrice(currentPrice: Decimal): Decimal {
@@ -374,9 +412,14 @@ export class ForegroundMartingaleBot {
 
     const levels: MartingaleLevelState[] = [];
     for (let i = 0; i <= this._config.maxSafetyOrders; i++) {
-      const price = entryPrice
-        .times(new Decimal(1).minus(deviation).pow(i + 1))
-        .toDecimalPlaces(dp, Decimal.ROUND_DOWN);
+      // Level 0 is the market entry at current price; levels 1..maxSO are limit
+      // safety orders placed geometrically below: entryPrice × (1−dev)^i.
+      const price =
+        i === 0
+          ? entryPrice.toDecimalPlaces(dp, Decimal.ROUND_DOWN)
+          : entryPrice
+              .times(new Decimal(1).minus(deviation).pow(i))
+              .toDecimalPlaces(dp, Decimal.ROUND_DOWN);
       const quoteSize = investment
         .times(basePct)
         .times(scale.pow(i))
@@ -480,17 +523,35 @@ export class ForegroundMartingaleBot {
       tradeLog: [],
     };
 
-    // Place initial buy order on level[0]
-    console.log(chalk.dim("  Placing initial buy order..."));
+    // Market-buy the entry level immediately at current price
+    console.log(chalk.dim("  Placing market entry order..."));
     try {
-      const orderId = await this._placeBuyOrder(levels[0]);
-      levels[0].buyOrderIds.push(orderId);
-      console.log(chalk.dim(`  Initial buy placed @ ${levels[0].price}`));
+      await this._placeMarketEntry(levels[0], currentPrice);
+      console.log(
+        chalk.dim(`  Market entry filled @ ${this._cs}${currentPrice}`),
+      );
     } catch (err) {
       rethrowIfInsecureKey(err);
       throw new Error(
-        `Failed to place initial buy order: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to place market entry: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+
+    // Place TP order immediately (we are already in position)
+    await this._placeTpOrder();
+
+    // Arm the first safety order (level[1])
+    if (levels[1]) {
+      try {
+        const orderId = await this._placeBuyOrder(levels[1]);
+        levels[1].buyOrderIds.push(orderId);
+        console.log(chalk.dim(`  Safety order #1 placed @ ${levels[1].price}`));
+      } catch (err) {
+        rethrowIfInsecureKey(err);
+        this._warnings.push(
+          `Safety order #1: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     saveMartingaleState(this._state);
@@ -601,10 +662,14 @@ export class ForegroundMartingaleBot {
         if (FILLED_STATUSES.has(order.status)) {
           sellsFilled++;
           const totalQty = new Decimal(this._state.totalQty);
+          // Use rounded tpPrice (matching _placeTpOrder) as the fallback fill price.
           const tpPrice = this._state.avgEntryPrice
-            ? new Decimal(this._state.avgEntryPrice).times(
-                new Decimal(1).plus(this._config.takeProfit),
-              )
+            ? new Decimal(this._state.avgEntryPrice)
+                .times(new Decimal(1).plus(this._config.takeProfit))
+                .toDecimalPlaces(
+                  this._getQuoteStep().decimalPlaces(),
+                  Decimal.ROUND_UP,
+                )
             : new Decimal(order.filled_amount || 0).div(
                 totalQty.gt(0) ? totalQty : 1,
               );
@@ -795,37 +860,50 @@ export class ForegroundMartingaleBot {
 
     if (totalQty.gt(0)) {
       if (!this._config.dryRun && client) {
-        try {
-          const resp = await client.placeOrder({
-            symbol: this._config.pair,
-            side: "sell",
-            market: { baseSize: totalQty.toString() },
-          });
-          const filled = await this._awaitOrderFill(resp.data.venue_order_id);
-          const feeQuote = this._feeQuote(filled, currentPrice);
-          const filledAmount = this._filledAmount(filled, currentPrice);
-          const revenue = filledAmount.minus(feeQuote);
-          const profit = revenue.minus(new Decimal(state.totalCost));
-          state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
-            .plus(profit)
-            .toString();
-          state.stats.totalSells++;
-          state.stats.completedCycles++;
-          this._addFee(feeQuote);
-          this._logTrade(
-            "sell",
-            currentPrice.toString(),
-            totalQty.toString(),
-            filled.id,
-            "sl",
-            profit.toFixed(2),
-            feeQuote.gt(0) ? feeQuote.toString() : undefined,
-          );
-        } catch (err) {
-          rethrowIfInsecureKey(err);
-          this._warnings.push(
-            `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+        let slSellSuccess = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const resp = await client.placeOrder({
+              symbol: this._config.pair,
+              side: "sell",
+              market: { baseSize: totalQty.toString() },
+            });
+            const filled = await this._awaitOrderFill(resp.data.venue_order_id);
+            const feeQuote = this._feeQuote(filled, currentPrice);
+            const filledAmount = this._filledAmount(filled, currentPrice);
+            const revenue = filledAmount.minus(feeQuote);
+            const profit = revenue.minus(new Decimal(state.totalCost));
+            state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+              .plus(profit)
+              .toString();
+            state.stats.totalSells++;
+            state.stats.completedCycles++;
+            this._addFee(feeQuote);
+            this._logTrade(
+              "sell",
+              currentPrice.toString(),
+              totalQty.toString(),
+              filled.id,
+              "sl",
+              profit.toFixed(2),
+              feeQuote.gt(0) ? feeQuote.toString() : undefined,
+            );
+            slSellSuccess = true;
+            break;
+          } catch (err) {
+            rethrowIfInsecureKey(err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            this._warnings.push(
+              `Stop-loss market sell failed (attempt ${attempt}/3): ${errMsg}`,
+            );
+            if (attempt < 3) await sleep(2000);
+          }
+        }
+        if (!slSellSuccess) {
+          // All 3 attempts failed — notify and stop without starting a new cycle.
+          // _handleOrderFailureLimit stops the bot; _triggerStopLoss continues to
+          // _resetCycle() and this.stop() below, which is a harmless double-stop.
+          await this._handleOrderFailureLimit("SL", currentPrice.toFixed(2));
         }
       } else if (this._config.dryRun) {
         const revenue = totalQty
@@ -949,6 +1027,62 @@ export class ForegroundMartingaleBot {
     this._warnings = [];
     this._connections = loadConnections().filter((c) => c.enabled);
     this._currentPrice = currentPrice;
+
+    // 0. If not in position, start a new market-entry cycle.
+    //    This handles the case where a TP was detected during reconciliation:
+    //    _applyTpFill → _resetCycle sets inPosition=false but doesn't start a new cycle.
+    if (!state.inPosition && this._lifecycle === "running") {
+      if (this._config.dryRun) {
+        // dry-run: synthesise market entry at current price
+        const newLevels = this._buildLevels(currentPrice);
+        state.levels = newLevels;
+        state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
+        await this._placeMarketEntry(newLevels[0], currentPrice);
+        await this._placeTpOrder();
+        if (
+          newLevels[1] &&
+          !newLevels[1].filled &&
+          newLevels[1].buyOrderIds.length === 0
+        ) {
+          newLevels[1].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
+        }
+        this._saveRunningState();
+        this._tickCount++;
+        return;
+      } else {
+        try {
+          const newLevels = this._buildLevels(currentPrice);
+          state.levels = newLevels;
+          state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
+          await this._placeMarketEntry(newLevels[0], currentPrice);
+          await this._placeTpOrder();
+          if (
+            newLevels[1] &&
+            !newLevels[1].filled &&
+            newLevels[1].buyOrderIds.length === 0
+          ) {
+            try {
+              const orderId = await this._placeBuyOrder(newLevels[1]);
+              newLevels[1].buyOrderIds.push(orderId);
+            } catch (err) {
+              rethrowIfInsecureKey(err);
+              this._warnings.push(
+                `New cycle SO#1: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+          this._saveRunningState();
+          this._tickCount++;
+          return;
+        } catch (err) {
+          rethrowIfInsecureKey(err);
+          this._warnings.push(
+            `New cycle entry: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          // Fall through and let subsequent ticks retry via this same step.
+        }
+      }
+    }
 
     // 1. Stop-loss check
     if (state.stopLossPrice && state.inPosition) {
@@ -1078,9 +1212,13 @@ export class ForegroundMartingaleBot {
         const resp = await client.getOrder(state.tpOrderId);
         const order = resp.data;
         if (FILLED_STATUSES.has(order.status)) {
-          const tpPrice = new Decimal(state.avgEntryPrice).times(
-            new Decimal(1).plus(new Decimal(this._config.takeProfit)),
-          );
+          // Use rounded tpPrice (matching _placeTpOrder) as the fallback fill price.
+          const tpPrice = new Decimal(state.avgEntryPrice)
+            .times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
+            .toDecimalPlaces(
+              this._getQuoteStep().decimalPlaces(),
+              Decimal.ROUND_UP,
+            );
           const filledAmount = this._filledAmount(order, tpPrice);
           const feeQuote = this._feeQuote(order, tpPrice);
           const profit = filledAmount
@@ -1109,18 +1247,33 @@ export class ForegroundMartingaleBot {
           );
           this._applyTpFill(filledAmount, feeQuote, order.id, tpPrice);
 
-          // Rebuild levels for new cycle and place initial buy
+          // Start new cycle: market entry + TP + first safety order
           const newLevels = this._buildLevels(currentPrice);
           state.levels = newLevels;
           state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
           try {
-            const orderId = await this._placeBuyOrder(newLevels[0]);
-            newLevels[0].buyOrderIds.push(orderId);
+            await this._placeMarketEntry(newLevels[0], currentPrice);
           } catch (err) {
             rethrowIfInsecureKey(err);
             this._warnings.push(
-              `New cycle initial buy: ${err instanceof Error ? err.message : String(err)}`,
+              `New cycle market entry: ${err instanceof Error ? err.message : String(err)}`,
             );
+          }
+          await this._placeTpOrder();
+          if (
+            newLevels[1] &&
+            !newLevels[1].filled &&
+            newLevels[1].buyOrderIds.length === 0
+          ) {
+            try {
+              const orderId = await this._placeBuyOrder(newLevels[1]);
+              newLevels[1].buyOrderIds.push(orderId);
+            } catch (err) {
+              rethrowIfInsecureKey(err);
+              this._warnings.push(
+                `New cycle safety order #1: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
           }
         } else if (DEAD_STATUSES.has(order.status)) {
           state.tpOrderId = null;
@@ -1135,16 +1288,27 @@ export class ForegroundMartingaleBot {
       }
     }
 
-    // 5. Orphan recovery: if no position and no buy order on level[0]
-    if (!state.inPosition && state.levels[0].buyOrderIds.length === 0) {
-      try {
-        const orderId = await this._placeBuyOrder(state.levels[0]);
-        state.levels[0].buyOrderIds.push(orderId);
-      } catch (err) {
-        rethrowIfInsecureKey(err);
-        this._warnings.push(
-          `Orphan recovery buy: ${err instanceof Error ? err.message : String(err)}`,
-        );
+    // 5. Safety order recovery: if in position and the next safety level to arm
+    //    has no active buy order (e.g. bot crashed between a fill and arming next level)
+    if (state.inPosition) {
+      for (let i = 1; i < state.levels.length; i++) {
+        const lv = state.levels[i];
+        if (!lv.filled && lv.buyOrderIds.length === 0) {
+          // Only arm this level if its predecessor is already filled
+          const prev = state.levels[i - 1];
+          if (prev.filled) {
+            try {
+              const orderId = await this._placeBuyOrder(lv);
+              lv.buyOrderIds.push(orderId);
+            } catch (err) {
+              rethrowIfInsecureKey(err);
+              this._warnings.push(
+                `Safety order recovery #${i}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+          break; // arm one at a time
+        }
       }
     }
 
@@ -1213,11 +1377,14 @@ export class ForegroundMartingaleBot {
       return;
     }
 
-    // Simulate TP fill
+    // Simulate TP fill — use the same rounded tpPrice as _placeTpOrder (live) and the backtest engine.
     if (state.tpOrderId && state.inPosition) {
-      const tpPrice = new Decimal(state.avgEntryPrice).times(
-        new Decimal(1).plus(new Decimal(this._config.takeProfit)),
-      );
+      const tpPrice = new Decimal(state.avgEntryPrice)
+        .times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
+        .toDecimalPlaces(
+          this._getQuoteStep().decimalPlaces(),
+          Decimal.ROUND_UP,
+        );
       if (currentPrice.gte(tpPrice)) {
         const totalQty = new Decimal(state.totalQty);
         const revenue = totalQty
@@ -1239,23 +1406,89 @@ export class ForegroundMartingaleBot {
           tpPrice,
         );
 
-        // Rebuild for new cycle
+        // Start new cycle: market entry + TP + first safety order
         const newLevels = this._buildLevels(currentPrice);
         state.levels = newLevels;
         state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
-        newLevels[0].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
+        await this._placeMarketEntry(newLevels[0], currentPrice);
+        await this._placeTpOrder();
+        if (
+          newLevels[1] &&
+          !newLevels[1].filled &&
+          newLevels[1].buyOrderIds.length === 0
+        ) {
+          newLevels[1].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
+        }
       }
     }
 
-    // Orphan recovery
-    if (!state.inPosition && state.levels[0].buyOrderIds.length === 0) {
-      state.levels[0].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
+    // Safety order recovery: arm the next safety level if its predecessor filled
+    // but the level itself has no active buy order (handles crash between fill and arm)
+    if (state.inPosition) {
+      for (let i = 1; i < state.levels.length; i++) {
+        const lv = state.levels[i];
+        if (!lv.filled && lv.buyOrderIds.length === 0) {
+          const prev = state.levels[i - 1];
+          if (prev.filled) {
+            lv.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
+          }
+          break;
+        }
+      }
     }
 
     this._saveRunningState();
   }
 
   // --------------- order placement ---------------
+
+  /**
+   * Execute the market entry for the given level (level[0]).
+   * In dry-run, fill is simulated at currentPrice. In live mode, a market buy
+   * is placed immediately and awaited. Either way, _applyBuyFill is called so
+   * state (inPosition, avgEntry, totalQty, etc.) is updated before returning.
+   */
+  private async _placeMarketEntry(
+    level: MartingaleLevelState,
+    currentPrice: Decimal,
+  ): Promise<void> {
+    const state = this._state!;
+    const cs = this._cs;
+    const base = this._config.pair.split("-")[0] ?? "";
+
+    if (this._config.dryRun) {
+      const baseStep = this._getBaseStep();
+      const quoteSize = new Decimal(level.quoteSize);
+      const filledQty = quoteSize
+        .div(currentPrice)
+        .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
+      const orderId = `dry-market-${randomUUID().slice(0, 8)}`;
+      level.filled = true;
+      this._applyBuyFill(level, filledQty, quoteSize, new Decimal(0), orderId);
+      this._notify(
+        `Martingale ${this._config.pair}: ENTRY (market) @ ${cs}${currentPrice.toFixed(2)} | ` +
+          `${filledQty} ${base} [DRY RUN]`,
+      );
+      return;
+    }
+
+    const resp = await this._client!.placeOrder({
+      symbol: this._config.pair,
+      side: "buy",
+      market: { quoteSize: level.quoteSize },
+    });
+    const filled = await this._awaitOrderFill(resp.data.venue_order_id);
+    const netBase = this._netBase(filled);
+    const filledAmount = this._filledAmount(filled, currentPrice);
+    const feeQuote = this._feeQuote(filled, currentPrice);
+    level.filled = true;
+    this._applyBuyFill(level, netBase, filledAmount, feeQuote, filled.id);
+    const feeStr = feeQuote.gt(0) ? ` | fee ${cs}${feeQuote.toFixed(2)}` : "";
+    this._notify(
+      `Martingale ${this._config.pair}: ENTRY (market) @ ${cs}${currentPrice.toFixed(2)} | ` +
+        `${netBase} ${base} | avg ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr}`,
+    );
+  }
 
   private async _placeBuyOrder(level: MartingaleLevelState): Promise<string> {
     if (this._config.dryRun) return `dry-buy-${randomUUID().slice(0, 8)}`;
@@ -1300,11 +1533,18 @@ export class ForegroundMartingaleBot {
         },
       });
       state.tpOrderId = resp.data.venue_order_id;
+      this._tpFailureCount = 0; // reset on success
     } catch (err) {
       rethrowIfInsecureKey(err);
+      this._tpFailureCount++;
+      const errMsg = err instanceof Error ? err.message : String(err);
       this._warnings.push(
-        `TP order @${tpPrice}: ${err instanceof Error ? err.message : String(err)}`,
+        `TP order @${tpPrice}: ${errMsg} (${this._tpFailureCount}/3)`,
       );
+      if (this._tpFailureCount >= 3) {
+        await this._handleOrderFailureLimit("TP", tpPrice.toString());
+        return;
+      }
     }
   }
 
