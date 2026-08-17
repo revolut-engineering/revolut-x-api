@@ -137,9 +137,11 @@ function padLine(content: string, width: number): string {
 }
 
 function sectionHeader(label: string, width: number): string {
-  const inner = width - 2;
+  // width is the inner box width; total line = ╠ + width×═ + ╣ = width + 2 chars,
+  // matching topBorder (╔ + width×═ + ╗) and padLine (║ + space + content + space + ║).
+  const inner = width;
   const text = label ? ` ${label} ` : "";
-  const remaining = inner - text.length;
+  const remaining = Math.max(0, inner - text.length);
   const left = Math.floor(remaining / 2);
   const right = remaining - left;
   return `${BOX.ml}${BOX.h.repeat(left)}${text}${BOX.h.repeat(right)}${BOX.mr}`;
@@ -516,7 +518,7 @@ export function renderMartingaleDashboard(
   lines.push(sectionHeader("RECENT TRADES", innerW));
   lines.push(padLine("", innerW));
 
-  const recentTrades = state.tradeLog.slice(-8).reverse();
+  const recentTrades = state.tradeLog.slice(-8);
   if (recentTrades.length === 0) {
     lines.push(padLine(`  ${chalk.dim("No trades yet")}`, innerW));
   } else {

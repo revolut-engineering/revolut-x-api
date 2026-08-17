@@ -100,9 +100,14 @@ function buildLevels(
   const levels: Array<{ price: Decimal; quoteSize: Decimal; filled: boolean }> =
     [];
   for (let i = 0; i <= maxSafetyOrders; i++) {
-    const price = entryPrice
-      .times(new Decimal(1).minus(priceDeviation).pow(i + 1))
-      .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+    // Level 0 is the market entry at current price.
+    // Levels 1..maxSO are limit safety orders at entryPrice × (1−dev)^i.
+    const price =
+      i === 0
+        ? entryPrice.toDecimalPlaces(2, Decimal.ROUND_DOWN)
+        : entryPrice
+            .times(new Decimal(1).minus(priceDeviation).pow(i))
+            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
     const quoteSize = investment
       .times(basePct)
       .times(safetyOrderVolumeScale.pow(i))
@@ -130,6 +135,29 @@ function initCycle(
     slPrice,
     levels: buildLevels(entryPrice, params),
   };
+}
+
+// Apply the market entry for level[0] immediately on cycle start.
+// Returns the fill details so the caller can update totalTrades / tradeLog / trades.
+function applyMarketEntryToState(
+  state: CycleState,
+  entryPrice: Decimal,
+  params: MartingaleBacktestParams,
+): { qty: Decimal; quoteSize: Decimal } {
+  const level = state.levels[0];
+  const qty = level.quoteSize
+    .div(entryPrice)
+    .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+  level.filled = true;
+  state.totalQty = qty;
+  state.totalCost = level.quoteSize;
+  state.avgEntryPrice = qty.gt(0) ? state.totalCost.div(qty) : entryPrice;
+  state.inPosition = true;
+  state.initialBuyPrice = entryPrice;
+  state.tpPrice = state.avgEntryPrice
+    .times(new Decimal(1).plus(params.takeProfit))
+    .toDecimalPlaces(2, Decimal.ROUND_UP);
+  return { qty, quoteSize: level.quoteSize };
 }
 
 function resetCycleState(state: CycleState): void {
@@ -181,6 +209,44 @@ export function runMartingaleBacktest(
   const firstClose = candles[0].close;
   let state = initCycle(firstClose, params);
 
+  // Helper: log the market entry trade (called on each new cycle start)
+  const applyMarketEntry = (
+    st: CycleState,
+    entryPrice: Decimal,
+    dateStr: string,
+    tickFills: string[],
+  ): void => {
+    const { qty, quoteSize } = applyMarketEntryToState(st, entryPrice, params);
+    totalTrades++;
+    tradeLog.push(
+      `${dateStr} BUY  $${entryPrice.toFixed(2)} qty=${qty.toFixed(5)} [ENTRY] avgEntry=$${st.avgEntryPrice.toFixed(2)}`,
+    );
+    trades.push({
+      index: totalTrades,
+      side: "buy",
+      label: "ENTRY",
+      price: entryPrice,
+      quantity: qty,
+      quoteValue: quoteSize,
+      realizedPnl,
+      roiPct: params.investment.gt(0)
+        ? realizedPnl.div(params.investment).times(100)
+        : new Decimal(0),
+    });
+    tickFills.push(
+      `BUY [ENTRY] @${entryPrice.toFixed(2)} qty=${qty.toFixed(5)}`,
+    );
+  };
+
+  // Apply market entry for the first cycle before the main loop.
+  // Use candle[0] date string for the log; tickFills are discarded (no onTick yet).
+  {
+    const dateStr = candles[0].start
+      ? new Date(candles[0].start).toISOString().slice(0, 10)
+      : "0";
+    applyMarketEntry(state, firstClose, dateStr, []);
+  }
+
   for (let i = 0; i < candles.length; i++) {
     if (stopped) break;
     const candle = candles[i];
@@ -191,12 +257,19 @@ export function runMartingaleBacktest(
 
     const tickFills: string[] = [];
 
+    // Emit the market entry in the tick callback for candle 0 (it was applied before the loop)
+    if (i === 0) {
+      tickFills.push(
+        `BUY [ENTRY] @${firstClose.toFixed(2)} qty=${state.totalQty.toFixed(5)}`,
+      );
+    }
+
     const runBuys = (): void => {
+      // Level 0 is always pre-filled (market entry). Only safety orders (1..maxSO) fill here.
       for (const level of state.levels) {
         if (level.filled) continue;
         if (!low.lte(level.price)) continue;
 
-        const isInitial = !state.inPosition;
         const qty = level.quoteSize
           .div(level.price)
           .toDecimalPlaces(5, Decimal.ROUND_DOWN);
@@ -204,19 +277,13 @@ export function runMartingaleBacktest(
         state.totalQty = state.totalQty.plus(qty);
         state.totalCost = state.totalCost.plus(level.quoteSize);
         state.avgEntryPrice = state.totalCost.div(state.totalQty);
-
-        if (isInitial) {
-          state.inPosition = true;
-          state.initialBuyPrice = level.price;
-        } else {
-          state.safetyOrdersFilled++;
-        }
+        state.safetyOrdersFilled++;
 
         state.tpPrice = state.avgEntryPrice
           .times(new Decimal(1).plus(takeProfit))
           .toDecimalPlaces(2, Decimal.ROUND_UP);
         totalTrades++;
-        const reason = isInitial ? "INITIAL" : `SO#${state.safetyOrdersFilled}`;
+        const reason = `SO#${state.safetyOrdersFilled}`;
         tradeLog.push(
           `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} BUY  $${level.price.toFixed(2)} qty=${qty.toFixed(5)} [${reason}] avgEntry=$${state.avgEntryPrice.toFixed(2)}`,
         );
@@ -306,8 +373,12 @@ export function runMartingaleBacktest(
         tickFills.push(
           `SELL [TP] @${tpFillPrice.toFixed(2)} profit=+${profit.toFixed(2)}`,
         );
-        // Start a new cycle at current close price
+        // Start new cycle: market entry at close price
+        const dateStr = candle.start
+          ? new Date(candle.start).toISOString().slice(0, 10)
+          : String(i);
         state = initCycle(close, params);
+        applyMarketEntry(state, close, dateStr, tickFills);
       }
     };
 
@@ -416,10 +487,10 @@ export function optimizeMartingaleParams(
     for (const scale of scales) {
       for (const maxSO of maxSafetyOrdersList) {
         for (const tp of takeProfits) {
-          // Validate SL is deep enough
-          // SL is measured from entryPrice (above all levels), so lowest level is at (1-dev)^(N+1)
+          // Validate SL is deep enough: lowest safety order is at entryPrice × (1-dev)^maxSO,
+          // so SL must exceed 1 − (1−dev)^maxSO from entry price.
           const minSlRequired = new Decimal(1).minus(
-            new Decimal(1).minus(dev).pow(maxSO + 1),
+            new Decimal(1).minus(dev).pow(maxSO),
           );
           if (stopLoss.lte(minSlRequired)) continue;
 
