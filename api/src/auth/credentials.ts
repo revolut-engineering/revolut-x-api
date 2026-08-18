@@ -25,10 +25,6 @@ export function loadCredentials(): Credentials | null {
 
   assertSecurePermissions(keyPath, "private key");
 
-  try {
-    const privateKey = loadPrivateKey(keyPath);
-    return { apiKey: config.api_key, privateKey, privateKeyPath: keyPath };
-  } catch {
-    return null;
-  }
+  const privateKey = loadPrivateKey(keyPath);
+  return { apiKey: config.api_key, privateKey, privateKeyPath: keyPath };
 }

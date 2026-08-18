@@ -167,11 +167,18 @@ export function registerSetupTools(server: McpServer): void {
         return textResult(`Not configured.\n\n${SETUP_GUIDE}`);
       }
 
-      const creds = loadCredentials();
-      if (creds === null) {
+      let creds;
+      try {
+        creds = loadCredentials();
+      } catch (exc) {
         return textResult(
-          `Configuration incomplete or corrupted.\n\n${SETUP_GUIDE}`,
+          `Your private key could not be loaded: ${exc}\n\n` +
+            "This usually means the key file is corrupted, has the wrong " +
+            `permissions, or isn't an Ed25519 key.\n\n${SETUP_GUIDE}`,
         );
+      }
+      if (creds === null) {
+        return textResult(`Not configured.\n\n${SETUP_GUIDE}`);
       }
 
       try {
