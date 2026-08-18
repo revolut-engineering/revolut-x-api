@@ -256,7 +256,13 @@ export function runMartingaleBacktest(
     dateStr: string,
     tickFills: string[],
   ): void => {
-    const { qty, quoteSize } = applyMarketEntryToState(st, entryPrice, params, baseDp, quoteDp);
+    const { qty, quoteSize } = applyMarketEntryToState(
+      st,
+      entryPrice,
+      params,
+      baseDp,
+      quoteDp,
+    );
     totalTrades++;
     tradeLog.push(
       `${dateStr} BUY  $${entryPrice.toFixed(quoteDp)} qty=${qty.toFixed(baseDp)} [ENTRY] avgEntry=$${st.avgEntryPrice.toFixed(quoteDp)}`,
