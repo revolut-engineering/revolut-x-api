@@ -39,32 +39,26 @@ export function registerMartingaleTools(server: McpServer): void {
           .describe("Days of historical data (default 30)"),
         price_deviation_pct: z
           .number()
-          .default(2)
           .describe(
-            "% price drop between safety orders, >= 1%, e.g. 2 means 2% (default 2)",
+            "% price drop between safety orders, >= 1%, e.g. 2 means 2%",
           ),
         safety_order_volume_scale: z
           .number()
-          .default(2.0)
           .describe(
-            "Capital multiplier per safety order level, >= 1 (default 2.0)",
+            "Capital multiplier per safety order level, >= 1, e.g. 2.0",
           ),
         max_safety_orders: z
           .number()
-          .default(5)
-          .describe("Maximum number of safety orders, 1–30 (default 5)"),
+          .describe("Maximum number of safety orders, 1–30"),
         take_profit_pct: z
           .number()
-          .default(1.5)
-          .describe("Take-profit % above average entry price (default 1.5)"),
+          .describe("Take-profit % above average entry price, e.g. 1.5"),
         stop_loss_pct: z
           .number()
-          .default(15)
-          .describe("Stop-loss % below initial buy price (default 15)"),
+          .describe("Stop-loss % below initial buy price, e.g. 15"),
         investment: z
           .string()
-          .default("1000")
-          .describe('Total investment in quote currency (default "1000")'),
+          .describe('Total investment in quote currency, e.g. "1000"'),
       },
       annotations: {
         title: "Run Martingale Backtest",
@@ -142,6 +136,22 @@ export function registerMartingaleTools(server: McpServer): void {
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
 
+      // Fetch pair constraints to validate order sizes against exchange minimums.
+      let baseStep: Decimal | undefined;
+      let quoteStep: Decimal | undefined;
+      let minOrderSizeQuote: Decimal | undefined;
+      try {
+        const pairs = await getRevolutXClient().getCurrencyPairs();
+        const pairInfo = pairs[pair.replace("-", "/")];
+        if (pairInfo) {
+          baseStep = new Decimal(pairInfo.base_step);
+          quoteStep = new Decimal(pairInfo.quote_step);
+          minOrderSizeQuote = new Decimal(pairInfo.min_order_size_quote);
+        }
+      } catch {
+        // pair info unavailable — validation falls back to 5 dp precision
+      }
+
       const params: MartingaleBacktestParams = {
         priceDeviation,
         safetyOrderVolumeScale: scale,
@@ -149,8 +159,18 @@ export function registerMartingaleTools(server: McpServer): void {
         takeProfit,
         stopLoss,
         investment: investDec,
+        baseStep,
+        quoteStep,
+        minOrderSizeQuote,
       };
-      const r = runMartingaleBacktest(candles, params);
+      let r: Awaited<ReturnType<typeof runMartingaleBacktest>>;
+      try {
+        r = runMartingaleBacktest(candles, params);
+      } catch (err) {
+        return textResult(
+          `Backtest error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
       const cs = getCurrSymbol(pair);
       const annualizedPct =
@@ -212,14 +232,12 @@ export function registerMartingaleTools(server: McpServer): void {
           .describe("Days of historical data (default 30)"),
         stop_loss_pct: z
           .number()
-          .default(15)
           .describe(
-            "Fixed stop-loss % below initial buy, applied to all combinations (default 15)",
+            "Fixed stop-loss % below initial buy, applied to all combinations, e.g. 15",
           ),
         investment: z
           .string()
-          .default("1000")
-          .describe('Total investment in quote currency (default "1000")'),
+          .describe('Total investment in quote currency, e.g. "1000"'),
         top: z
           .number()
           .default(10)
@@ -266,9 +284,28 @@ export function registerMartingaleTools(server: McpServer): void {
       if ("error" in fetchResult) return fetchResult.error;
       const { candles, actualDays, llmNotice } = fetchResult;
 
+      // Fetch pair constraints to filter out combinations with orders too small for the exchange.
+      let baseStep: Decimal | undefined;
+      let quoteStep: Decimal | undefined;
+      let minOrderSizeQuote: Decimal | undefined;
+      try {
+        const pairs = await getRevolutXClient().getCurrencyPairs();
+        const pairInfo = pairs[pair.replace("-", "/")];
+        if (pairInfo) {
+          baseStep = new Decimal(pairInfo.base_step);
+          quoteStep = new Decimal(pairInfo.quote_step);
+          minOrderSizeQuote = new Decimal(pairInfo.min_order_size_quote);
+        }
+      } catch {
+        // pair info unavailable — validation falls back to 5 dp precision
+      }
+
       const results = optimizeMartingaleParams(candles, investDec, {
         stopLoss,
         days: actualDays,
+        baseStep,
+        quoteStep,
+        minOrderSizeQuote,
       });
       const topResults = results.slice(0, top);
 

@@ -21,20 +21,19 @@ Symbols use `BASE-QUOTE` format with a dash: `BTC-USD`, `ETH-EUR`, `SOL-USD`.
 Test a martingale strategy on historical data:
 
 ```bash
-revx strategy martingale backtest BTC-USD
 revx strategy martingale backtest BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000
-revx strategy martingale backtest ETH-USD --days 60 --interval 4h
-revx strategy martingale backtest BTC-USD --json
+revx strategy martingale backtest ETH-USD --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000 --days 60 --interval 4h
+revx strategy martingale backtest BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000 --json
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--price-deviation <pct>` | 2 | % price drop between consecutive buy levels |
-| `--scale <n>` | 2.0 | Capital multiplier per safety order (e.g. 2 = each order 2× larger) |
-| `--max-safety-orders <n>` | 5 | Maximum number of safety orders (0–30) |
-| `--take-profit <pct>` | 1.5 | % above average entry price to place the TP sell |
-| `--stop-loss <pct>` | 15 | % below current price to trigger stop-loss (recomputed each cycle) |
-| `--investment <amount>` | 1000 | Capital in quote currency |
+| `--price-deviation <pct>` | **required** | % price drop between consecutive buy levels |
+| `--scale <n>` | **required** | Capital multiplier per safety order (e.g. 2 = each order 2× larger) |
+| `--max-safety-orders <n>` | **required** | Maximum number of safety orders (0–30) |
+| `--take-profit <pct>` | **required** | % above average entry price to place the TP sell |
+| `--stop-loss <pct>` | **required** | % below current price to trigger stop-loss (recomputed each cycle) |
+| `--investment <amount>` | **required** | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--json` | off | Output as JSON |
@@ -59,10 +58,10 @@ Limitation: real intra-candle price action may be more complex (e.g. multiple to
 Test multiple parameter combinations, ranked by return:
 
 ```bash
-revx strategy martingale optimize BTC-USD
-revx strategy martingale optimize BTC-USD --investment 5000 --days 60 --stop-loss 15
-revx strategy martingale optimize BTC-USD --price-deviation 1,1.5,2,2.5,3 --scale 1.5,2,2.5 --max-safety-orders 3,5,7 --take-profit 1,1.5,2,2.5 --top 5
-revx strategy martingale optimize BTC-USD --interval 4h --days 30
+revx strategy martingale optimize BTC-USD --stop-loss 15 --investment 5000
+revx strategy martingale optimize BTC-USD --stop-loss 15 --investment 5000 --days 60
+revx strategy martingale optimize BTC-USD --price-deviation 1,1.5,2,2.5,3 --scale 1.5,2,2.5 --max-safety-orders 3,5,7 --take-profit 1,1.5,2,2.5 --stop-loss 15 --investment 5000 --top 5
+revx strategy martingale optimize BTC-USD --stop-loss 15 --investment 5000 --interval 4h --days 30
 ```
 
 | Flag | Default | Description |
@@ -71,9 +70,9 @@ revx strategy martingale optimize BTC-USD --interval 4h --days 30
 | `--scale <csv>` | 1.5,2.0,2.5 | Safety order volume scale values to test |
 | `--max-safety-orders <csv>` | 3,5,7 | Max safety order counts to test |
 | `--take-profit <csv>` | 1,1.5,2,2.5 | Take profit % values to test |
-| `--stop-loss <pct>` | 15 | Fixed stop-loss % applied to all combinations |
+| `--stop-loss <pct>` | **required** | Fixed stop-loss % applied to all combinations |
 | `--top <n>` | 10 | Top results to display |
-| `--investment <amount>` | 1000 | Capital in quote currency |
+| `--investment <amount>` | **required** | Capital in quote currency |
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--json` | off | Output as JSON |
@@ -139,21 +138,20 @@ If the user says "run a martingale bot on BTC", ask for the investment amount at
 Run a live martingale bot with real-time dashboard:
 
 ```bash
-revx strategy martingale run BTC-USD --investment 1000
 revx strategy martingale run BTC-USD --investment 1000 --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15
-revx strategy martingale run BTC-USD --investment 1000 --dry-run
-revx strategy martingale run BTC-USD --investment 1000 --reset
-revx strategy martingale run BTC-USD --investment 1000 --interval 15
+revx strategy martingale run BTC-USD --investment 1000 --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --dry-run
+revx strategy martingale run BTC-USD --investment 1000 --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --reset
+revx strategy martingale run BTC-USD --investment 1000 --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --interval 15
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--investment <amount>` | **required** | Capital in quote currency |
-| `--price-deviation <pct>` | 2 | % price drop between safety order levels |
-| `--scale <n>` | 2.0 | Capital multiplier per safety order |
-| `--max-safety-orders <n>` | 5 | Max safety orders (0–30) |
-| `--take-profit <pct>` | 1.5 | TP % above average entry price |
-| `--stop-loss <pct>` | 15 | SL % below current price (recomputed each new cycle) |
+| `--price-deviation <pct>` | **required** | % price drop between safety order levels |
+| `--scale <n>` | **required** | Capital multiplier per safety order |
+| `--max-safety-orders <n>` | **required** | Max safety orders (1–30) |
+| `--take-profit <pct>` | **required** | TP % above average entry price |
+| `--stop-loss <pct>` | **required** | SL % below current price (recomputed each new cycle) |
 | `--interval <sec>` | 10 | Polling interval in seconds |
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
