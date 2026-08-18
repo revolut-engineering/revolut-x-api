@@ -124,13 +124,13 @@ revx strategy grid run BTC-USD --investment 500 --dry-run
 
 # Strategy — Martingale DCA Bot
 revx strategy martingale backtest BTC-USD \
-  --investment 1000 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
+  --investment 1000 --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
 revx strategy martingale optimize BTC-USD \
-  --investment 1000 --stop-loss 15 --scale 1.5,2,2.5 --take-profit 1,1.5,2
+  --investment 1000 --stop-loss 15
 revx strategy martingale run BTC-USD \
-  --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --dry-run
+  --investment 500 --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
 revx strategy martingale run BTC-USD \
-  --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
+  --investment 500 --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --dry-run
 
 # Connector (Telegram notifications)
 revx connector telegram add --token <token> --chat-id <id>

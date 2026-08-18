@@ -92,9 +92,10 @@ Examples:
     $ revx strategy grid run BTC-USD --investment 500 --dry-run
 
   Strategy (Martingale DCA):
-    $ revx strategy martingale backtest BTC-USD --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000
+    $ revx strategy martingale backtest BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000
     $ revx strategy martingale optimize BTC-USD --stop-loss 15 --investment 1000
-    $ revx strategy martingale run BTC-USD --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --investment 500 --dry-run
+    $ revx strategy martingale run BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --investment 500
+    $ revx strategy martingale run BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --investment 500 --dry-run
 
   Connector (Telegram notifications):
     $ revx connector telegram add --token <token> --chat-id <id>

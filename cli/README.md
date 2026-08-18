@@ -311,7 +311,7 @@ revx strategy martingale backtest ETH-USD \
 | `--max-safety-orders <n>` | Number of safety orders, 1–30 (required) | — |
 | `--take-profit <pct>` | Take-profit % above average entry, e.g. `1.5` (required) | — |
 | `--stop-loss <pct>` | Stop-loss % below initial buy price, e.g. `15` (required) | — |
-| `--price-deviation <pct>` | % drop between consecutive levels, >= 1% | `2` |
+| `--price-deviation <pct>` | % drop between consecutive levels, >= 1% | — |
 | `--days <n>` | Days of historical data | `3` |
 | `--interval <res>` | Candle resolution (`1m` `5m` `15m` `30m` `1h` `4h` `1d`) | `1m` |
 | `--trace` | Emit per-tick trace of fills and state | — |
@@ -364,7 +364,7 @@ revx strategy martingale run BTC-USD \
 | `--max-safety-orders <n>` | Number of safety orders, 1–30 (required) | — |
 | `--take-profit <pct>` | Take-profit % above average entry, e.g. `1.5` (required) | — |
 | `--stop-loss <pct>` | Stop-loss % below initial buy price, e.g. `15` (required) | — |
-| `--price-deviation <pct>` | % drop between consecutive levels, >= 1% | `2` |
+| `--price-deviation <pct>` | % drop between consecutive levels, >= 1% | — |
 | `--interval <sec>` | Polling interval in seconds | `10` |
 | `--dry-run` | Simulate without placing real orders | — |
 | `--reset` | Discard saved state and start a fresh cycle | — |

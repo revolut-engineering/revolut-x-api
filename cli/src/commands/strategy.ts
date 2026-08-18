@@ -979,10 +979,10 @@ Examples (Grid):
   $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run
 
 Examples (Martingale):
-  $ revx strategy martingale backtest BTC-USD --investment 1000 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15
+  $ revx strategy martingale backtest BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 3 --take-profit 1.5 --stop-loss 15 --investment 1000
   $ revx strategy martingale optimize BTC-USD --investment 1000 --stop-loss 15 --scale 1.5,2,2.5 --take-profit 1,1.5,2
-  $ revx strategy martingale run BTC-USD --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --dry-run
-  $ revx strategy martingale run BTC-USD --investment 500 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --prices interactive --dry-run
+  $ revx strategy martingale run BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --investment 500 --dry-run
+  $ revx strategy martingale run BTC-USD --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --investment 500 --prices interactive --dry-run
 
 Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-prices.md`,
     );
@@ -1126,10 +1126,9 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
   martingale
     .command("backtest <pair>")
     .description("Run a martingale backtest on historical candle data")
-    .option(
+    .requiredOption(
       "--price-deviation <pct>",
       "% price drop between safety orders (>= 1%), e.g. 2 for 2%",
-      "2",
     )
     .requiredOption(
       "--scale <n>",
@@ -1207,10 +1206,9 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
       "--investment <amount>",
       "Capital in quote currency to deploy",
     )
-    .option(
+    .requiredOption(
       "--price-deviation <pct>",
       "% price drop between safety orders (>= 1%)",
-      "2",
     )
     .requiredOption(
       "--scale <n>",
@@ -1325,6 +1323,24 @@ async function handleMartingaleBacktest(
     process.exit(1);
   }
 
+  // When fetching live data, also load pair constraints to validate order sizes.
+  let baseStep: Decimal | undefined;
+  let quoteStep: Decimal | undefined;
+  let minOrderSizeQuote: Decimal | undefined;
+  if (!isScenarioSpec(spec)) {
+    try {
+      const constraints = await loadGridConstraints(pair);
+      baseStep = constraints.baseStep;
+      quoteStep = constraints.quoteStep;
+      minOrderSizeQuote = constraints.minQuote;
+    } catch {
+      // pair info unavailable — validation falls back to 5 dp precision
+    }
+  }
+
+  // Decimal places for qty display — matches engine rounding logic
+  const baseDp = (baseStep ?? new Decimal("0.00001")).decimalPlaces() ?? 5;
+
   console.log(
     chalk.gray(
       `  ↳ Running martingale backtest on ${candles.length} candles...\n`,
@@ -1338,6 +1354,9 @@ async function handleMartingaleBacktest(
     takeProfit,
     stopLoss,
     investment,
+    baseStep,
+    quoteStep,
+    minOrderSizeQuote,
   };
   const cs = getCurrSymbol(pair);
   const traceJson = traceEnabled && isJsonOutput(opts);
@@ -1482,7 +1501,7 @@ async function handleMartingaleBacktest(
       },
       {
         header: "Qty",
-        accessor: (t) => t.quantity.toFixed(5),
+        accessor: (t) => t.quantity.toFixed(baseDp),
         align: "right",
       },
       {
@@ -1668,6 +1687,22 @@ async function handleMartingaleOptimize(
     process.exit(1);
   }
 
+  // When fetching live data, also load pair constraints to filter out
+  // combinations whose order sizes are too small for the exchange.
+  let baseStep: Decimal | undefined;
+  let quoteStep: Decimal | undefined;
+  let minOrderSizeQuote: Decimal | undefined;
+  if (!isScenarioSpec(spec)) {
+    try {
+      const constraints = await loadGridConstraints(pair);
+      baseStep = constraints.baseStep;
+      quoteStep = constraints.quoteStep;
+      minOrderSizeQuote = constraints.minQuote;
+    } catch {
+      // pair info unavailable — validation falls back to 5 dp precision
+    }
+  }
+
   console.log(
     chalk.gray(
       `  ↳ Running martingale optimization on ${candles.length} candles (${totalCombos} combinations)...\n`,
@@ -1681,6 +1716,9 @@ async function handleMartingaleOptimize(
     takeProfits: takeProfitsList,
     stopLoss,
     days,
+    baseStep,
+    quoteStep,
+    minOrderSizeQuote,
   });
 
   if (isJsonOutput(opts)) {
