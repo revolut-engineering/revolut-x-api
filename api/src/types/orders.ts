@@ -148,12 +148,32 @@ export interface MarketOrderConfig {
   quoteSize?: string;
 }
 
+export interface OrderTriggerConfig {
+  triggerPrice: string;
+  type?: "market" | "limit";
+  limitPrice?: string;
+  timeInForce?: PlaceTimeInForce;
+  executionInstructions?: ExecutionInstruction[];
+}
+
+export interface TpslOrderConfig {
+  baseSize?: string;
+  quoteSize?: string;
+  takeProfit?: OrderTriggerConfig;
+  stopLoss?: OrderTriggerConfig;
+}
+
 export interface PlaceOrderParams {
   symbol: string;
   side: OrderSide;
   limit?: LimitOrderConfig;
   market?: MarketOrderConfig;
+  tpsl?: TpslOrderConfig;
   clientOrderId?: string;
+}
+
+export interface ReplaceTriggerConfig {
+  triggerPrice: string;
 }
 
 export interface ReplaceOrderParams {
@@ -163,6 +183,8 @@ export interface ReplaceOrderParams {
   quoteSize?: string;
   timeInForce?: PlaceTimeInForce;
   executionInstructions?: ExecutionInstruction[];
+  takeProfit?: ReplaceTriggerConfig;
+  stopLoss?: ReplaceTriggerConfig;
 }
 
 export interface ActiveOrdersOptions {

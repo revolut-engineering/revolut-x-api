@@ -221,6 +221,193 @@ describe("Orders", () => {
       };
       expect(config.limit.time_in_force).toBe("ioc");
     });
+
+    it("places tpsl order with take_profit for a sell (exits on price rise)", async () => {
+      const client = createTestClient();
+      let capturedBody: Record<string, unknown>;
+
+      nock(BASE_URL)
+        .post("/api/1.0/orders", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tpsl-1",
+            client_order_id: "client-tpsl-1",
+            state: "new",
+          },
+        });
+
+      await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "sell",
+        tpsl: {
+          baseSize: "0.001",
+          takeProfit: { triggerPrice: "100000" },
+        },
+      });
+
+      const config = capturedBody.order_configuration as {
+        base_size: string;
+        take_profit: { trigger_price: string; trigger_direction: string };
+      };
+      expect(config.base_size).toBe("0.001");
+      expect(config.take_profit).toEqual({
+        trigger_price: "100000",
+        trigger_direction: "ge",
+        type: "market",
+      });
+    });
+
+    it("places tpsl order with stop_loss for a sell (exits on price drop)", async () => {
+      const client = createTestClient();
+      let capturedBody: Record<string, unknown>;
+
+      nock(BASE_URL)
+        .post("/api/1.0/orders", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tpsl-2",
+            client_order_id: "client-tpsl-2",
+            state: "new",
+          },
+        });
+
+      await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "sell",
+        tpsl: {
+          baseSize: "0.001",
+          stopLoss: { triggerPrice: "90000" },
+        },
+      });
+
+      const config = capturedBody.order_configuration as {
+        stop_loss: { trigger_price: string; trigger_direction: string };
+      };
+      expect(config.stop_loss).toEqual({
+        trigger_price: "90000",
+        trigger_direction: "le",
+        type: "market",
+      });
+    });
+
+    it("places tpsl order with both take_profit and stop_loss for a buy", async () => {
+      const client = createTestClient();
+      let capturedBody: Record<string, unknown>;
+
+      nock(BASE_URL)
+        .post("/api/1.0/orders", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tpsl-3",
+            client_order_id: "client-tpsl-3",
+            state: "new",
+          },
+        });
+
+      await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "buy",
+        tpsl: {
+          quoteSize: "100",
+          takeProfit: { triggerPrice: "100000" },
+          stopLoss: { triggerPrice: "90000" },
+        },
+      });
+
+      const config = capturedBody.order_configuration as {
+        quote_size: string;
+        take_profit: { trigger_price: string; trigger_direction: string };
+        stop_loss: { trigger_price: string; trigger_direction: string };
+      };
+      expect(config.quote_size).toBe("100");
+      expect(config.take_profit).toEqual({
+        trigger_price: "100000",
+        trigger_direction: "le",
+        type: "market",
+      });
+      expect(config.stop_loss).toEqual({
+        trigger_price: "90000",
+        trigger_direction: "ge",
+        type: "market",
+      });
+    });
+
+    it("includes limit_price, time_in_force, and execution_instructions on tpsl trigger", async () => {
+      const client = createTestClient();
+      let capturedBody: Record<string, unknown>;
+
+      nock(BASE_URL)
+        .post("/api/1.0/orders", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tpsl-4",
+            client_order_id: "client-tpsl-4",
+            state: "new",
+          },
+        });
+
+      await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "buy",
+        tpsl: {
+          baseSize: "0.001",
+          takeProfit: {
+            triggerPrice: "100000",
+            type: "limit",
+            limitPrice: "99900",
+            timeInForce: "gtc",
+            executionInstructions: ["post_only"],
+          },
+        },
+      });
+
+      const config = capturedBody.order_configuration as {
+        take_profit: {
+          type: string;
+          limit_price: string;
+          time_in_force: string;
+          execution_instructions: string[];
+        };
+      };
+      expect(config.take_profit.type).toBe("limit");
+      expect(config.take_profit.limit_price).toBe("99900");
+      expect(config.take_profit.time_in_force).toBe("gtc");
+      expect(config.take_profit.execution_instructions).toEqual(["post_only"]);
+    });
+
+    it("rejects tpsl order without baseSize or quoteSize", async () => {
+      const client = createTestClient();
+      await expect(
+        client.placeOrder({
+          symbol: "BTC-USD",
+          side: "buy",
+          tpsl: { takeProfit: { triggerPrice: "100000" } },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("rejects tpsl order without takeProfit or stopLoss", async () => {
+      const client = createTestClient();
+      await expect(
+        client.placeOrder({
+          symbol: "BTC-USD",
+          side: "buy",
+          tpsl: { baseSize: "0.001" },
+        }),
+      ).rejects.toThrow();
+    });
   });
 
   describe("getActiveOrders", () => {
@@ -1031,6 +1218,60 @@ describe("Orders", () => {
       expect(capturedBody).toEqual({
         client_order_id: "client-new",
         time_in_force: "ioc",
+      });
+    });
+
+    it("replaces order with takeProfit trigger price", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-tp",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        takeProfit: { triggerPrice: "105000" },
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        take_profit: { trigger_price: "105000" },
+      });
+    });
+
+    it("replaces order with stopLoss trigger price", async () => {
+      const client = createTestClient();
+      let capturedBody: unknown;
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123", (body) => {
+          capturedBody = body;
+          return true;
+        })
+        .reply(200, {
+          data: {
+            venue_order_id: "order-sl",
+            client_order_id: "client-new",
+            state: "new",
+          },
+        });
+
+      await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        stopLoss: { triggerPrice: "88000" },
+      });
+
+      expect(capturedBody).toEqual({
+        client_order_id: "client-new",
+        stop_loss: { trigger_price: "88000" },
       });
     });
 

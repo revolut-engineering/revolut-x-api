@@ -19,6 +19,8 @@ import {
   Order,
   OrderDetails,
   OrderPlacementResult,
+  OrderSide,
+  OrderTriggerConfig,
   PlaceOrderParams,
   ReplaceOrderParams,
 } from "./types/orders.js";
@@ -62,6 +64,28 @@ const RESOLUTION_MAP: Record<string, number> = {
   "2w": 20160,
   "4w": 40320,
 };
+
+function buildTriggerConfig(
+  trigger: OrderTriggerConfig,
+  side: OrderSide,
+  kind: "take_profit" | "stop_loss",
+): Record<string, unknown> {
+  const exitsOnPriceRise =
+    (side === "sell" && kind === "take_profit") ||
+    (side === "buy" && kind === "stop_loss");
+
+  const config: Record<string, unknown> = {
+    trigger_price: trigger.triggerPrice,
+    trigger_direction: exitsOnPriceRise ? "ge" : "le",
+    type: trigger.type ?? "market",
+  };
+  if (trigger.limitPrice) config.limit_price = trigger.limitPrice;
+  if (trigger.timeInForce) config.time_in_force = trigger.timeInForce;
+  if (trigger.executionInstructions) {
+    config.execution_instructions = trigger.executionInstructions;
+  }
+  return config;
+}
 
 export interface RevolutXClientOptions {
   apiKey?: string;
@@ -258,6 +282,25 @@ export class RevolutXClient {
       if (params.market.quoteSize)
         marketConfig.quote_size = params.market.quoteSize;
       body.order_configuration = { market: marketConfig };
+    } else if (params.tpsl) {
+      const tpslConfig: Record<string, unknown> = {};
+      if (params.tpsl.baseSize) tpslConfig.base_size = params.tpsl.baseSize;
+      if (params.tpsl.quoteSize) tpslConfig.quote_size = params.tpsl.quoteSize;
+      if (params.tpsl.takeProfit) {
+        tpslConfig.take_profit = buildTriggerConfig(
+          params.tpsl.takeProfit,
+          params.side,
+          "take_profit",
+        );
+      }
+      if (params.tpsl.stopLoss) {
+        tpslConfig.stop_loss = buildTriggerConfig(
+          params.tpsl.stopLoss,
+          params.side,
+          "stop_loss",
+        );
+      }
+      body.order_configuration = tpslConfig;
     }
 
     return this.request<DataResponse<OrderPlacementResult>>(
@@ -394,6 +437,12 @@ export class RevolutXClient {
       body.time_in_force = params.timeInForce;
     if (params.executionInstructions !== undefined) {
       body.execution_instructions = params.executionInstructions;
+    }
+    if (params.takeProfit !== undefined) {
+      body.take_profit = { trigger_price: params.takeProfit.triggerPrice };
+    }
+    if (params.stopLoss !== undefined) {
+      body.stop_loss = { trigger_price: params.stopLoss.triggerPrice };
     }
 
     return this.request<DataResponse<OrderPlacementResult>>(
