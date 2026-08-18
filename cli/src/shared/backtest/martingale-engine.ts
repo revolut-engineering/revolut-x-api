@@ -9,6 +9,12 @@ export interface MartingaleBacktestParams {
   takeProfit: Decimal;
   stopLoss: Decimal;
   investment: Decimal;
+  /** Real exchange base step (e.g. 0.00000001 for BTC). Defaults to 0.00001. */
+  baseStep?: Decimal;
+  /** Real exchange quote step (price increment, e.g. 0.01 for BTC-USD). Defaults to 0.01. */
+  quoteStep?: Decimal;
+  /** Real exchange minimum order size in quote currency. Defaults to 0 (not checked). */
+  minOrderSizeQuote?: Decimal;
 }
 
 export interface MartingaleTrade {
@@ -89,6 +95,7 @@ interface CycleState {
 function buildLevels(
   entryPrice: Decimal,
   params: MartingaleBacktestParams,
+  quoteDp: number,
 ): Array<{ price: Decimal; quoteSize: Decimal; filled: boolean }> {
   const {
     priceDeviation,
@@ -104,10 +111,10 @@ function buildLevels(
     // Levels 1..maxSO are limit safety orders at entryPrice × (1−dev)^i.
     const price =
       i === 0
-        ? entryPrice.toDecimalPlaces(2, Decimal.ROUND_DOWN)
+        ? entryPrice.toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN)
         : entryPrice
             .times(new Decimal(1).minus(priceDeviation).pow(i))
-            .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+            .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
     const quoteSize = investment
       .times(basePct)
       .times(safetyOrderVolumeScale.pow(i))
@@ -120,10 +127,11 @@ function buildLevels(
 function initCycle(
   entryPrice: Decimal,
   params: MartingaleBacktestParams,
+  quoteDp: number,
 ): CycleState {
   const slPrice = entryPrice
     .times(new Decimal(1).minus(params.stopLoss))
-    .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+    .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
   return {
     inPosition: false,
     safetyOrdersFilled: 0,
@@ -133,7 +141,7 @@ function initCycle(
     initialBuyPrice: null,
     tpPrice: null,
     slPrice,
-    levels: buildLevels(entryPrice, params),
+    levels: buildLevels(entryPrice, params, quoteDp),
   };
 }
 
@@ -143,11 +151,13 @@ function applyMarketEntryToState(
   state: CycleState,
   entryPrice: Decimal,
   params: MartingaleBacktestParams,
+  baseDp: number,
+  quoteDp: number,
 ): { qty: Decimal; quoteSize: Decimal } {
   const level = state.levels[0];
   const qty = level.quoteSize
     .div(entryPrice)
-    .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+    .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
   level.filled = true;
   state.totalQty = qty;
   state.totalCost = level.quoteSize;
@@ -156,7 +166,7 @@ function applyMarketEntryToState(
   state.initialBuyPrice = entryPrice;
   state.tpPrice = state.avgEntryPrice
     .times(new Decimal(1).plus(params.takeProfit))
-    .toDecimalPlaces(2, Decimal.ROUND_UP);
+    .toDecimalPlaces(quoteDp, Decimal.ROUND_UP);
   return { qty, quoteSize: level.quoteSize };
 }
 
@@ -207,7 +217,37 @@ export function runMartingaleBacktest(
   let stopped = false;
 
   const firstClose = candles[0].close;
-  let state = initCycle(firstClose, params);
+
+  // Validate that every level meets the exchange minimums at the opening price.
+  // Uses real pair constraints when available, falls back to 5 dp precision.
+  const baseStep = params.baseStep ?? new Decimal("0.00001");
+  const baseDp = baseStep.decimalPlaces() ?? 5;
+  const quoteStep = params.quoteStep ?? new Decimal("0.01");
+  const quoteDp = quoteStep.decimalPlaces() ?? 2;
+  const minOrderSizeQuote = params.minOrderSizeQuote ?? new Decimal(0);
+  const previewLevels = buildLevels(firstClose, params, quoteDp);
+  for (let i = 0; i < previewLevels.length; i++) {
+    const level = previewLevels[i];
+    if (minOrderSizeQuote.gt(0) && level.quoteSize.lt(minOrderSizeQuote)) {
+      throw new Error(
+        `Level #${i} quote size ($${level.quoteSize.toFixed(2)}) is below the exchange ` +
+          `minimum order size ($${minOrderSizeQuote.toFixed(2)}). ` +
+          `Increase --investment or reduce --max-safety-orders / --scale.`,
+      );
+    }
+    const qty = level.quoteSize
+      .div(level.price)
+      .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
+    if (qty.lte(0)) {
+      throw new Error(
+        `Level #${i} quote size ($${level.quoteSize.toFixed(2)}) produces qty=0 ` +
+          `at price $${level.price.toFixed(2)} (base step: ${baseStep.toString()}). ` +
+          `Increase --investment or reduce --max-safety-orders / --scale.`,
+      );
+    }
+  }
+
+  let state = initCycle(firstClose, params, quoteDp);
 
   // Helper: log the market entry trade (called on each new cycle start)
   const applyMarketEntry = (
@@ -216,10 +256,10 @@ export function runMartingaleBacktest(
     dateStr: string,
     tickFills: string[],
   ): void => {
-    const { qty, quoteSize } = applyMarketEntryToState(st, entryPrice, params);
+    const { qty, quoteSize } = applyMarketEntryToState(st, entryPrice, params, baseDp, quoteDp);
     totalTrades++;
     tradeLog.push(
-      `${dateStr} BUY  $${entryPrice.toFixed(2)} qty=${qty.toFixed(5)} [ENTRY] avgEntry=$${st.avgEntryPrice.toFixed(2)}`,
+      `${dateStr} BUY  $${entryPrice.toFixed(quoteDp)} qty=${qty.toFixed(baseDp)} [ENTRY] avgEntry=$${st.avgEntryPrice.toFixed(quoteDp)}`,
     );
     trades.push({
       index: totalTrades,
@@ -234,7 +274,7 @@ export function runMartingaleBacktest(
         : new Decimal(0),
     });
     tickFills.push(
-      `BUY [ENTRY] @${entryPrice.toFixed(2)} qty=${qty.toFixed(5)}`,
+      `BUY [ENTRY] @${entryPrice.toFixed(quoteDp)} qty=${qty.toFixed(baseDp)}`,
     );
   };
 
@@ -260,7 +300,7 @@ export function runMartingaleBacktest(
     // Emit the market entry in the tick callback for candle 0 (it was applied before the loop)
     if (i === 0) {
       tickFills.push(
-        `BUY [ENTRY] @${firstClose.toFixed(2)} qty=${state.totalQty.toFixed(5)}`,
+        `BUY [ENTRY] @${firstClose.toFixed(quoteDp)} qty=${state.totalQty.toFixed(baseDp)}`,
       );
     }
 
@@ -272,7 +312,7 @@ export function runMartingaleBacktest(
 
         const qty = level.quoteSize
           .div(level.price)
-          .toDecimalPlaces(5, Decimal.ROUND_DOWN);
+          .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
         level.filled = true;
         state.totalQty = state.totalQty.plus(qty);
         state.totalCost = state.totalCost.plus(level.quoteSize);
@@ -281,11 +321,11 @@ export function runMartingaleBacktest(
 
         state.tpPrice = state.avgEntryPrice
           .times(new Decimal(1).plus(takeProfit))
-          .toDecimalPlaces(2, Decimal.ROUND_UP);
+          .toDecimalPlaces(quoteDp, Decimal.ROUND_UP);
         totalTrades++;
         const reason = `SO#${state.safetyOrdersFilled}`;
         tradeLog.push(
-          `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} BUY  $${level.price.toFixed(2)} qty=${qty.toFixed(5)} [${reason}] avgEntry=$${state.avgEntryPrice.toFixed(2)}`,
+          `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} BUY  $${level.price.toFixed(quoteDp)} qty=${qty.toFixed(baseDp)} [${reason}] avgEntry=$${state.avgEntryPrice.toFixed(quoteDp)}`,
         );
         trades.push({
           index: totalTrades,
@@ -300,7 +340,7 @@ export function runMartingaleBacktest(
             : new Decimal(0),
         });
         tickFills.push(
-          `BUY [${reason}] @${level.price.toFixed(2)} qty=${qty.toFixed(5)}`,
+          `BUY [${reason}] @${level.price.toFixed(quoteDp)} qty=${qty.toFixed(baseDp)}`,
         );
       }
     };
@@ -320,7 +360,7 @@ export function runMartingaleBacktest(
         completedCycles++;
         totalTrades++;
         tradeLog.push(
-          `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} SELL $${slFillPrice.toFixed(2)} qty=${state.totalQty.toFixed(5)} [STOP-LOSS] pnl=${profit.gte(0) ? "+" : ""}${profit.toFixed(2)}`,
+          `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} SELL $${slFillPrice.toFixed(quoteDp)} qty=${state.totalQty.toFixed(baseDp)} [STOP-LOSS] pnl=${profit.gte(0) ? "+" : ""}${profit.toFixed(2)}`,
         );
         trades.push({
           index: totalTrades,
@@ -336,7 +376,7 @@ export function runMartingaleBacktest(
             : new Decimal(0),
         });
         tickFills.push(
-          `SELL [STOP-LOSS] @${slFillPrice.toFixed(2)} pnl=${profit.gte(0) ? "+" : ""}${profit.toFixed(2)}`,
+          `SELL [STOP-LOSS] @${slFillPrice.toFixed(quoteDp)} pnl=${profit.gte(0) ? "+" : ""}${profit.toFixed(2)}`,
         );
         resetCycleState(state);
         stopped = true;
@@ -355,7 +395,7 @@ export function runMartingaleBacktest(
         if (profit.gt(0)) winningCycles++;
         totalTrades++;
         tradeLog.push(
-          `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} SELL $${tpFillPrice.toFixed(2)} qty=${state.totalQty.toFixed(5)} [TP] profit=+${profit.toFixed(2)}`,
+          `${candle.start ? new Date(candle.start).toISOString().slice(0, 10) : i} SELL $${tpFillPrice.toFixed(quoteDp)} qty=${state.totalQty.toFixed(baseDp)} [TP] profit=+${profit.toFixed(2)}`,
         );
         trades.push({
           index: totalTrades,
@@ -371,13 +411,13 @@ export function runMartingaleBacktest(
             : new Decimal(0),
         });
         tickFills.push(
-          `SELL [TP] @${tpFillPrice.toFixed(2)} profit=+${profit.toFixed(2)}`,
+          `SELL [TP] @${tpFillPrice.toFixed(quoteDp)} profit=+${profit.toFixed(2)}`,
         );
         // Start new cycle: market entry at close price
         const dateStr = candle.start
           ? new Date(candle.start).toISOString().slice(0, 10)
           : String(i);
-        state = initCycle(close, params);
+        state = initCycle(close, params, quoteDp);
         applyMarketEntry(state, close, dateStr, tickFills);
       }
     };
@@ -458,6 +498,9 @@ export function optimizeMartingaleParams(
     stopLoss?: Decimal;
     maxCombinations?: number;
     days?: number;
+    baseStep?: Decimal;
+    quoteStep?: Decimal;
+    minOrderSizeQuote?: Decimal;
   },
 ): MartingaleOptimizationResult[] {
   const priceDeviations = opts?.priceDeviations ?? [
@@ -481,6 +524,9 @@ export function optimizeMartingaleParams(
   ];
   const stopLoss = opts?.stopLoss ?? new Decimal("0.15");
   const maxCombinations = opts?.maxCombinations ?? 200;
+  const baseStep = opts?.baseStep;
+  const quoteStep = opts?.quoteStep;
+  const minOrderSizeQuote = opts?.minOrderSizeQuote;
 
   const combinations: MartingaleBacktestParams[] = [];
   outer: for (const dev of priceDeviations) {
@@ -501,6 +547,9 @@ export function optimizeMartingaleParams(
             takeProfit: tp,
             stopLoss,
             investment,
+            baseStep,
+            quoteStep,
+            minOrderSizeQuote,
           });
           if (combinations.length >= maxCombinations) break outer;
         }
@@ -511,7 +560,14 @@ export function optimizeMartingaleParams(
   const days = opts?.days ?? 1;
   const results: MartingaleOptimizationResult[] = [];
   for (const params of combinations) {
-    const r = runMartingaleBacktest(candles, params);
+    let r: MartingaleBacktestResult;
+    try {
+      r = runMartingaleBacktest(candles, params);
+    } catch {
+      // Skip combinations where any level produces qty=0 (investment too small
+      // for this price/scale/maxSO combination at 5 decimal places precision).
+      continue;
+    }
     const annualizedReturn = r.returnPct.div(100).times(365).div(days);
     const maxDrawdownRatio = investment.gt(0)
       ? r.maxDrawdown.div(investment)
