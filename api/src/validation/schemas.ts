@@ -21,6 +21,18 @@ export const symbolSchema = z
   .min(1, "Symbol is required")
   .regex(/^[A-Z0-9]+-[A-Z0-9]+$/, "Symbol must be in format ABC-XYZ");
 
+export const orderTriggerConfigSchema = z.object({
+  triggerPrice: priceSchema,
+  type: z.enum(["market", "limit"]).optional(),
+  limitPrice: priceSchema.optional(),
+  timeInForce: z.enum(["gtc", "ioc"]).optional(),
+  executionInstructions: z.array(z.string()).optional(),
+});
+
+export const replaceTriggerConfigSchema = z.object({
+  triggerPrice: priceSchema,
+});
+
 export const placeOrderSchema = z
   .object({
     symbol: symbolSchema,
@@ -53,10 +65,37 @@ export const placeOrderSchema = z
         },
       )
       .optional(),
+    tpsl: z
+      .object({
+        baseSize: quantitySchema.optional(),
+        quoteSize: quantitySchema.optional(),
+        takeProfit: orderTriggerConfigSchema.optional(),
+        stopLoss: orderTriggerConfigSchema.optional(),
+      })
+      .refine(
+        (data) => data.baseSize !== undefined || data.quoteSize !== undefined,
+        {
+          message: "Either baseSize or quoteSize is required for tpsl orders",
+        },
+      )
+      .refine(
+        (data) => data.takeProfit !== undefined || data.stopLoss !== undefined,
+        {
+          message:
+            "At least one of takeProfit or stopLoss is required for tpsl orders",
+        },
+      )
+      .optional(),
   })
-  .refine((data) => data.limit !== undefined || data.market !== undefined, {
-    message: "Either limit or market configuration is required",
-  });
+  .refine(
+    (data) =>
+      data.limit !== undefined ||
+      data.market !== undefined ||
+      data.tpsl !== undefined,
+    {
+      message: "Either limit, market, or tpsl configuration is required",
+    },
+  );
 
 export const replaceOrderSchema = z
   .object({
@@ -66,6 +105,8 @@ export const replaceOrderSchema = z
     quoteSize: quantitySchema.optional(),
     timeInForce: z.enum(["gtc", "ioc"]).optional(),
     executionInstructions: z.array(z.string()).optional(),
+    takeProfit: replaceTriggerConfigSchema.optional(),
+    stopLoss: replaceTriggerConfigSchema.optional(),
   })
   .refine(
     (data) =>
@@ -73,9 +114,11 @@ export const replaceOrderSchema = z
       data.baseSize !== undefined ||
       data.quoteSize !== undefined ||
       data.timeInForce !== undefined ||
-      data.executionInstructions !== undefined,
+      data.executionInstructions !== undefined ||
+      data.takeProfit !== undefined ||
+      data.stopLoss !== undefined,
     {
       message:
-        "At least one of price, baseSize, quoteSize, timeInForce, or executionInstructions must be provided",
+        "At least one of price, baseSize, quoteSize, timeInForce, executionInstructions, takeProfit, or stopLoss must be provided",
     },
   );

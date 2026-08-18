@@ -231,6 +231,8 @@ Examples:
   $ revx order place BTC-USD buy --qty 0.001 --market         Place market buy (base qty)
   $ revx order place BTC-USD buy --quote 100 --market         Place market buy (quote amount)
   $ revx order place BTC-USD sell --qty 0.001 --limit 95000   Place limit sell
+  $ revx order place BTC-USD sell --qty 0.001 --tpsl --tp 100000 --sl 90000
+                                                                Place a take-profit/stop-loss exit order
   $ revx order open                                           List open/active orders
   $ revx order history --symbols BTC-USD                      Order history for pair
   $ revx order get <order-id>                                 Get order details
@@ -241,6 +243,8 @@ Examples:
   $ revx order replace <order-id> --quote 150                 Replace order quote amount
   $ revx order replace <order-id> --time-in-force ioc         Replace order time in force
   $ revx order replace <order-id> --allow-taker               Replace order to allow taker
+  $ revx order replace <order-id> --tp 105000                 Replace take-profit trigger price
+  $ revx order replace <order-id> --sl 88000                  Replace stop-loss trigger price
   $ revx order fills <order-id>                               Get order fills`,
     );
 
@@ -253,6 +257,12 @@ Examples:
     .option("--quote <amount>", "Amount in quote currency (e.g. 100 for USD)")
     .option("--limit <price>", "Limit order price (required unless --market)")
     .option("--market", "Market order (required unless --limit)")
+    .option(
+      "--tpsl",
+      "Take-profit/stop-loss exit order (requires --tp and/or --sl)",
+    )
+    .option("--tp <price>", "Take-profit trigger price (with --tpsl)")
+    .option("--sl <price>", "Stop-loss trigger price (with --tpsl)")
     .option(
       "--time-in-force <value>",
       "Time in force for limit orders (gtc|ioc)",
@@ -269,6 +279,9 @@ Examples:
           quote?: string;
           limit?: string;
           market?: boolean;
+          tpsl?: boolean;
+          tp?: string;
+          sl?: string;
           timeInForce?: string;
           postOnly?: boolean;
           json?: boolean;
@@ -299,6 +312,13 @@ Examples:
             process.exit(1);
           }
 
+          if (opts.tpsl && !opts.tp && !opts.sl) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --tp <price> and/or --sl <price> with --tpsl.")}`,
+            );
+            process.exit(1);
+          }
+
           const params: Parameters<typeof client.placeOrder>[0] = {
             symbol: symbol.toUpperCase(),
             side: side.toLowerCase() as "buy" | "sell",
@@ -321,9 +341,15 @@ Examples:
                 ? { executionInstructions: ["post_only"] }
                 : {}),
             };
+          } else if (opts.tpsl) {
+            params.tpsl = {
+              ...sizeField,
+              ...(opts.tp ? { takeProfit: { triggerPrice: opts.tp } } : {}),
+              ...(opts.sl ? { stopLoss: { triggerPrice: opts.sl } } : {}),
+            };
           } else {
             console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --limit <price> or --market.")}`,
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --limit <price>, --market, or --tpsl.")}`,
             );
             process.exit(1);
           }
@@ -672,6 +698,8 @@ Examples:
       "--allow-taker",
       "Set execution_instructions to [allow_taker] explicitly",
     )
+    .option("--tp <price>", "Replace take-profit trigger price")
+    .option("--sl <price>", "Replace stop-loss trigger price")
     .option("--json", "Output as JSON")
     .option("--output <format>", "Output format (table|json)", "table")
     .action(
@@ -685,6 +713,8 @@ Examples:
           timeInForce?: string;
           postOnly?: boolean;
           allowTaker?: boolean;
+          tp?: string;
+          sl?: string;
           json?: boolean;
           output?: string;
         },
@@ -710,10 +740,12 @@ Examples:
             !opts.quote &&
             !opts.timeInForce &&
             !opts.postOnly &&
-            !opts.allowTaker
+            !opts.allowTaker &&
+            !opts.tp &&
+            !opts.sl
           ) {
             console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker.")}`,
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker, --tp, --sl.")}`,
             );
             process.exit(1);
           }
@@ -731,6 +763,8 @@ Examples:
           if (opts.postOnly) params.executionInstructions = ["post_only"];
           else if (opts.allowTaker)
             params.executionInstructions = ["allow_taker"];
+          if (opts.tp) params.takeProfit = { triggerPrice: opts.tp };
+          if (opts.sl) params.stopLoss = { triggerPrice: opts.sl };
 
           const result = await client.replaceOrder(orderId, params);
 

@@ -328,6 +328,74 @@ describe("order place", () => {
     ).rejects.toThrow("process.exit");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it("places a tpsl order with --tp and --sl", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "sell",
+      "--qty",
+      "0.001",
+      "--tpsl",
+      "--tp",
+      "100000",
+      "--sl",
+      "90000",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      symbol: "BTC-USD",
+      side: "sell",
+      tpsl: {
+        baseSize: "0.001",
+        takeProfit: { triggerPrice: "100000" },
+        stopLoss: { triggerPrice: "90000" },
+      },
+    });
+  });
+
+  it("places a tpsl order with only --tp", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "sell",
+      "--quote",
+      "100",
+      "--tpsl",
+      "--tp",
+      "100000",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      symbol: "BTC-USD",
+      side: "sell",
+      tpsl: {
+        quoteSize: "100",
+        takeProfit: { triggerPrice: "100000" },
+      },
+    });
+  });
+
+  it("exits with error when --tpsl is specified without --tp or --sl", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "sell",
+        "--qty",
+        "0.001",
+        "--tpsl",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 });
 
 describe("order open", () => {
@@ -1146,6 +1214,42 @@ describe("order replace", () => {
       ]),
     ).rejects.toThrow("process.exit");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("replaces order with --tp", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--tp",
+      "105000",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      takeProfit: { triggerPrice: "105000" },
+    });
+  });
+
+  it("replaces order with --sl", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--sl",
+      "88000",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      stopLoss: { triggerPrice: "88000" },
+    });
   });
 });
 
