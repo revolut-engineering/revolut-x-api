@@ -126,7 +126,7 @@ When using `/loop` to run `revx` commands on an interval, each iteration trigger
 2. Run each command as a **separate `Bash` tool call** — do NOT chain with `&&` or pipes. This ensures each command matches a simple permission pattern
 3. Present the specific commands to the user and ask for permission to add them to the allowlist
 4. Use the `update-config` skill to add **specific** permission patterns to `.claude/settings.local.json`, e.g.:
-   ```bash
+   ```json
    "Bash(revx account balances*)",
    "Bash(revx order open*)"
    ```
