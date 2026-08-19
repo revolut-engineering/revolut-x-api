@@ -75,11 +75,11 @@ Examples:
 
   Transactions:
     $ revx transaction list                               Recent transactions
-    $ revx transaction list --start-date 7d              Last 7 days
-    $ revx transaction list --types buy,receive            Filter by type
-    $ revx transaction list --statuses completed           Filter by status
-    $ revx transaction list --currencies BTC,USD           Filter by currency
-    $ revx transaction list --limit 100 --json             Last 100 as JSON
+    $ revx transaction list --start-date 7d               Last 7 days
+    $ revx transaction list --types buy,receive           Filter by type
+    $ revx transaction list --statuses completed          Filter by status
+    $ revx transaction list --currencies BTC,USD          Filter by currency
+    $ revx transaction list --limit 100 --json            Last 100 as JSON
 
   Monitor (runs in foreground, Ctrl-C to stop):
     $ revx monitor price BTC-USD --direction above --threshold 100000

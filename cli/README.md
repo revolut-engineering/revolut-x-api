@@ -181,7 +181,7 @@ revx transaction list                           # Transactions from the last 30 
   --start-date 7d                               # Start, local time
   --end-date today                              # End, local time
   --types buy,receive                           # Types: buy sell send receive
-  --statuses completed,pending                  # Filter by status
+  --statuses completed,pending                  # Statuses: pending completed rejected failed cancelled
   --currencies BTC,USD                          # Filter by either transaction side
   --limit 100                                   # Max results
   --json                                        # Raw API fields as JSON

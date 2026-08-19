@@ -48,13 +48,17 @@ export function registerTransactionTools(server: McpServer): void {
         types: z
           .array(z.enum(["buy", "sell", "send", "receive"]))
           .optional()
-          .describe("Filter by transaction type."),
+          .describe(
+            "Filter by transaction type: buy, sell, send, or receive.",
+          ),
         statuses: z
           .array(
             z.enum(["pending", "completed", "rejected", "failed", "cancelled"]),
           )
           .optional()
-          .describe("Filter by transaction status."),
+          .describe(
+            "Filter by transaction status: pending, completed, rejected, failed, or cancelled.",
+          ),
         currencies: z
           .array(z.string())
           .optional()

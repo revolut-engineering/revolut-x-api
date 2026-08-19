@@ -92,7 +92,7 @@ export function registerTransactionCommand(program: Command): void {
       "after",
       `
 Examples:
-  $ revx transaction list                               Recent transactions
+  $ revx transaction list                                Recent transactions
   $ revx transaction list --limit 100                    Last 100 transactions
   $ revx transaction list --start-date 7d                Transactions in last 7 days
   $ revx transaction list --types buy,receive            Filter by type
@@ -112,10 +112,13 @@ Examples:
       "--end-date <date>",
       "End date in local time (ISO, epoch ms, or relative: today, yesterday)",
     )
-    .option("--types <types>", "Filter by transaction type (comma-separated)")
+    .option(
+      "--types <types>",
+      "Filter by type (comma-separated: buy,sell,send,receive)",
+    )
     .option(
       "--statuses <statuses>",
-      "Filter by transaction status (comma-separated)",
+      "Filter by status (comma-separated: pending,completed,rejected,failed,cancelled)",
     )
     .option("--currencies <currencies>", "Filter by currency (comma-separated)")
     .option("--limit <n>", "Max results")

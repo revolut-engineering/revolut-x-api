@@ -37,7 +37,7 @@ revx account balances --currencies BTC,ETH,USD # Filter by multiple currencies
 revx transaction list                              # Last 30 days
 revx transaction list --start-date 7d              # Last 7 days
 revx transaction list --types buy,receive          # Types: buy, sell, send, receive
-revx transaction list --statuses completed,pending # Filter by status
+revx transaction list --statuses completed,pending # Statuses: pending, completed, rejected, failed, cancelled
 revx transaction list --currencies BTC,USD         # Filter by either side
 revx transaction list --limit 100 --json            # Limit and JSON output
 ```
@@ -126,7 +126,7 @@ When using `/loop` to run `revx` commands on an interval, each iteration trigger
 2. Run each command as a **separate `Bash` tool call** — do NOT chain with `&&` or pipes. This ensures each command matches a simple permission pattern
 3. Present the specific commands to the user and ask for permission to add them to the allowlist
 4. Use the `update-config` skill to add **specific** permission patterns to `.claude/settings.local.json`, e.g.:
-   ```json
+   ```bash
    "Bash(revx account balances*)",
    "Bash(revx order open*)"
    ```

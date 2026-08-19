@@ -37,7 +37,7 @@ revx account balances --currencies BTC,ETH,USD # Filter by multiple currencies
 revx transaction list                              # Last 30 days
 revx transaction list --start-date 7d              # Last 7 days
 revx transaction list --types buy,receive          # Types: buy, sell, send, receive
-revx transaction list --statuses completed,pending # Filter by status
+revx transaction list --statuses completed,pending # Statuses: pending, completed, rejected, failed, cancelled
 revx transaction list --currencies BTC,USD         # Filter by either side
 revx transaction list --limit 100 --json            # Limit and JSON output
 ```
