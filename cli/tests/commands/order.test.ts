@@ -206,6 +206,157 @@ describe("order place", () => {
     });
   });
 
+  it("passes through --client-order-id", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--qty",
+      "0.001",
+      "--limit",
+      "95000",
+      "--client-order-id",
+      "11111111-2222-3333-4444-555555555555",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      symbol: "BTC-USD",
+      side: "buy",
+      clientOrderId: "11111111-2222-3333-4444-555555555555",
+      limit: { price: "95000", baseSize: "0.001" },
+    });
+  });
+
+  it("rejects --market combined with --limit", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--market",
+        "--limit",
+        "95000",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("not both");
+  });
+
+  it("rejects --time-in-force combined with --market", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--market",
+        "--time-in-force",
+        "ioc",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--time-in-force applies to limit orders only");
+  });
+
+  it("rejects --post-only combined with --market", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--market",
+        "--post-only",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--post-only applies to limit orders only");
+  });
+
+  it("pluralises the error when both limit-only flags are used with --market", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--market",
+        "--post-only",
+        "--time-in-force",
+        "gtc",
+      ]),
+    ).rejects.toThrow("process.exit");
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain(
+      "--time-in-force and --post-only apply to limit orders only",
+    );
+  });
+
+  it("rejects --post-only combined with --time-in-force ioc", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000",
+        "--post-only",
+        "--time-in-force",
+        "ioc",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--post-only cannot be combined");
+  });
+
+  it("rejects an unsupported --time-in-force value", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000",
+        "--time-in-force",
+        "fok",
+      ]),
+    ).rejects.toThrow(/Allowed choices are gtc, ioc/);
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
   it("places a market buy order with quote amount", async () => {
     await program.parseAsync([
       "node",
@@ -1099,6 +1250,24 @@ describe("order replace", () => {
     expect(typeof call[1].clientOrderId).toBe("string");
     expect(call[1].clientOrderId.length).toBeGreaterThan(0);
     expect(call[1].baseSize).toBe("0.002");
+  });
+
+  it("exits when --post-only is combined with --time-in-force ioc", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--post-only",
+        "--time-in-force",
+        "ioc",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--post-only cannot be combined");
   });
 
   it("exits when no replaceable field given", async () => {

@@ -87,9 +87,11 @@ revx order fills <order-id>            # All fills for an order
 
 Order details always include `time_in_force` — one of `gtc`, `ioc`, or `fok` (an order can come back as `fok` even though only `gtc`/`ioc` can be set when placing/replacing).
 
+For market orders that are filled, partially filled, or cancelled, `Price` is the average execution price when one was recorded and otherwise the price recorded at submission. The output does not distinguish the two, so read `Avg Fill Price` when you need the realized average.
+
 Optional fields in order details output (shown only when present):
 - `amount` / `filled_amount` — quote-currency size and how much of it has been filled
-- `average_fill_price` — volume-weighted average execution price (shown as "Avg Fill Price"); only present for filled or partially filled orders
+- `average_fill_price` — volume-weighted average execution price, `filled_amount` / `filled_quantity` (shown as "Avg Fill Price"); present whenever any quantity has filled, including cancelled orders with partial fills
 - `total_fee` / `fee_currency` — total fee charged and the currency it was paid in
 - `conditional` / `take_profit` / `stop_loss` — trigger definitions on conditional and TPSL orders; each includes trigger price, direction (≥/≤), order type (market/limit), time in force, and optional limit price
 - `twap` — schedule and progress for a TWAP parent order: child execution type (`market` or `limit`), optional limit `price`, `period` and `frequency` in seconds, total/completed slices, start/end times, and (for `order get`) any linked child order IDs
@@ -126,7 +128,7 @@ When using `/loop` to run `revx` commands on an interval, each iteration trigger
 2. Run each command as a **separate `Bash` tool call** — do NOT chain with `&&` or pipes. This ensures each command matches a simple permission pattern
 3. Present the specific commands to the user and ask for permission to add them to the allowlist
 4. Use the `update-config` skill to add **specific** permission patterns to `.claude/settings.local.json`, e.g.:
-   ```json
+   ```bash
    "Bash(revx account balances*)",
    "Bash(revx order open*)"
    ```

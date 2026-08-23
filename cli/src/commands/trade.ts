@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import {
   type Trade,
@@ -62,15 +62,19 @@ export function registerTradeCommand(program: Command): void {
 Examples:
   $ revx trade private BTC-USD                     Recent personal trades
   $ revx trade private BTC-USD --limit 100         Last 100 personal trades
+  $ revx trade private BTC-USD --start-date 7d     Personal trades in last 7 days
   $ revx trade private BTC-USD --json              Output as JSON
   $ revx trade public BTC-USD                      Recent public trades
-  $ revx trade public BTC-USD --since 7d           Public trades in last 7 days`,
+  $ revx trade public BTC-USD --start-date 7d      Public trades in last 7 days
+
+Without --start-date, both commands cover the 30 days ending at --end-date (now by default).`,
     );
 
   trade
-    .command("private <symbol>")
+    .command("private")
     .alias("history")
     .description("Get your private trade history for a pair")
+    .argument("<symbol>", "Trading pair, e.g. BTC-USD")
     .option(
       "--start-date <date>",
       "Start date in local time (ISO, epoch ms, or relative: 7d, 1w, today)",
@@ -81,7 +85,11 @@ Examples:
     )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         symbol: string,
@@ -163,9 +171,10 @@ Examples:
     );
 
   trade
-    .command("public <symbol>")
+    .command("public")
     .alias("all")
     .description("Get all public trades for a pair")
+    .argument("<symbol>", "Trading pair, e.g. BTC-USD")
     .option(
       "--start-date <date>",
       "Start date in local time (ISO, epoch ms, or relative: 7d, 1w, today)",
@@ -176,7 +185,11 @@ Examples:
     )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         symbol: string,

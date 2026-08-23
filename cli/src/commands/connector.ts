@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import {
   loadConnections,
@@ -79,7 +79,14 @@ export function registerConnectorCommand(program: Command): void {
         const cleanedMsg = str.replace(/^error:\s*/i, "").trim();
         write(`${chalk.red.bold("✖ Error:")} ${chalk.white(cleanedMsg)}\n`);
       },
-    });
+    })
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx connector telegram add --token <token> --chat-id <id>  Add a Telegram connection
+  $ revx connector telegram list                                List connections`,
+    );
 
   const telegram = connector
     .command("telegram")
@@ -92,18 +99,27 @@ Examples:
   $ revx connector telegram add --token <token> --chat-id <id> --test
   $ revx connector telegram list                                List connections
   $ revx connector telegram test <id>                           Send test message
-  $ revx connector telegram delete <id>                         Delete connection`,
+  $ revx connector telegram test <id> --message "hello"         Send custom message
+  $ revx connector telegram enable <id>                         Resume notifications
+  $ revx connector telegram disable <id>                        Pause notifications
+  $ revx connector telegram delete <id>                         Delete connection
+
+Only enabled connections receive monitor and grid bot notifications.`,
     );
 
   telegram
     .command("add")
     .description("Add a Telegram connection")
     .requiredOption("--token <token>", "Telegram Bot API token")
-    .requiredOption("--chat-id <id>", "Telegram chat ID")
-    .option("--label <label>", "Connection label", "default")
+    .requiredOption("--chat-id <id>", "Telegram chat ID to send messages to")
+    .option("--label <name>", "Connection label", "default")
     .option("--test", "Send a test message after adding")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (opts: {
         token: string;
@@ -167,7 +183,11 @@ Examples:
     .command("list")
     .description("List Telegram connections")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(async (opts: { json?: boolean; output?: string }) => {
       try {
         const all = loadConnections();
@@ -194,8 +214,12 @@ Examples:
     });
 
   telegram
-    .command("delete <connection-id>")
+    .command("delete")
     .description("Delete a Telegram connection")
+    .argument(
+      "<connection-id>",
+      "Connection ID from 'revx connector telegram list'",
+    )
     .action(async (connectionId: string) => {
       try {
         const ok = deleteConnection(connectionId);
@@ -212,8 +236,12 @@ Examples:
     });
 
   telegram
-    .command("enable <connection-id>")
+    .command("enable")
     .description("Enable a Telegram connection")
+    .argument(
+      "<connection-id>",
+      "Connection ID from 'revx connector telegram list'",
+    )
     .action(async (connectionId: string) => {
       try {
         const result = updateConnection(connectionId, { enabled: true });
@@ -230,8 +258,12 @@ Examples:
     });
 
   telegram
-    .command("disable <connection-id>")
+    .command("disable")
     .description("Disable a Telegram connection")
+    .argument(
+      "<connection-id>",
+      "Connection ID from 'revx connector telegram list'",
+    )
     .action(async (connectionId: string) => {
       try {
         const result = updateConnection(connectionId, { enabled: false });
@@ -248,8 +280,12 @@ Examples:
     });
 
   telegram
-    .command("test <connection-id>")
+    .command("test")
     .description("Send a test message through a connection")
+    .argument(
+      "<connection-id>",
+      "Connection ID from 'revx connector telegram list'",
+    )
     .option(
       "--message <msg>",
       "Custom test message",

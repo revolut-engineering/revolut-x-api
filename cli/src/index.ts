@@ -21,12 +21,17 @@ export function createProgram(): Command {
     .name("revx")
     .description("Revolut X Exchange CLI")
     .version(version)
+    .showHelpAfterError("(run with --help to see the available options)")
     .addHelpText(
       "after",
       `
 Examples:
   Setup:
-    $ revx configure                                     Set up API key and private key
+    $ revx configure                                      Set up API key and private key
+    $ revx configure get                                  Show current configuration
+    $ revx configure set --api-key <key>                  Set the API key non-interactively
+    $ revx configure generate-keypair                     Generate an Ed25519 keypair
+    $ revx configure path                                 Print the config directory
 
   Account:
     $ revx account balances                               Show non-zero balances
@@ -40,8 +45,7 @@ Examples:
     $ revx market currencies fiat                         Filter fiat only currencies
     $ revx market currencies crypto                       Filter crypto only currencies
     $ revx market pairs                                   List all trading pairs
-    $ revx market pairs BTC-USD                           Get BTC-USD pair info
-    $ revx market pairs --pairs BTC-USD,ETH-USD           Filter by pairs
+    $ revx market pairs --filter BTC-USD,ETH-USD          Filter by pairs
     $ revx market tickers                                 List all tickers
     $ revx market tickers --symbols BTC-USD,ETH-USD       Filter tickers by pair
     $ revx market ticker BTC-USD                          Get BTC-USD ticker
@@ -56,6 +60,7 @@ Examples:
     $ revx order place BTC-USD buy --quote 100 --market         Place market buy (quote amount)
     $ revx order place BTC-USD sell --qty 0.001 --limit 95000   Place limit sell
     $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+    $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
     $ revx order open                                     List active orders
     $ revx order open --symbols BTC-USD --side buy        Filter active orders
     $ revx order history --symbols BTC-USD                Order history for pair
@@ -65,6 +70,7 @@ Examples:
     $ revx order cancel --all                             Cancel all open orders
     $ revx order replace <order-id> --price 96000         Replace order limit price
     $ revx order replace <order-id> --qty 0.002           Replace order qty (amount recalculated)
+    $ revx order replace <order-id> --time-in-force ioc   Replace order time in force
     $ revx order replace <order-id> --allow-taker         Allow taker on an existing order
 
   Trades:
@@ -105,12 +111,17 @@ Examples:
     $ revx connector telegram add --token <token> --chat-id <id> --test
     $ revx connector telegram list
     $ revx connector telegram test <id>
+    $ revx connector telegram enable <id>
+    $ revx connector telegram disable <id>
     $ revx connector telegram delete <id>
 
   Events:
     $ revx events                                         Show recent alert events
     $ revx events --limit 10                              Show last 10 events
-    $ revx events --category alert_triggered              Filter by category`,
+    $ revx events --category alert_triggered              Filter by category
+
+These examples are a curated subset. Run 'revx <command> --help' (e.g.
+'revx order place --help') for the complete list of arguments and flags.`,
     );
 
   registerConfigureCommand(program, version);

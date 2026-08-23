@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import type { Ticker, Candle } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
@@ -33,30 +33,30 @@ export function registerMarketCommand(program: Command): void {
       "after",
       `
 Examples:
-  $ revx market currencies                        List all currencies
-  $ revx market currencies fiat                   List fiat currencies only
-  $ revx market currencies crypto                 List crypto currencies only
-  $ revx market currencies --filter BTC,ETH       Get specific currencies by symbol
-  $ revx market pairs                             List all trading pairs
-  $ revx market pairs --filter BTC-USD,ETH-USD    Filter by multiple pairs
-  $ revx market tickers                           List all tickers
-  $ revx market tickers BTC-USD                   Get BTC-USD ticker
-  $ revx market candles BTC-USD                   Get hourly candles
-  $ revx market candles BTC-USD --interval 5      Get 5-minute candles
-  $ revx market orderbook BTC-USD                 Get order book (top 50)`,
+  $ revx market currencies                            List all currencies
+  $ revx market currencies fiat                       List fiat currencies only
+  $ revx market currencies crypto                     List crypto currencies only
+  $ revx market currencies --filter BTC,ETH           Get specific currencies by symbol
+  $ revx market pairs                                 List all trading pairs
+  $ revx market pairs --filter BTC-USD,ETH-USD        Filter by multiple pairs
+  $ revx market tickers                               List all tickers
+  $ revx market tickers BTC-USD                       Get BTC-USD ticker
+  $ revx market candles BTC-USD                       Get hourly candles
+  $ revx market candles BTC-USD --interval 5m         Get 5-minute candles
+  $ revx market candles BTC-USD --since 7d --until today
+  $ revx market orderbook BTC-USD                     Get order book (top 50)
+  $ revx market orderbook BTC-USD --limit 20          Get order book (top 20)`,
     );
 
   market
-    .command("currencies [type]")
+    .command("currencies")
     .description(
       "List supported currencies, optionally filtered by type (fiat|crypto) or symbols",
     )
+    .argument("[type]", "Filter by asset type: fiat or crypto")
     .addHelpText(
       "after",
       `
-Arguments:
-  type  Filter by asset type: fiat or crypto (optional)
-
 Examples:
   $ revx market currencies                        List all currencies
   $ revx market currencies fiat                   List fiat currencies only
@@ -69,7 +69,11 @@ Examples:
       "Filter by specific symbols (comma-separated, e.g., BTC,ETH)",
     )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         type: string | undefined,
@@ -158,7 +162,11 @@ Examples:
       "Filter by multiple pairs (comma-separated, e.g. BTC-USD,ETH-USD)",
     )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (opts: { filter?: string; json?: boolean; output?: string }) => {
         try {
@@ -224,23 +232,30 @@ Examples:
     );
 
   market
-    .command("tickers [symbol]")
+    .command("tickers")
+    .alias("ticker")
     .description("List all tickers or get a specific ticker (e.g. BTC-USD)")
+    .argument("[symbol]", "Trading pair to fetch, e.g. BTC-USD")
     .addHelpText(
       "after",
       `
 Examples:
-  $ revx market tickers                        List all tickers
-  $ revx market tickers BTC-USD                Get specific BTC-USD ticker
-  $ revx market tickers --symbols BTC-USD,ETH  Filter by multiple pairs
-  $ revx market tickers --json                 Output as JSON`,
+  $ revx market tickers                             List all tickers
+  $ revx market tickers BTC-USD                     Get specific BTC-USD ticker
+  $ revx market ticker BTC-USD                      Same, using the singular alias
+  $ revx market tickers --symbols BTC-USD,ETH-USD   Filter by multiple pairs
+  $ revx market tickers --json                      Output as JSON`,
     )
     .option(
       "--symbols <pairs>",
       "Filter by pairs (comma-separated, e.g. BTC-USD,ETH-USD)",
     )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         symbol: string | undefined,
@@ -294,11 +309,26 @@ Examples:
     );
 
   market
-    .command("candles <symbol>")
+    .command("candles")
     .description("Get OHLCV candles for a pair")
+    .argument("<symbol>", "Trading pair, e.g. BTC-USD")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx market candles BTC-USD                       Hourly candles (default)
+  $ revx market candles BTC-USD --interval 5m         5-minute candles by alias
+  $ revx market candles BTC-USD --interval 5          Same, in minutes
+  $ revx market candles BTC-USD --since 7d            Last 7 days
+  $ revx market candles BTC-USD --since 7d --until yesterday
+  $ revx market candles BTC-USD --json                Output as JSON
+
+At most 50000 candles are returned. A range that exceeds that, or that falls entirely
+outside the available history, is replaced by the most recent window.`,
+    )
     .option(
       "--interval <value>",
-      "Candle interval: string alias (1m,5m,15m,30m,1h,4h,1d,2d,4d,1w,2w,4w) or minutes",
+      "Candle interval: alias (1m,5m,15m,30m,1h,4h,1d,2d,4d,1w,2w,4w) or its equivalent in minutes (1,5,15,30,60,240,1440,2880,5760,10080,20160,40320)",
       "1h",
     )
     .option(
@@ -310,7 +340,11 @@ Examples:
       "End time in local time (ISO date, epoch ms, or relative: today, yesterday)",
     )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         symbol: string,
@@ -408,11 +442,20 @@ Examples:
     );
 
   market
-    .command("orderbook <symbol>")
+    .command("orderbook")
     .description("Get order book for a pair")
-    .option("--limit <n>", "Depth (1-50)", "50")
+    .argument("<symbol>", "Trading pair, e.g. BTC-USD")
+    .option(
+      "--limit <n>",
+      "Depth per side, 1-50 (higher values are capped at 50)",
+      "50",
+    )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         symbol: string,

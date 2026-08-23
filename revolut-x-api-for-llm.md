@@ -18,7 +18,7 @@
 8. **Date range queries** (`start_date`/`end_date`) must span at most 1 week.
 9. **OrderTrigger time_in_force** supports only `"gtc"` and `"ioc"` (no `"fok"`), unlike the main order which supports all three.
 10. **`triggered_by` and `on_fill`** on `OrderDetails` are mutually exclusive — only one appears per order. `on_fill.id` is present only after the order is filled.
-
+11. **Market order `price` may change meaning after the order trades.** For a market order in `partially_filled`, `filled`, or `cancelled` state, `price` is the average execution price if one was recorded for the order, and otherwise stays the price recorded at submission. The response gives no way to tell which. Use `average_fill_price` when you need the realized average.
 ---
 
 ## Authentication
@@ -386,6 +386,25 @@ Get historical (completed) orders for the authenticated user.
       "quantity": "0.002", "filled_quantity": "0", "leaves_quantity": "0.002",
       "price": "98745", "status": "filled", "time_in_force": "gtc",
       "execution_instructions": ["allow_taker"],
+      "created_date": 3318215482991, "updated_date": 3318215482991
+    }
+  ],
+  "metadata": {"timestamp": 3318215482991, "next_cursor": "GF0ZT0xNzY0OTMx..."}
+}
+```
+
+**Example response (filled market order, where `price` is the average execution price rather than the submitted price):**
+```json
+{
+  "data": [
+    {
+      "id": "3f1c9d84-2b77-4a10-9c53-1e2f7a6b0d45",
+      "client_order_id": "b8e0c1a2-64d3-4f8e-9a71-5c2d3e4f6a70",
+      "symbol": "BTC/USD", "side": "buy", "type": "market",
+      "quantity": "0.002", "filled_quantity": "0.002", "leaves_quantity": "0",
+      "amount": "200", "filled_amount": "197.49",
+      "price": "98745", "average_fill_price": "98745", "status": "filled",
+      "time_in_force": "ioc", "execution_instructions": ["allow_taker"],
       "created_date": 3318215482991, "updated_date": 3318215482991
     }
   ],
@@ -883,8 +902,8 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 | leaves_quantity | string | yes | Remaining quantity not yet executed, in base currency. Represents the portion of `quantity` still waiting to be filled, or the portion that was cancelled. |
 | amount | string | no | Order size in quote currency (shown only when present) |
 | filled_amount | string | no | Quote-currency amount filled so far (shown only when present) |
-| price | string | yes | Worst acceptable price for the order |
-| average_fill_price | string | no | Quantity-weighted average execution price |
+| price | string | conditional | Present on `market` and `limit` orders only. Worst acceptable price for the order. For market orders in `partially_filled`, `filled`, or `cancelled` state, the average execution price when one was recorded, otherwise the submitted price. Use `average_fill_price` for the realized average |
+| average_fill_price | string | no | Average execution price, derived as `filled_amount` / `filled_quantity` |
 | status | string | yes | `"pending_new"` \| `"new"` \| `"partially_filled"` \| `"filled"` \| `"cancelled"` \| `"rejected"` \| `"replaced"` |
 | reject_reason | string | no | Reason for rejection (only when `status=rejected`) |
 | time_in_force | string | yes | `"gtc"` (good till cancelled) \| `"ioc"` (immediate or cancel) \| `"fok"` (fill or kill, no partial fills) |

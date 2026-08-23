@@ -44,7 +44,10 @@ Examples:
   $ revx configure get                      Show current configuration
   $ revx configure set --api-key <key>      Set API key
   $ revx configure generate-keypair         Generate Ed25519 keypair
-  $ revx configure path                     Print config directory path`,
+  $ revx configure path                     Print config directory path
+
+The API key must be exactly 64 alphanumeric characters. Private keys stay on this
+machine; only the public key is registered with Revolut X.`,
     );
 
   configure.action(async () => {

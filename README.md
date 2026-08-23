@@ -74,7 +74,7 @@ revx market currencies                                      # List supported cur
 revx market currencies fiat                                 # Filter fiat only
 revx market currencies crypto                               # Filter crypto only
 revx market pairs                                           # List all trading pairs
-revx market pairs BTC-USD                                   # Get BTC-USD pair info
+revx market pairs --filter BTC-USD,ETH-USD                  # Filter by pairs
 revx market tickers                                         # List all tickers
 revx market tickers --symbols BTC-USD,ETH-USD               # Filter tickers by pair
 revx market ticker BTC-USD                                  # Get BTC-USD ticker
@@ -89,6 +89,7 @@ revx order place BTC-USD buy --qty 0.001 --market           # Market buy (base q
 revx order place BTC-USD buy --quote 100 --market           # Market buy (quote amount)
 revx order place BTC-USD sell --qty 0.001 --limit 95000     # Limit sell
 revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
 revx order open                                             # List active orders
 revx order open --symbols BTC-USD --side buy                # Filter active orders
 revx order history --symbols BTC-USD                        # Order history for pair
@@ -96,6 +97,8 @@ revx order get <order-id>                                   # Get order details
 revx order fills <order-id>                                 # Get order fills
 revx order cancel <order-id>                                # Cancel an order
 revx order cancel --all                                     # Cancel all open orders
+revx order replace <order-id> --price 96000                 # Update the limit price
+revx order replace <order-id> --time-in-force ioc           # Update time in force
 
 # Trades
 revx trade private BTC-USD                                  # Private trade history

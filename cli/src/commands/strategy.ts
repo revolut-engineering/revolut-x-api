@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { Decimal } from "decimal.js";
 import chalk from "chalk";
 import type { Candle } from "@revolut/revolut-x-api";
@@ -50,7 +50,7 @@ import {
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
-const VALID_RESOLUTIONS = new Set([
+const RESOLUTIONS = [
   "1m",
   "5m",
   "15m",
@@ -63,7 +63,12 @@ const VALID_RESOLUTIONS = new Set([
   "1w",
   "2w",
   "4w",
-]);
+] as const;
+
+const VALID_RESOLUTIONS = new Set<string>(RESOLUTIONS);
+
+const MIN_POLL_INTERVAL_SEC = 5;
+const DEFAULT_POLL_INTERVAL_SEC = 10;
 
 type ParsedCandle = ScenarioCandle;
 
@@ -866,7 +871,10 @@ async function handleRun(
 
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
-  const intervalSec = Math.max(5, parseInt(opts.interval, 10) || 30);
+  const intervalSec = Math.max(
+    MIN_POLL_INTERVAL_SEC,
+    parsePositiveInt(opts.interval, "--interval"),
+  );
   const spec = parsePriceSpec(opts.prices);
   const isDryRun = opts.dryRun === true;
 
@@ -966,6 +974,9 @@ Examples:
   $ revx strategy grid run BTC-USD --levels 5 --range 5 --investment 500 --interval 30
   $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run
 
+Note: --interval means candle resolution for backtest and optimize (1m, 1h, 1d, ...),
+but ticker polling seconds for run.
+
 Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-prices.md`,
     );
 
@@ -976,20 +987,21 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     );
 
   grid
-    .command("backtest <pair>")
+    .command("backtest")
     .description("Run a grid backtest on historical candle data")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .option(
       "--levels <n>",
-      "Grid levels per side (total orders = 2×levels)",
+      "Grid levels per side, 1-100 (total orders = 2×levels)",
       "5",
     )
     .option("--range <pct>", "Grid range as percentage, e.g. 10 for ±10%", "10")
     .option("--investment <amount>", "Capital in quote currency", "1000")
     .option("--days <n>", "Days of historical data", "3")
-    .option(
-      "--interval <res>",
-      "Candle resolution (1m, 5m, 15m, 30m, 1h, 4h, 1d)",
-      "1m",
+    .addOption(
+      new Option("--interval <res>", "Candle resolution")
+        .choices([...RESOLUTIONS])
+        .default("1m"),
     )
     .option("--split", "Market-buy base for sell levels at start")
     .option(
@@ -1014,18 +1026,27 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
         "With --json, emits NDJSON to stdout. Useful for inspecting how the strategy reacts to each candle in a test scenario.",
     )
     .option("--json", "Output as JSON")
-    .option("-o, --output <format>", "Output format (json)")
+    .addOption(
+      new Option("-o, --output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(handleBacktest);
 
   grid
-    .command("optimize <pair>")
+    .command("optimize")
     .description("Test multiple grid parameter combinations and rank by return")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .option("--investment <amount>", "Capital in quote currency", "1000")
     .option("--days <n>", "Days of historical data", "3")
-    .option("--interval <res>", "Candle resolution", "1m")
+    .addOption(
+      new Option("--interval <res>", "Candle resolution")
+        .choices([...RESOLUTIONS])
+        .default("1m"),
+    )
     .option(
       "--levels <csv>",
-      "Comma-separated grid levels per side to test",
+      "Comma-separated grid levels per side to test, each 1-100",
       "3,5,8,10,15",
     )
     .option(
@@ -1033,7 +1054,7 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
       "Comma-separated range percentages to test",
       "3,5,7,10,12,15,20",
     )
-    .option("--top <n>", "Number of top results to show", "10")
+    .option("--top <n>", "Number of top results to show (capped at 50)", "10")
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
@@ -1051,24 +1072,33 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
       "api",
     )
     .option("--json", "Output as JSON")
-    .option("-o, --output <format>", "Output format (json)")
+    .addOption(
+      new Option("-o, --output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(handleOptimize);
 
   grid
-    .command("run <pair>")
+    .command("run")
     .description("Run a live grid trading bot (foreground process)")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .requiredOption(
       "--investment <amount>",
       "Capital in quote currency to deploy",
     )
     .option(
       "--levels <n>",
-      "Grid levels per side (total orders = 2×levels)",
+      "Grid levels per side, 1-100 (total orders = 2×levels)",
       "5",
     )
     .option("--range <pct>", "Grid range as percentage, e.g. 5 for ±5%", "5")
     .option("--split", "Market-buy base for sell levels at start")
-    .option("--interval <sec>", "Polling interval in seconds", "10")
+    .option(
+      "--interval <sec>",
+      `Ticker polling interval in seconds (min ${MIN_POLL_INTERVAL_SEC})`,
+      String(DEFAULT_POLL_INTERVAL_SEC),
+    )
     .option("--dry-run", "Simulate without placing real orders")
     .option("--reset", "Discard saved state and start a fresh grid")
     .option(

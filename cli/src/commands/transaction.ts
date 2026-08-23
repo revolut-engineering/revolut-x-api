@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import {
   type Transaction,
@@ -98,7 +98,9 @@ Examples:
   $ revx transaction list --types buy,receive            Filter by type
   $ revx transaction list --statuses completed           Filter by status
   $ revx transaction list --currencies BTC,USD           Filter by currency
-  $ revx transaction list --json                         Output as JSON`,
+  $ revx transaction list --json                         Output as JSON
+
+Without --start-date, the 30 days ending at --end-date (now by default) are returned.`,
     );
 
   transaction
@@ -114,16 +116,23 @@ Examples:
     )
     .option(
       "--types <types>",
-      "Filter by type (comma-separated: buy,sell,send,receive)",
+      `Filter by type (comma-separated: ${TRANSACTION_TYPES.join(",")})`,
     )
     .option(
       "--statuses <statuses>",
-      "Filter by status (comma-separated: pending,completed,rejected,failed,cancelled)",
+      `Filter by status (comma-separated: ${TRANSACTION_STATUSES.join(",")})`,
     )
-    .option("--currencies <currencies>", "Filter by currency (comma-separated)")
+    .option(
+      "--currencies <currencies>",
+      "Filter by currency (comma-separated, e.g. BTC,USD)",
+    )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (opts: {
         startDate?: string;

@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import {
   ForegroundMonitor,
@@ -193,29 +193,33 @@ Examples:
   $ revx monitor obi BTC-USD --direction above --threshold 0.3
   $ revx monitor price-change BTC-USD --direction rise --threshold 5.0 --lookback 24
   $ revx monitor atr-breakout BTC-USD
-  $ revx monitor types
+  $ revx monitor price BTC-USD --threshold 100000 --interval 30   Poll every 30s
+  $ revx monitor types                                            Describe every monitor
+
+Every monitor runs in the foreground until Ctrl-C. Triggered alerts always print to the
+terminal; to also receive notifications, register a connector first:
+  $ revx connector telegram add --token <token> --chat-id <id>
 `,
     );
 
   monitor
-    .command("price <pair>")
+    .command("price")
     .description(
       "Price threshold — triggers when price crosses above or below a level",
     )
-    .option("--direction <dir>", "above or below", "above")
-    .option("--threshold <value>", "Price level (required)")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option("--direction <direction>", "Cross direction")
+        .choices(["above", "below"])
+        .default("above"),
+    )
+    .requiredOption("--threshold <value>", "Price level to watch")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
     .action(
       async (
         pair: string,
-        opts: { direction: string; threshold?: string; interval: string },
+        opts: { direction: string; threshold: string; interval: string },
       ) => {
-        if (!opts.threshold) {
-          console.error(
-            `${chalk.red.bold("✖ Error:")} ${chalk.white("--threshold is required for price alerts.")}`,
-          );
-          process.exit(1);
-        }
         await startMonitor(
           pair,
           "price",
@@ -229,12 +233,21 @@ Examples:
     );
 
   monitor
-    .command("rsi <pair>")
+    .command("rsi")
     .description(
       "RSI — triggers when Relative Strength Index crosses a threshold",
     )
-    .option("--direction <dir>", "above or below", "above")
-    .option("--threshold <value>", "RSI threshold (0-100)", "70")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option("--direction <direction>", "Cross direction")
+        .choices(["above", "below"])
+        .default("above"),
+    )
+    .option(
+      "--threshold <value>",
+      "RSI threshold on a 0-100 scale (70 = overbought, 30 = oversold)",
+      "70",
+    )
     .option("--period <n>", "RSI calculation period", "14")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
     .action(
@@ -261,11 +274,19 @@ Examples:
     );
 
   monitor
-    .command("ema-cross <pair>")
+    .command("ema-cross")
     .description(
       "EMA Crossover — triggers when fast EMA crosses above or below slow EMA",
     )
-    .option("--direction <dir>", "bullish or bearish", "bullish")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option(
+        "--direction <direction>",
+        "bullish = fast crosses above slow, bearish = fast crosses below slow",
+      )
+        .choices(["bullish", "bearish"])
+        .default("bullish"),
+    )
     .option("--fast-period <n>", "Fast EMA period", "9")
     .option("--slow-period <n>", "Slow EMA period", "21")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
@@ -293,9 +314,17 @@ Examples:
     );
 
   monitor
-    .command("macd <pair>")
+    .command("macd")
     .description("MACD Crossover — triggers when MACD line crosses signal line")
-    .option("--direction <dir>", "bullish or bearish", "bullish")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option(
+        "--direction <direction>",
+        "bullish = MACD crosses above signal, bearish = MACD crosses below signal",
+      )
+        .choices(["bullish", "bearish"])
+        .default("bullish"),
+    )
     .option("--fast <n>", "Fast EMA period", "12")
     .option("--slow <n>", "Slow EMA period", "26")
     .option("--signal <n>", "Signal line period", "9")
@@ -326,11 +355,16 @@ Examples:
     );
 
   monitor
-    .command("bollinger <pair>")
+    .command("bollinger")
     .description(
       "Bollinger Bands — triggers when price touches or crosses upper/lower band",
     )
-    .option("--band <band>", "upper or lower", "upper")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option("--band <band>", "Band to watch")
+        .choices(["upper", "lower"])
+        .default("upper"),
+    )
     .option("--period <n>", "Bollinger period", "20")
     .option("--std-mult <n>", "Standard deviation multiplier", "2")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
@@ -358,10 +392,11 @@ Examples:
     );
 
   monitor
-    .command("volume-spike <pair>")
+    .command("volume-spike")
     .description(
       "Volume Spike — triggers when volume exceeds a multiple of the average",
     )
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .option("--period <n>", "Average volume period", "20")
     .option("--multiplier <n>", "Volume multiplier threshold", "2.0")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
@@ -383,11 +418,16 @@ Examples:
     );
 
   monitor
-    .command("spread <pair>")
+    .command("spread")
     .description(
       "Bid-Ask Spread — triggers when spread percentage crosses a threshold",
     )
-    .option("--direction <dir>", "above or below", "above")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option("--direction <direction>", "Cross direction")
+        .choices(["above", "below"])
+        .default("above"),
+    )
     .option("--threshold <value>", "Spread threshold in % (0.5 = 0.5%)", "0.5")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
     .action(
@@ -408,14 +448,19 @@ Examples:
     );
 
   monitor
-    .command("obi <pair>")
+    .command("obi")
     .description(
       "Order Book Imbalance — triggers when buy/sell imbalance crosses a threshold",
     )
-    .option("--direction <dir>", "above or below", "above")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option("--direction <direction>", "Cross direction")
+        .choices(["above", "below"])
+        .default("above"),
+    )
     .option(
       "--threshold <value>",
-      "Imbalance ratio (-1.0 to 1.0, 0.3 = 30%)",
+      "Imbalance ratio from -1.0 to 1.0 (0.3 = 30% buy imbalance)",
       "0.3",
     )
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
@@ -437,12 +482,20 @@ Examples:
     );
 
   monitor
-    .command("price-change <pair>")
+    .command("price-change")
     .description(
       "Price Change % — triggers when price rises or falls by X% over N hours",
     )
-    .option("--direction <dir>", "rise or fall", "rise")
-    .option("--threshold <value>", "Min % change (5 = 5%)", "5.0")
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
+    .addOption(
+      new Option(
+        "--direction <direction>",
+        "Move direction to watch for (above/below are accepted synonyms of rise/fall)",
+      )
+        .choices(["rise", "fall", "above", "below"])
+        .default("rise"),
+    )
+    .option("--threshold <value>", "Minimum % change (5 = 5%)", "5.0")
     .option("--lookback <n>", "Lookback in 1-hour candles", "24")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
     .action(
@@ -469,10 +522,11 @@ Examples:
     );
 
   monitor
-    .command("atr-breakout <pair>")
+    .command("atr-breakout")
     .description(
       "ATR Breakout — triggers when price moves more than a multiple of ATR",
     )
+    .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .option("--period <n>", "ATR period", "14")
     .option("--multiplier <n>", "ATR multiplier", "1.5")
     .option("--interval <sec>", "Check interval in seconds (min 5)", "10")

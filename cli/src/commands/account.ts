@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import type { AccountBalance } from "@revolut/revolut-x-api";
 import chalk from "chalk";
 import { getClient } from "../util/client.js";
@@ -19,11 +19,30 @@ const BALANCE_COLUMNS: ColumnDef<AccountBalance>[] = [
 ];
 
 export function registerAccountCommand(program: Command): void {
-  const account = program.command("account").description("Account information");
+  const account = program
+    .command("account")
+    .description("Account information")
+    .configureOutput({
+      outputError: (str, write) => {
+        const cleanedMsg = str.replace(/^error:\s*/i, "").trim();
+        write(`${chalk.red.bold("✖ Error:")} ${chalk.white(cleanedMsg)}\n`);
+      },
+    })
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx account balances                              Show non-zero balances
+  $ revx account balances BTC                          Get a single currency balance
+  $ revx account balances --currencies BTC,ETH,USD     Filter by currencies
+  $ revx account balances --all                        Include zero balances
+  $ revx account balances --json                       Output as JSON`,
+    );
 
   account
-    .command("balances [currency]")
+    .command("balances")
     .description("View account balance or list all balances")
+    .argument("[currency]", "Single currency to look up, e.g. BTC")
     .addHelpText(
       "after",
       `
@@ -35,9 +54,16 @@ Examples:
   $ revx account balances --json                       Output as JSON`,
     )
     .option("-a, --all", "Include zero balances")
-    .option("-c, --currencies <list>", "Filter by currencies (comma-separated)")
+    .option(
+      "-c, --currencies <list>",
+      "Filter by currencies (comma-separated). Zero balances of the listed currencies are always shown, so --all is not needed",
+    )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         currency: string | undefined,

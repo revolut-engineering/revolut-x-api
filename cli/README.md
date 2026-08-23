@@ -111,17 +111,16 @@ revx market currencies                  # List all currencies
 revx market currencies fiat             # Fiat currencies only
 revx market currencies crypto           # Crypto currencies only
 revx market pairs                       # List all trading pairs
-revx market pairs BTC-USD               # Get BTC-USD pair info
-revx market pairs --pairs BTC-USD,ETH-USD  # Filter by pairs
+revx market pairs --filter BTC-USD,ETH-USD  # Filter by pairs
 revx market tickers                     # All tickers
 revx market tickers --symbols BTC-USD,ETH-USD  # Filter by pairs
-revx market ticker BTC-USD              # Single pair ticker
+revx market ticker BTC-USD              # Single pair ticker (alias of tickers)
 revx market candles BTC-USD             # OHLCV candles (default 1h)
   --interval 1h                         # Resolution: 1m 5m 15m 30m 1h 4h 1d 2d 4d 1w 2w 4w
   --since 7d                            # Start, local time (relative: 7d 1w 4h 30m today yesterday; ISO; epoch ms)
   --until today                         # End, local time (same formats)
 revx market orderbook BTC-USD           # Order book snapshot (top 50)
-  --limit 50                            # Depth (1–50)
+  --limit 50                            # Depth per side, 1–50 (higher values capped at 50)
 ```
 
 ---
@@ -134,6 +133,10 @@ revx order place BTC-USD buy --qty 0.001 --limit 95000    # Limit buy (base qty)
 revx order place BTC-USD buy --quote 100 --market         # Market buy (quote amount)
 revx order place BTC-USD sell --qty 0.001 --market        # Market sell (base qty)
 revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
+  --time-in-force gtc|ioc               # Limit orders only, gtc by default
+  --post-only                           # Limit orders only, cannot combine with ioc
+  --client-order-id <uuid>              # Optional idempotency key (random UUID if omitted)
 
 # View orders
 revx order open                         # Active orders (alias: active)
@@ -151,6 +154,15 @@ revx order history                      # Historical orders
   --limit 50                            # Max results
 revx order get <order-id>               # Get specific order details
 revx order fills <order-id>             # Get fills for an order
+
+# Replace orders (at least one flag required)
+revx order replace <order-id> --price 96000     # Update the limit price
+revx order replace <order-id> --qty 0.002       # Update base qty (amount recalculated)
+revx order replace <order-id> --quote 150       # Update quote amount (qty recalculated)
+revx order replace <order-id> --time-in-force ioc
+revx order replace <order-id> --post-only       # Maker-only execution
+revx order replace <order-id> --allow-taker     # Allow taking liquidity
+  --client-order-id <uuid>              # Optional; random UUID if omitted
 
 # Cancel orders
 revx order cancel <order-id>            # Cancel a specific order

@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
 import {
@@ -228,38 +228,83 @@ export function registerOrderCommand(program: Command): void {
       "after",
       `
 Examples:
-  $ revx order place BTC-USD buy --qty 0.001 --market         Place market buy (base qty)
-  $ revx order place BTC-USD buy --quote 100 --market         Place market buy (quote amount)
-  $ revx order place BTC-USD sell --qty 0.001 --limit 95000   Place limit sell
-  $ revx order open                                           List open/active orders
-  $ revx order history --symbols BTC-USD                      Order history for pair
-  $ revx order get <order-id>                                 Get order details
-  $ revx order cancel <order-id>                              Cancel an order
-  $ revx order cancel --all                                   Cancel all open orders
-  $ revx order replace <order-id> --price 96000               Replace order limit price
-  $ revx order replace <order-id> --qty 0.002                 Replace order qty (amount recalculated)
-  $ revx order replace <order-id> --quote 150                 Replace order quote amount
-  $ revx order replace <order-id> --time-in-force ioc         Replace order time in force
-  $ revx order replace <order-id> --allow-taker               Replace order to allow taker
-  $ revx order fills <order-id>                               Get order fills`,
+  $ revx order place BTC-USD buy --qty 0.001 --market            Place market buy (base qty)
+  $ revx order place BTC-USD buy --quote 100 --market            Place market buy (quote amount)
+  $ revx order place BTC-USD sell --qty 0.001 --limit 95000      Place limit sell (gtc by default)
+  $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
+  $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+  $ revx order open                                              List open/active orders
+  $ revx order history --symbols BTC-USD                         Order history for pair
+  $ revx order get <order-id>                                    Get order details
+  $ revx order cancel <order-id>                                 Cancel an order
+  $ revx order cancel --all                                      Cancel all open orders
+  $ revx order replace <order-id> --price 96000                  Replace order limit price
+  $ revx order replace <order-id> --qty 0.002                    Replace order qty (amount recalculated)
+  $ revx order replace <order-id> --quote 150                    Replace order quote amount
+  $ revx order replace <order-id> --time-in-force ioc            Replace order time in force
+  $ revx order replace <order-id> --allow-taker                  Replace order to allow taker
+  $ revx order fills <order-id>                                  Get order fills`,
     );
 
   order
-    .command("place <symbol> <side>")
+    .command("place")
     .description(
       "Place an order (e.g. revx order place BTC-USD buy --qty 0.001 --limit 95000)",
+    )
+    .argument("<symbol>", "Trading pair, e.g. BTC-USD")
+    .argument("<side>", "Order side: buy or sell")
+    .addHelpText(
+      "after",
+      `
+Sizing (exactly one required):
+  --qty    Size in base currency (e.g. 0.001 BTC)
+  --quote  Size in quote currency (e.g. 100 USD)
+
+Order type (exactly one required):
+  --limit  Limit order at the given price
+  --market Market order at the best available price
+
+Limit-only flags (rejected with --market):
+  --time-in-force  gtc (default) keeps the order open; ioc fills what it can
+                   immediately and cancels the rest
+  --post-only      Maker-only; the order is rejected if it would take liquidity.
+                   Cannot be combined with --time-in-force ioc
+
+Examples:
+  $ revx order place BTC-USD buy --qty 0.001 --market              Market buy by base qty
+  $ revx order place BTC-USD buy --quote 100 --market              Market buy by quote amount
+  $ revx order place BTC-USD sell --qty 0.001 --limit 95000        Limit sell, gtc
+  $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
+  $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+  $ revx order place BTC-USD buy --qty 0.001 --market --json       Output as JSON
+
+The client order ID must be a UUID; one is generated for you unless you pass
+--client-order-id <uuid>.`,
     )
     .option("--qty <amount>", "Quantity in base currency (e.g. 0.001 for BTC)")
     .option("--quote <amount>", "Amount in quote currency (e.g. 100 for USD)")
     .option("--limit <price>", "Limit order price (required unless --market)")
     .option("--market", "Market order (required unless --limit)")
-    .option(
-      "--time-in-force <value>",
-      "Time in force for limit orders (gtc|ioc)",
+    .addOption(
+      new Option(
+        "--time-in-force <value>",
+        "Time in force, limit orders only (default: gtc)",
+      ).choices(["gtc", "ioc"]),
     )
-    .option("--post-only", "Post-only execution instruction")
+    .option(
+      "--post-only",
+      "Post-only execution instruction (limit orders only)",
+    )
+    .option(
+      "--client-order-id <id>",
+      "Your own UUID for idempotency (a random UUID is generated if omitted)",
+    )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         symbol: string,
@@ -271,13 +316,12 @@ Examples:
           market?: boolean;
           timeInForce?: string;
           postOnly?: boolean;
+          clientOrderId?: string;
           json?: boolean;
           output?: string;
         },
       ) => {
         try {
-          const client = getClient({ requireAuth: true });
-
           if (!["buy", "sell"].includes(side.toLowerCase())) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Side must be 'buy' or 'sell'.")}`,
@@ -299,9 +343,50 @@ Examples:
             process.exit(1);
           }
 
+          if (!opts.market && !opts.limit) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --limit <price> or --market.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.market && opts.limit) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --limit <price> or --market, not both.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.market && (opts.timeInForce || opts.postOnly)) {
+            const rejected = [
+              opts.timeInForce ? "--time-in-force" : undefined,
+              opts.postOnly ? "--post-only" : undefined,
+            ].filter(Boolean);
+            const subject =
+              rejected.length > 1
+                ? `${rejected.join(" and ")} apply`
+                : `${rejected[0]} applies`;
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white(`${subject} to limit orders only and cannot be used with --market.`)}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.postOnly && opts.timeInForce === "ioc") {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--post-only cannot be combined with --time-in-force ioc.")}`,
+            );
+            process.exit(1);
+          }
+
+          const client = getClient({ requireAuth: true });
+
           const params: Parameters<typeof client.placeOrder>[0] = {
             symbol: symbol.toUpperCase(),
             side: side.toLowerCase() as "buy" | "sell",
+            ...(opts.clientOrderId
+              ? { clientOrderId: opts.clientOrderId }
+              : {}),
           };
 
           const sizeField = opts.quote
@@ -310,9 +395,9 @@ Examples:
 
           if (opts.market) {
             params.market = sizeField;
-          } else if (opts.limit) {
+          } else {
             params.limit = {
-              price: opts.limit,
+              price: opts.limit!,
               ...sizeField,
               ...(opts.timeInForce
                 ? { timeInForce: opts.timeInForce as "gtc" | "ioc" }
@@ -321,11 +406,6 @@ Examples:
                 ? { executionInstructions: ["post_only"] }
                 : {}),
             };
-          } else {
-            console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --limit <price> or --market.")}`,
-            );
-            process.exit(1);
           }
 
           const result = await client.placeOrder(params);
@@ -362,10 +442,16 @@ Examples:
       "--order-types <types>",
       "Filter by types (comma-separated: limit,conditional,tpsl,twap)",
     )
-    .option("--side <side>", "Filter by side (buy|sell)")
+    .addOption(
+      new Option("--side <side>", "Filter by side").choices(["buy", "sell"]),
+    )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (opts: {
         symbols?: string;
@@ -440,7 +526,11 @@ Examples:
     )
     .option("--limit <n>", "Max results")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (opts: {
         symbols?: string;
@@ -517,10 +607,15 @@ Examples:
     );
 
   order
-    .command("get <order-id>")
+    .command("get")
     .description("Get details of a specific order")
+    .argument("<order-id>", "Venue order ID returned when the order was placed")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (orderId: string, opts: { json?: boolean; output?: string }) => {
         try {
@@ -617,8 +712,9 @@ Examples:
     );
 
   order
-    .command("cancel [order-id]")
+    .command("cancel")
     .description("Cancel an order, or all open orders with --all")
+    .argument("[order-id]", "Venue order ID to cancel (omit when using --all)")
     .option("--all", "Cancel all open orders")
     .action(async (orderId: string | undefined, opts: { all?: boolean }) => {
       try {
@@ -649,31 +745,52 @@ Examples:
     });
 
   order
-    .command("replace <order-id>")
+    .command("replace")
     .description(
-      "Replace (modify) an existing order. Provide at least one of --price, --qty, --quote, --post-only, --allow-taker.",
+      "Replace (modify) an existing order. Provide at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker.",
     )
-    .option("--price <price>", "New limit price")
+    .argument("<order-id>", "Venue order ID of the order to replace")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx order replace <order-id> --price 96000              Update the limit price
+  $ revx order replace <order-id> --qty 0.002                Update base qty (amount recalculated)
+  $ revx order replace <order-id> --quote 150                Update quote amount (qty recalculated)
+  $ revx order replace <order-id> --time-in-force ioc        Fill immediately, cancel the rest
+  $ revx order replace <order-id> --post-only                Maker-only execution
+  $ revx order replace <order-id> --allow-taker              Allow taking liquidity`,
+    )
+    .option("--price <price>", "Replacement limit price")
     .option(
       "--qty <amount>",
-      "New quantity in base currency (amount recalculated server-side)",
+      "Replacement quantity in base currency (amount recalculated server-side)",
     )
     .option(
       "--quote <amount>",
-      "New amount in quote currency (qty recalculated server-side)",
+      "Replacement amount in quote currency (qty recalculated server-side)",
     )
     .option(
       "--client-order-id <id>",
       "Client order ID for the replacement (auto-generated if omitted)",
     )
-    .option("--time-in-force <value>", "Time in force (gtc|ioc)")
+    .addOption(
+      new Option(
+        "--time-in-force <value>",
+        "Replacement time in force: gtc keeps the order open, ioc fills immediately and cancels the rest",
+      ).choices(["gtc", "ioc"]),
+    )
     .option("--post-only", "Set execution_instructions to [post_only]")
     .option(
       "--allow-taker",
       "Set execution_instructions to [allow_taker] explicitly",
     )
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (
         orderId: string,
@@ -700,6 +817,13 @@ Examples:
           if (opts.postOnly && opts.allowTaker) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --post-only or --allow-taker, not both.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.postOnly && opts.timeInForce === "ioc") {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--post-only cannot be combined with --time-in-force ioc.")}`,
             );
             process.exit(1);
           }
@@ -751,10 +875,15 @@ Examples:
     );
 
   order
-    .command("fills <order-id>")
+    .command("fills")
     .description("Get fills for an order")
+    .argument("<order-id>", "Venue order ID to list fills for")
     .option("--json", "Output as JSON")
-    .option("--output <format>", "Output format (table|json)", "table")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
     .action(
       async (orderId: string, opts: { json?: boolean; output?: string }) => {
         try {
