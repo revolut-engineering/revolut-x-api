@@ -4,3 +4,5 @@ export const ACTIVE_ORDERS_API_LIMIT = 300;
 export const TRADES_API_LIMIT = 1900;
 export const TRANSACTIONS_API_LIMIT = 1900;
 export const PAGINATED_DATA_MAX_LIMIT = 50000;
+export const ORDER_BOOK_MAX_DEPTH = 192;
+export const ORDER_BOOK_DEFAULT_DEPTH = 50;

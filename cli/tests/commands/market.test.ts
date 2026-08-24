@@ -97,6 +97,7 @@ const sampleTickers = {
       high_24h: "101000",
       price_change_24h: "500",
       volume_24h: "12.34000000",
+      quote_volume_24h: "1233987.66000000",
     },
     {
       symbol: "ETH-USD",
@@ -108,6 +109,7 @@ const sampleTickers = {
       high_24h: "3600",
       price_change_24h: "-25",
       volume_24h: "456.78000000",
+      quote_volume_24h: "",
     },
   ],
 };
@@ -307,6 +309,8 @@ describe("market tickers", () => {
     expect(output).toContain("500");
     expect(output).toContain("Volume 24h");
     expect(output).toContain("12.34000000");
+    expect(output).toContain("Quote Vol 24h");
+    expect(output).toContain("1233987.66000000");
   });
 
   it("fetches specific ticker when symbol is provided", async () => {
@@ -323,6 +327,8 @@ describe("market tickers", () => {
     expect(output).toContain("500");
     expect(output).toContain("Volume 24h");
     expect(output).toContain("12.34000000");
+    expect(output).toContain("Quote Vol 24h");
+    expect(output).toContain("1233987.66000000");
   });
 
   it("filters by --symbols option", async () => {
@@ -349,6 +355,7 @@ describe("market tickers", () => {
       high_24h: "101000",
       price_change_24h: "500",
       volume_24h: "12.34000000",
+      quote_volume_24h: "1233987.66000000",
     });
   });
 
@@ -581,7 +588,7 @@ describe("market orderbook", () => {
     expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 5 });
   });
 
-  it("clamps limit above 50 down to 50", async () => {
+  it("accepts the maximum depth of 192", async () => {
     await program.parseAsync([
       "node",
       "revx",
@@ -589,9 +596,46 @@ describe("market orderbook", () => {
       "orderbook",
       "BTC-USD",
       "--limit",
-      "100",
+      "192",
     ]);
-    expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 50 });
+    expect(mockGetOrderBook).toHaveBeenCalledWith("BTC-USD", { limit: 192 });
+  });
+
+  it("rejects a limit above 192 instead of clamping", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "market",
+        "orderbook",
+        "BTC-USD",
+        "--limit",
+        "193",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "--limit must be an integer between 1 and 192",
+    );
+    expect(mockGetOrderBook).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("rejects a limit below 1", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "market",
+        "orderbook",
+        "BTC-USD",
+        "--limit",
+        "0",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockGetOrderBook).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 
   it("displays asks and bids in table output", async () => {

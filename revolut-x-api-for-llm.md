@@ -679,7 +679,7 @@ Get the current order book snapshot (bids and asks) for a specific trading pair.
 | Name | In | Type | Required | Description |
 |------|-----|------|----------|-------------|
 | symbol | path | string | yes | Trading pair symbol (e.g., `BTC-USD`) |
-| limit | query | integer | no | Depth of order book (number of levels). Range: 1-50, default: 20 |
+| limit | query | integer | no | Depth of order book (number of levels per side). Range: 1-192, default: 20. Out-of-range values return 400 `Limit must be between 1 and 192` — the value is not clamped |
 
 **Response (200):** `{ data: { asks: [OrderBookPriceLevel], bids: [OrderBookPriceLevel] }, metadata: { timestamp } }`
 
@@ -758,8 +758,8 @@ Get the latest market data snapshots for all supported currency pairs, or filter
 ```json
 {
   "data": [
-    {"symbol": "BTC/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000"},
-    {"symbol": "ETH/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000"}
+    {"symbol": "BTC/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000", "quote_volume_24h": "2469.13560000"},
+    {"symbol": "ETH/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000", "quote_volume_24h": ""}
   ],
   "metadata": {"timestamp": 1770201294631}
 }
@@ -1024,6 +1024,7 @@ Used by: `GET /public/order-book/{symbol}`
 | high_24h | string (decimal) | yes | Highest traded price over the last 24 hours |
 | price_change_24h | string (decimal) | yes | Price change over the last 24 hours |
 | volume_24h | string (decimal) | yes | Traded volume in the base currency over the last 24 hours |
+| quote_volume_24h | string (decimal) | yes | Traded volume in the quote currency over the last 24 hours. The key is always present, but the value is an empty string when the figure is unavailable — as with `bid`, `ask`, `mid`, `last_price`, `low_24h`, `high_24h`, and `price_change_24h` |
 
 ---
 

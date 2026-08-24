@@ -8,6 +8,7 @@ export interface Ticker {
   high_24h: string;
   price_change_24h: string;
   volume_24h: string;
+  quote_volume_24h: string;
 }
 
 export interface TickersOptions {

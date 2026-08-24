@@ -63,13 +63,14 @@ revx market candles ETH-USD --interval 4h --since 30d
 ## Order Book
 
 ```bash
-revx market orderbook BTC-USD          # Top 50 levels (default, the maximum)
+revx market orderbook BTC-USD           # 50 levels per side (default)
 revx market orderbook BTC-USD --limit 20
+revx market orderbook BTC-USD --limit 192   # Deepest book available
 ```
 
-Depth: 1–50 levels.
+Depth: 1–192 levels per side.
 
-> **Note on API defaults:** The Revolut X REST API itself returns 20 levels by default and supports a maximum of 50 levels per call. `revx` requests the maximum (50) by default so you always get the fullest available depth; pass `--limit` to request fewer.
+> **Note on defaults:** The Revolut X REST API returns 20 levels by default and accepts up to 192 per call. `revx` requests 50 by default so pass `--limit 192` when you need the full book. Values outside 1–192 are rejected with an error rather than silently reduced.
 
 ---
 

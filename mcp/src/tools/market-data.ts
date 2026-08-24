@@ -10,6 +10,8 @@ import {
   validateSymbol,
 } from "../shared/_helpers.js";
 import {
+  ORDER_BOOK_DEFAULT_DEPTH,
+  ORDER_BOOK_MAX_DEPTH,
   PAGINATED_DATA_MAX_LIMIT,
   TRADES_API_LIMIT,
   paginateWithDynamicWindows,
@@ -127,9 +129,11 @@ export function registerMarketDataTools(server: McpServer): void {
         limit: z
           .number()
           .min(1)
-          .max(50)
-          .default(50)
-          .describe("Depth of order book, 1-50 (default 50)"),
+          .max(ORDER_BOOK_MAX_DEPTH)
+          .default(ORDER_BOOK_DEFAULT_DEPTH)
+          .describe(
+            `Order book depth per side, 1-${ORDER_BOOK_MAX_DEPTH} (default ${ORDER_BOOK_DEFAULT_DEPTH})`,
+          ),
       },
       annotations: {
         title: "Get Order Book",
@@ -144,8 +148,6 @@ export function registerMarketDataTools(server: McpServer): void {
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
       if (error) return textResult(error);
-
-      limit = Math.max(1, Math.min(50, limit));
 
       let result;
       try {
@@ -219,6 +221,7 @@ export function registerMarketDataTools(server: McpServer): void {
             high_24h: z.string(),
             price_change_24h: z.string(),
             volume_24h: z.string(),
+            quote_volume_24h: z.string(),
           }),
         ),
         metadata: z.object({
@@ -256,9 +259,9 @@ export function registerMarketDataTools(server: McpServer): void {
       }
 
       const lines = [
-        `${"Pair".padEnd(12)} | ${"Bid".padStart(14)} | ${"Ask".padStart(14)} | ${"Mid".padStart(14)} | ${"Last".padStart(14)} | ${"Low 24h".padStart(14)} | ${"High 24h".padStart(14)} | ${"Change 24h".padStart(14)} | ${"Volume 24h".padStart(14)}`,
+        `${"Pair".padEnd(12)} | ${"Bid".padStart(14)} | ${"Ask".padStart(14)} | ${"Mid".padStart(14)} | ${"Last".padStart(14)} | ${"Low 24h".padStart(14)} | ${"High 24h".padStart(14)} | ${"Change 24h".padStart(14)} | ${"Volume 24h".padStart(14)} | ${"Quote Vol 24h".padStart(14)}`,
       ];
-      lines.push("-".repeat(150));
+      lines.push("-".repeat(167));
       for (const t of tickers) {
         lines.push(
           `${t.symbol.padEnd(12)} | ` +
@@ -269,7 +272,8 @@ export function registerMarketDataTools(server: McpServer): void {
             `${t.low_24h.padStart(14)} | ` +
             `${t.high_24h.padStart(14)} | ` +
             `${t.price_change_24h.padStart(14)} | ` +
-            `${t.volume_24h.padStart(14)}`,
+            `${t.volume_24h.padStart(14)} | ` +
+            `${t.quote_volume_24h.padStart(14)}`,
         );
       }
       return {

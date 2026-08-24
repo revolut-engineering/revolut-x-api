@@ -193,6 +193,34 @@ describe("market data tools", () => {
     });
   });
 
+  it("get_order_book accepts the maximum depth of 192", async () => {
+    mockClient.getOrderBook.mockResolvedValue({
+      data: { asks: [], bids: [] },
+      metadata: { timestamp: 1700000000000 },
+    });
+    const client = await createClient();
+    await client.callTool({
+      name: "get_order_book",
+      arguments: { symbol: "BTC-USD", limit: 192 },
+    });
+    expect(mockClient.getOrderBook).toHaveBeenCalledWith("BTC-USD", {
+      limit: 192,
+    });
+  });
+
+  it("get_order_book rejects a depth above 192 instead of clamping", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_order_book",
+      arguments: { symbol: "BTC-USD", limit: 193 },
+    });
+    expect(result.isError).toBe(true);
+    expect(getText(result)).toContain(
+      "Number must be less than or equal to 192",
+    );
+    expect(mockClient.getOrderBook).not.toHaveBeenCalled();
+  });
+
   it("get_tickers returns formatted data", async () => {
     mockClient.getTickers.mockResolvedValue({
       data: [
@@ -206,6 +234,7 @@ describe("market data tools", () => {
           high_24h: "101000",
           price_change_24h: "500",
           volume_24h: "12.34000000",
+          quote_volume_24h: "1233987.66000000",
         },
       ],
       metadata: { timestamp: 1700000000000 },
@@ -226,11 +255,14 @@ describe("market data tools", () => {
     expect(text).toContain("500");
     expect(text).toContain("Volume 24h");
     expect(text).toContain("12.34000000");
+    expect(text).toContain("Quote Vol 24h");
+    expect(text).toContain("1233987.66000000");
     expect(getStructuredContent(result).tickers?.[0]).toMatchObject({
       low_24h: "98000",
       high_24h: "101000",
       price_change_24h: "500",
       volume_24h: "12.34000000",
+      quote_volume_24h: "1233987.66000000",
     });
   });
 
@@ -247,6 +279,7 @@ describe("market data tools", () => {
           high_24h: "101000",
           price_change_24h: "500",
           volume_24h: "12.34000000",
+          quote_volume_24h: "1233987.66000000",
         },
         {
           symbol: "ETH-USD",
@@ -258,6 +291,7 @@ describe("market data tools", () => {
           high_24h: "3100",
           price_change_24h: "-50",
           volume_24h: "45.67000000",
+          quote_volume_24h: "",
         },
       ],
       metadata: { timestamp: 1700000000000 },

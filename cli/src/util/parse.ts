@@ -51,3 +51,19 @@ export function parsePositiveInt(value: string, name: string): number {
   }
   return num;
 }
+
+export function parseIntInRange(
+  value: string,
+  name: string,
+  min: number,
+  max: number,
+): number {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < min || num > max) {
+    console.error(
+      `Error: ${name} must be an integer between ${min} and ${max}, got: ${value}`,
+    );
+    process.exit(1);
+  }
+  return num;
+}

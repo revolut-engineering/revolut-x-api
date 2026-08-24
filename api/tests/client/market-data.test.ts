@@ -74,6 +74,7 @@ describe("Market Data", () => {
         high_24h: "96000",
         price_change_24h: "250",
         volume_24h: "123.45000000",
+        quote_volume_24h: "11733527.25000000",
       });
     });
 

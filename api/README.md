@@ -4,7 +4,7 @@ Typed HTTP client for the [Revolut X Public Trading API](https://developer.revol
 
 [![npm](https://img.shields.io/npm/v/revolutx-api)](https://www.npmjs.com/package/@revolut/revolut-x-api)
 [![Release](https://img.shields.io/github/v/release/revolut-engineering/revolut-x-api?label=release&color=brightgreen)](https://github.com/revolut-engineering/revolut-x-api/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 
 ---
 
@@ -153,7 +153,7 @@ const candles = await client.getCandles("BTC-USD", {
 // → { data: Candle[] }
 
 // Order book (authenticated)
-const book = await client.getOrderBook("BTC-USD", { limit: 10 });
+const book = await client.getOrderBook("BTC-USD", { limit: 10 }); // depth per side, 1-192, default 50
 // → { data: { asks, bids }, metadata: { timestamp } }
 ```
 

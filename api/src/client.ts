@@ -9,6 +9,7 @@ import {
 import { loadPrivateKey } from "./auth/keypair.js";
 import { loadCredentials } from "./auth/index.js";
 import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
+import { ORDER_BOOK_DEFAULT_DEPTH } from "./pagination/constants.js";
 import { type LogCallback, Logger } from "./logging/logger.js";
 import { placeOrderSchema, replaceOrderSchema } from "./validation/schemas.js";
 import type { AccountBalance } from "./types/account.js";
@@ -207,7 +208,7 @@ export class RevolutXClient {
   }> {
     this.requireAuth();
     const params: Record<string, unknown> = {};
-    params.limit = opts?.limit ?? 50;
+    params.limit = opts?.limit ?? ORDER_BOOK_DEFAULT_DEPTH;
     const raw = await this.request<{
       data: OrderBook<WireOrderBookLevel>;
       metadata: { timestamp: number };

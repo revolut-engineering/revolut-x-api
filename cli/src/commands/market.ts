@@ -1,9 +1,17 @@
 import { Command, Option } from "commander";
 import chalk from "chalk";
 import type { Ticker, Candle } from "@revolut/revolut-x-api";
+import {
+  ORDER_BOOK_DEFAULT_DEPTH,
+  ORDER_BOOK_MAX_DEPTH,
+} from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
-import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
+import {
+  parseTimestamp,
+  parsePositiveInt,
+  parseIntInRange,
+} from "../util/parse.js";
 import {
   isJsonOutput,
   printJson,
@@ -44,8 +52,9 @@ Examples:
   $ revx market candles BTC-USD                       Get hourly candles
   $ revx market candles BTC-USD --interval 5m         Get 5-minute candles
   $ revx market candles BTC-USD --since 7d --until today
-  $ revx market orderbook BTC-USD                     Get order book (top 50)
-  $ revx market orderbook BTC-USD --limit 20          Get order book (top 20)`,
+  $ revx market orderbook BTC-USD                     Get order book (50 levels per side)
+  $ revx market orderbook BTC-USD --limit 20          Get order book (20 levels per side)
+  $ revx market orderbook BTC-USD --limit 192         Get the deepest book available`,
     );
 
   market
@@ -297,6 +306,7 @@ Examples:
               ["High 24h", chalk.white(t.high_24h)],
               ["Change 24h", chalk.white(t.price_change_24h)],
               ["Volume 24h", chalk.white(t.volume_24h)],
+              ["Quote Vol 24h", chalk.white(t.quote_volume_24h)],
             ]);
           } else {
             printSectionHeader("Market Tickers");
@@ -447,8 +457,8 @@ outside the available history, is replaced by the most recent window.`,
     .argument("<symbol>", "Trading pair, e.g. BTC-USD")
     .option(
       "--limit <n>",
-      "Depth per side, 1-50 (higher values are capped at 50)",
-      "50",
+      `Depth per side, 1-${ORDER_BOOK_MAX_DEPTH}`,
+      String(ORDER_BOOK_DEFAULT_DEPTH),
     )
     .option("--json", "Output as JSON")
     .addOption(
@@ -461,12 +471,17 @@ outside the available history, is replaced by the most recent window.`,
         symbol: string,
         opts: { limit: string; json?: boolean; output?: string },
       ) => {
+        const limit = parseIntInRange(
+          opts.limit,
+          "--limit",
+          1,
+          ORDER_BOOK_MAX_DEPTH,
+        );
+
         try {
           const client = getClient({ requireAuth: true });
           const cleanSymbol = symbol.trim().toUpperCase();
-          const result = await client.getOrderBook(cleanSymbol, {
-            limit: Math.min(50, parsePositiveInt(opts.limit, "limit")),
-          });
+          const result = await client.getOrderBook(cleanSymbol, { limit });
 
           if (isJsonOutput(opts)) {
             printJson(result);
@@ -505,5 +520,6 @@ function printTickerTable(tickers: Ticker[]): void {
     { header: "High 24h", key: "high_24h", align: "right" },
     { header: "Change 24h", key: "price_change_24h", align: "right" },
     { header: "Volume 24h", key: "volume_24h", align: "right" },
+    { header: "Quote Vol 24h", key: "quote_volume_24h", align: "right" },
   ]);
 }

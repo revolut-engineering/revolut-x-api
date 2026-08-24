@@ -60,6 +60,8 @@ export {
   TRADES_API_LIMIT,
   TRANSACTIONS_API_LIMIT,
   PAGINATED_DATA_MAX_LIMIT,
+  ORDER_BOOK_MAX_DEPTH,
+  ORDER_BOOK_DEFAULT_DEPTH,
 } from "./pagination/index.js";
 
 export type {
