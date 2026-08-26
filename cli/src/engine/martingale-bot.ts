@@ -365,6 +365,26 @@ export class ForegroundMartingaleBot {
    * @param type    - "TP" or "SL" — identifies which order type hit the limit.
    * @param detail  - Additional context shown in the notification (e.g. price).
    */
+  private async _handleCannotPlaceOrder(
+    type: string,
+    reason: string,
+  ): Promise<void> {
+    const pair = this._config.pair;
+    const msg =
+      `Can't place ${type} order: ${reason}. ` +
+      `Bot stopped — check the exchange and restart with --reset once resolved.`;
+    this._warnings.push(msg);
+    console.log(chalk.red(`\n  ✗ ${msg}`));
+    await this._notifyAndWait(
+      `🚨 Martingale ${pair}: Can't place ${type} order.\n` +
+        `Reason: ${reason}\n` +
+        `Bot stopped — check the exchange and restart with \`--reset\` once resolved.`,
+    );
+    this._lifecycle = "stopped";
+    this._saveRunningState();
+    this.stop();
+  }
+
   private async _handleOrderFailureLimit(
     type: "TP" | "SL",
     detail: string,
@@ -1066,9 +1086,11 @@ export class ForegroundMartingaleBot {
               newLevels[1].buyOrderIds.push(orderId);
             } catch (err) {
               rethrowIfInsecureKey(err);
-              this._warnings.push(
-                `New cycle SO#1: ${err instanceof Error ? err.message : String(err)}`,
+              await this._handleCannotPlaceOrder(
+                "SO#1",
+                err instanceof Error ? err.message : String(err),
               );
+              return;
             }
           }
           this._saveRunningState();
@@ -1076,10 +1098,11 @@ export class ForegroundMartingaleBot {
           return;
         } catch (err) {
           rethrowIfInsecureKey(err);
-          this._warnings.push(
-            `New cycle entry: ${err instanceof Error ? err.message : String(err)}`,
+          await this._handleCannotPlaceOrder(
+            "ENTRY",
+            err instanceof Error ? err.message : String(err),
           );
-          // Fall through and let subsequent ticks retry via this same step.
+          return;
         }
       }
     }
@@ -1175,9 +1198,11 @@ export class ForegroundMartingaleBot {
                 nextLevel.buyOrderIds.push(orderId);
               } catch (err) {
                 rethrowIfInsecureKey(err);
-                this._warnings.push(
-                  `Safety order #${nextLevel.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+                await this._handleCannotPlaceOrder(
+                  `SO#${nextLevel.index + 1}`,
+                  err instanceof Error ? err.message : String(err),
                 );
+                return;
               }
             }
           } else if (DEAD_STATUSES.has(order.status)) {
@@ -1191,9 +1216,11 @@ export class ForegroundMartingaleBot {
                 level.buyOrderIds.push(orderId);
               } catch (err) {
                 rethrowIfInsecureKey(err);
-                this._warnings.push(
-                  `Re-buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
+                await this._handleCannotPlaceOrder(
+                  `SO#${level.index + 1} (re-place)`,
+                  err instanceof Error ? err.message : String(err),
                 );
+                return;
               }
             }
           }
@@ -1255,9 +1282,11 @@ export class ForegroundMartingaleBot {
             await this._placeMarketEntry(newLevels[0], currentPrice);
           } catch (err) {
             rethrowIfInsecureKey(err);
-            this._warnings.push(
-              `New cycle market entry: ${err instanceof Error ? err.message : String(err)}`,
+            await this._handleCannotPlaceOrder(
+              "ENTRY",
+              err instanceof Error ? err.message : String(err),
             );
+            return;
           }
           await this._placeTpOrder();
           if (
@@ -1270,9 +1299,11 @@ export class ForegroundMartingaleBot {
               newLevels[1].buyOrderIds.push(orderId);
             } catch (err) {
               rethrowIfInsecureKey(err);
-              this._warnings.push(
-                `New cycle safety order #1: ${err instanceof Error ? err.message : String(err)}`,
+              await this._handleCannotPlaceOrder(
+                "SO#1",
+                err instanceof Error ? err.message : String(err),
               );
+              return;
             }
           }
         } else if (DEAD_STATUSES.has(order.status)) {
@@ -1302,9 +1333,11 @@ export class ForegroundMartingaleBot {
               lv.buyOrderIds.push(orderId);
             } catch (err) {
               rethrowIfInsecureKey(err);
-              this._warnings.push(
-                `Safety order recovery #${i}: ${err instanceof Error ? err.message : String(err)}`,
+              await this._handleCannotPlaceOrder(
+                `SO#${i} (recovery)`,
+                err instanceof Error ? err.message : String(err),
               );
+              return;
             }
           }
           break; // arm one at a time

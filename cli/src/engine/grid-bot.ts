@@ -1056,6 +1056,26 @@ export class ForegroundGridBot {
     this.stop();
   }
 
+  private async _handleCannotPlaceOrder(
+    type: string,
+    reason: string,
+  ): Promise<void> {
+    const pair = this._config.pair;
+    const msg =
+      `Can't place ${type} order: ${reason}. ` +
+      `Bot stopped — check the exchange and restart with --reset once resolved.`;
+    this._warnings.push(msg);
+    this._log(chalk.red(`\n  ✗ ${msg}`));
+    await this._notifyAndWait(
+      `🚨 Grid Bot ${pair}: Can't place ${type} order.\n` +
+        `Reason: ${reason}\n` +
+        `Bot stopped — check the exchange and restart with \`--reset\` once resolved.`,
+    );
+    this._lifecycle = "stopped";
+    this._saveGridState(this._state!);
+    this.stop();
+  }
+
   private async _awaitOrderFill(
     orderId: string,
     timeoutMs = 30_000,
@@ -2760,8 +2780,9 @@ export class ForegroundGridBot {
       this._saveGridState(this._state!);
     } catch (err) {
       rethrowIfInsecureKey(err);
-      this._warnings.push(
-        `Sell @${sellLevel.price}: ${err instanceof Error ? err.message : String(err)}`,
+      await this._handleCannotPlaceOrder(
+        `SELL @${sellLevel.price}`,
+        err instanceof Error ? err.message : String(err),
       );
     }
   }
@@ -2777,8 +2798,9 @@ export class ForegroundGridBot {
       );
     } catch (err) {
       rethrowIfInsecureKey(err);
-      this._warnings.push(
-        `Buy @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
+      await this._handleCannotPlaceOrder(
+        `BUY @${level.price}`,
+        err instanceof Error ? err.message : String(err),
       );
     }
   }
