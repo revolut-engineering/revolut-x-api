@@ -365,6 +365,31 @@ export class ForegroundMartingaleBot {
    * @param type    - "TP" or "SL" — identifies which order type hit the limit.
    * @param detail  - Additional context shown in the notification (e.g. price).
    */
+  private async _cancelAllOpenOrders(): Promise<void> {
+    if (!this._client || this._config.dryRun || !this._state) return;
+    const state = this._state;
+    const cancels: Promise<void>[] = [];
+    for (const level of state.levels) {
+      for (const id of [...level.buyOrderIds]) {
+        cancels.push(
+          this._client
+            .cancelOrder(id)
+            .catch((err) => rethrowIfInsecureKey(err)),
+        );
+      }
+    }
+    if (state.tpOrderId) {
+      cancels.push(
+        this._client
+          .cancelOrder(state.tpOrderId)
+          .catch((err) => rethrowIfInsecureKey(err)),
+      );
+    }
+    await Promise.all(cancels);
+    for (const level of state.levels) level.buyOrderIds = [];
+    state.tpOrderId = null;
+  }
+
   private async _handleCannotPlaceOrder(
     type: string,
     reason: string,
@@ -375,6 +400,7 @@ export class ForegroundMartingaleBot {
       `Bot stopped — check the exchange and restart with --reset once resolved.`;
     this._warnings.push(msg);
     console.log(chalk.red(`\n  ✗ ${msg}`));
+    await this._cancelAllOpenOrders();
     await this._notifyAndWait(
       `🚨 Martingale ${pair}: Can't place ${type} order.\n` +
         `Reason: ${reason}\n` +
@@ -401,6 +427,7 @@ export class ForegroundMartingaleBot {
     this._warnings.push(msg);
     console.log(chalk.red(`\n  ✗ ${msg}`));
 
+    await this._cancelAllOpenOrders();
     await this._notifyAndWait(
       `🚨 Martingale ${pair}: ${type} order failed 3 times in a row` +
         (detail ? ` @ ${cs}${detail}` : "") +
@@ -560,19 +587,9 @@ export class ForegroundMartingaleBot {
     // Place TP order immediately (we are already in position)
     await this._placeTpOrder();
 
-    // Arm the first safety order (level[1])
-    if (levels[1]) {
-      try {
-        const orderId = await this._placeBuyOrder(levels[1]);
-        levels[1].buyOrderIds.push(orderId);
-        console.log(chalk.dim(`  Safety order #1 placed @ ${levels[1].price}`));
-      } catch (err) {
-        rethrowIfInsecureKey(err);
-        this._warnings.push(
-          `Safety order #1: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    // Arm ALL safety orders simultaneously so all capital is deployed at once
+    console.log(chalk.dim(`  Placing ${levels.length - 1} safety order(s)...`));
+    await this._placeAllSafetyOrders(levels);
 
     saveMartingaleState(this._state);
     console.log(chalk.dim("  Martingale initialized and state saved.\n"));
@@ -1059,13 +1076,8 @@ export class ForegroundMartingaleBot {
         state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
         await this._placeMarketEntry(newLevels[0], currentPrice);
         await this._placeTpOrder();
-        if (
-          newLevels[1] &&
-          !newLevels[1].filled &&
-          newLevels[1].buyOrderIds.length === 0
-        ) {
-          newLevels[1].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
-        }
+        // Arm ALL safety orders at once (dry-run assigns synthetic ids)
+        await this._placeAllSafetyOrders(newLevels);
         this._saveRunningState();
         this._tickCount++;
         return;
@@ -1076,23 +1088,9 @@ export class ForegroundMartingaleBot {
           state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
           await this._placeMarketEntry(newLevels[0], currentPrice);
           await this._placeTpOrder();
-          if (
-            newLevels[1] &&
-            !newLevels[1].filled &&
-            newLevels[1].buyOrderIds.length === 0
-          ) {
-            try {
-              const orderId = await this._placeBuyOrder(newLevels[1]);
-              newLevels[1].buyOrderIds.push(orderId);
-            } catch (err) {
-              rethrowIfInsecureKey(err);
-              await this._handleCannotPlaceOrder(
-                "SO#1",
-                err instanceof Error ? err.message : String(err),
-              );
-              return;
-            }
-          }
+          // Arm ALL safety orders simultaneously
+          const soOk = await this._placeAllSafetyOrders(newLevels);
+          if (!soOk) return;
           this._saveRunningState();
           this._tickCount++;
           return;
@@ -1175,7 +1173,7 @@ export class ForegroundMartingaleBot {
                 `avg entry ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr}`,
             );
 
-            // Move TP order
+            // Move TP order (qty changed after fill)
             if (state.tpOrderId) {
               try {
                 await client.cancelOrder(state.tpOrderId);
@@ -1185,26 +1183,7 @@ export class ForegroundMartingaleBot {
               state.tpOrderId = null;
             }
             await this._placeTpOrder();
-
-            // Arm next safety order level
-            const nextLevel = state.levels[level.index + 1];
-            if (
-              nextLevel &&
-              !nextLevel.filled &&
-              nextLevel.buyOrderIds.length === 0
-            ) {
-              try {
-                const orderId = await this._placeBuyOrder(nextLevel);
-                nextLevel.buyOrderIds.push(orderId);
-              } catch (err) {
-                rethrowIfInsecureKey(err);
-                await this._handleCannotPlaceOrder(
-                  `SO#${nextLevel.index + 1}`,
-                  err instanceof Error ? err.message : String(err),
-                );
-                return;
-              }
-            }
+            // Next SO is already on the exchange (all placed simultaneously at start).
           } else if (DEAD_STATUSES.has(order.status)) {
             level.buyOrderIds = level.buyOrderIds.filter(
               (id) => id !== buyOrderId,
@@ -1289,23 +1268,9 @@ export class ForegroundMartingaleBot {
             return;
           }
           await this._placeTpOrder();
-          if (
-            newLevels[1] &&
-            !newLevels[1].filled &&
-            newLevels[1].buyOrderIds.length === 0
-          ) {
-            try {
-              const orderId = await this._placeBuyOrder(newLevels[1]);
-              newLevels[1].buyOrderIds.push(orderId);
-            } catch (err) {
-              rethrowIfInsecureKey(err);
-              await this._handleCannotPlaceOrder(
-                "SO#1",
-                err instanceof Error ? err.message : String(err),
-              );
-              return;
-            }
-          }
+          // Arm ALL safety orders simultaneously for the new cycle
+          const soOk = await this._placeAllSafetyOrders(newLevels);
+          if (!soOk) return;
         } else if (DEAD_STATUSES.has(order.status)) {
           state.tpOrderId = null;
           // Re-place TP
@@ -1319,28 +1284,24 @@ export class ForegroundMartingaleBot {
       }
     }
 
-    // 5. Safety order recovery: if in position and the next safety level to arm
-    //    has no active buy order (e.g. bot crashed between a fill and arming next level)
+    // 5. Safety order recovery: re-place every unfilled SO that lost its order
+    //    (e.g. bot crashed, order was cancelled). All SOs run simultaneously so
+    //    we re-arm each missing one independently without a predecessor check.
     if (state.inPosition) {
       for (let i = 1; i < state.levels.length; i++) {
         const lv = state.levels[i];
         if (!lv.filled && lv.buyOrderIds.length === 0) {
-          // Only arm this level if its predecessor is already filled
-          const prev = state.levels[i - 1];
-          if (prev.filled) {
-            try {
-              const orderId = await this._placeBuyOrder(lv);
-              lv.buyOrderIds.push(orderId);
-            } catch (err) {
-              rethrowIfInsecureKey(err);
-              await this._handleCannotPlaceOrder(
-                `SO#${i} (recovery)`,
-                err instanceof Error ? err.message : String(err),
-              );
-              return;
-            }
+          try {
+            const orderId = await this._placeBuyOrder(lv);
+            lv.buyOrderIds.push(orderId);
+          } catch (err) {
+            rethrowIfInsecureKey(err);
+            await this._handleCannotPlaceOrder(
+              `SO#${i} (recovery)`,
+              err instanceof Error ? err.message : String(err),
+            );
+            return;
           }
-          break; // arm one at a time
         }
       }
     }
@@ -1387,16 +1348,7 @@ export class ForegroundMartingaleBot {
         `Martingale ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base} [DRY RUN]`,
       );
 
-      // Arm next safety order
-      const nextLevel = state.levels[level.index + 1];
-      if (
-        nextLevel &&
-        !nextLevel.filled &&
-        nextLevel.buyOrderIds.length === 0
-      ) {
-        nextLevel.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
-      }
-
+      // Next SOs are already armed (all placed simultaneously at start).
       state.tpOrderId = `dry-sell-tp-${randomUUID().slice(0, 8)}`;
     }
 
@@ -1439,33 +1391,23 @@ export class ForegroundMartingaleBot {
           tpPrice,
         );
 
-        // Start new cycle: market entry + TP + first safety order
+        // Start new cycle: market entry + TP + ALL safety orders at once
         const newLevels = this._buildLevels(currentPrice);
         state.levels = newLevels;
         state.stopLossPrice = this._computeSlPrice(currentPrice).toString();
         await this._placeMarketEntry(newLevels[0], currentPrice);
         await this._placeTpOrder();
-        if (
-          newLevels[1] &&
-          !newLevels[1].filled &&
-          newLevels[1].buyOrderIds.length === 0
-        ) {
-          newLevels[1].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
-        }
+        await this._placeAllSafetyOrders(newLevels);
       }
     }
 
-    // Safety order recovery: arm the next safety level if its predecessor filled
-    // but the level itself has no active buy order (handles crash between fill and arm)
+    // Safety order recovery: re-arm every unfilled SO that has no active order
+    // (no predecessor check — all SOs run simultaneously)
     if (state.inPosition) {
       for (let i = 1; i < state.levels.length; i++) {
         const lv = state.levels[i];
         if (!lv.filled && lv.buyOrderIds.length === 0) {
-          const prev = state.levels[i - 1];
-          if (prev.filled) {
-            lv.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
-          }
-          break;
+          lv.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
         }
       }
     }
@@ -1516,11 +1458,57 @@ export class ForegroundMartingaleBot {
     const feeQuote = this._feeQuote(filled, currentPrice);
     level.filled = true;
     this._applyBuyFill(level, netBase, filledAmount, feeQuote, filled.id);
+    const quoteDp = this._getQuoteStep().decimalPlaces();
+    // Use actual avg fill price (filledAmount / netBase) instead of mid-price snapshot
+    const actualFillPrice = netBase.gt(0)
+      ? filledAmount.div(netBase)
+      : currentPrice;
     const feeStr = feeQuote.gt(0) ? ` | fee ${cs}${feeQuote.toFixed(2)}` : "";
     this._notify(
-      `Martingale ${this._config.pair}: ENTRY (market) @ ${cs}${currentPrice.toFixed(2)} | ` +
-        `${netBase} ${base} | avg ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr}`,
+      `Martingale ${this._config.pair}: ENTRY (market) @ ${cs}${actualFillPrice.toFixed(quoteDp)} | ` +
+        `${netBase} ${base} | avg ${cs}${new Decimal(state.avgEntryPrice).toFixed(quoteDp)}${feeStr}`,
     );
+  }
+
+  /**
+   * Place ALL unfilled safety orders (levels 1..maxSO) simultaneously via
+   * Promise.allSettled. On any failure the bot stops via _handleCannotPlaceOrder
+   * and the method returns false; returns true on full success.
+   */
+  private async _placeAllSafetyOrders(
+    levels: MartingaleLevelState[],
+  ): Promise<boolean> {
+    if (this._config.dryRun) {
+      for (let i = 1; i < levels.length; i++) {
+        if (!levels[i].filled && levels[i].buyOrderIds.length === 0) {
+          levels[i].buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
+        }
+      }
+      return true;
+    }
+
+    const soLevels = levels.filter(
+      (lv) => lv.index > 0 && !lv.filled && lv.buyOrderIds.length === 0,
+    );
+
+    const results = await Promise.allSettled(
+      soLevels.map(async (lv) => {
+        const orderId = await this._placeBuyOrder(lv);
+        lv.buyOrderIds.push(orderId);
+      }),
+    );
+
+    const firstFailure = results.find((r) => r.status === "rejected");
+    if (firstFailure && firstFailure.status === "rejected") {
+      const err = firstFailure.reason as unknown;
+      rethrowIfInsecureKey(err);
+      await this._handleCannotPlaceOrder(
+        "SO",
+        err instanceof Error ? err.message : String(err),
+      );
+      return false;
+    }
+    return true;
   }
 
   private async _placeBuyOrder(level: MartingaleLevelState): Promise<string> {
@@ -1534,7 +1522,11 @@ export class ForegroundMartingaleBot {
         executionInstructions: ["post_only"],
       },
     });
-    return resp.data.venue_order_id;
+    const orderId = resp.data.venue_order_id;
+    this._notify(
+      `Martingale ${this._config.pair}: SO#${level.index} placed @ ${this._cs}${level.price} | ${this._cs}${level.quoteSize}`,
+    );
+    return orderId;
   }
 
   private async _placeTpOrder(): Promise<void> {
@@ -1567,6 +1559,11 @@ export class ForegroundMartingaleBot {
       });
       state.tpOrderId = resp.data.venue_order_id;
       this._tpFailureCount = 0; // reset on success
+      const quoteDp = this._getQuoteStep().decimalPlaces();
+      const baseDp = this._getBaseStep().decimalPlaces();
+      this._notify(
+        `Martingale ${this._config.pair}: TP placed @ ${this._cs}${tpPrice.toFixed(quoteDp)} | qty ${totalQty.toFixed(baseDp)}`,
+      );
     } catch (err) {
       rethrowIfInsecureKey(err);
       this._tpFailureCount++;
