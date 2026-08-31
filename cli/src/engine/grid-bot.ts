@@ -1226,6 +1226,7 @@ export class ForegroundGridBot {
   private async _placeRemainingBuy(
     level: GridLevelState,
     quoteSize: Decimal,
+    clientOrderId?: string,
   ): Promise<void> {
     const constraints = this._getOrderConstraints();
     if (quoteSize.lt(constraints.minQuote)) return;
@@ -1239,7 +1240,7 @@ export class ForegroundGridBot {
           ? new Decimal(sellLevel.price)
           : undefined,
     );
-    await this._placeBuyOrder(level, quoteSize);
+    await this._placeBuyOrder(level, quoteSize, clientOrderId);
   }
 
   private async _processTerminalBuy(
@@ -1311,7 +1312,26 @@ export class ForegroundGridBot {
       settlement.profit.toFixed(2),
       settlement.feeQuote.toString(),
     );
-    this._saveGridState(this._state!);
+
+    // Pre-register the rebuy intent BEFORE saving state so that a crash between
+    // this save and _placeRemainingBuy is recovery-safe: reconciliation will find
+    // the pendingBuyClientOrderIds entry and place the buy on next restart.
+    const rebuyQuote = FILLED_STATUSES.has(order.status)
+      ? new Decimal(this._state!.quotePerLevel)
+      : floorToStep(settlement.costBasis, this._getQuoteStep());
+    let rebuyClientId: string | undefined;
+    if (rebuyQuote.gt(0) && !this._config.dryRun) {
+      const constraints = this._getOrderConstraints();
+      if (rebuyQuote.gte(constraints.minQuote)) {
+        rebuyClientId = randomUUID();
+        level.pendingBuyClientOrderIds ??= [];
+        level.pendingBuyQuoteSizes ??= {};
+        level.pendingBuyClientOrderIds.push(rebuyClientId);
+        level.pendingBuyQuoteSizes[rebuyClientId] = rebuyQuote.toString();
+      }
+    }
+
+    this._saveGridState(this._state!); // includes pending rebuy intent
 
     if (notify) {
       const base = this._config.pair.split("-")[0] ?? "";
@@ -1329,12 +1349,9 @@ export class ForegroundGridBot {
       await this._placeSellOnLevel(sellLevel, position);
     }
 
-    const rebuyQuote = FILLED_STATUSES.has(order.status)
-      ? new Decimal(this._state!.quotePerLevel)
-      : floorToStep(settlement.costBasis, this._getQuoteStep());
     if (rebuyQuote.gt(0)) {
       try {
-        await this._placeRemainingBuy(level, rebuyQuote);
+        await this._placeRemainingBuy(level, rebuyQuote, rebuyClientId);
       } catch (err) {
         rethrowIfInsecureKey(err);
         this._warnings.push(
