@@ -28,6 +28,8 @@ export {
   DEFAULT_MAX_RETRIES,
 } from "./config/settings.js";
 
+export { MAKER_FEE_RATE, TAKER_FEE_RATE } from "./config/fees.js";
+
 export {
   RevolutXError,
   AuthenticationError,

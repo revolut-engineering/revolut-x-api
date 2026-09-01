@@ -39,7 +39,11 @@ import {
   renderStartedMessage,
   type DashboardData,
 } from "./grid-renderer.js";
-import { levelsPerSide, trailUpTriggerPrice } from "./grid-math.js";
+import {
+  TAKER_FEE_RATE,
+  levelsPerSide,
+  trailUpTriggerPrice,
+} from "./grid-math.js";
 import {
   allocateBaseOrderSizes,
   constraintsFromPair,
@@ -978,14 +982,13 @@ export class ForegroundGridBot {
           );
           const filled = await this._awaitOrderFill(resp.data.venue_order_id);
           if (this._hasFilledQuantity(filled)) {
-            const filledBase = Decimal.min(
-              new Decimal(filled.filled_quantity),
-              totalBase,
-            );
-            const filledAmount = this._filledAmount(filled, currentPrice);
-            const feeQuote = this._feeQuote(filled, currentPrice);
+            const {
+              baseDelivered,
+              quoteProceeds: revenue,
+              feeQuote,
+            } = this._sellEconomics(filled, currentPrice);
+            const filledBase = Decimal.min(baseDelivered, totalBase);
             const costBasis = this._consumeHeldBase(filledBase);
-            const revenue = filledAmount.minus(feeQuote);
             const pnl = revenue.minus(costBasis);
             this._addFee(feeQuote);
             state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
@@ -1015,10 +1018,13 @@ export class ForegroundGridBot {
       } else if (this._config.dryRun) {
         // Simulate the market sell in dry-run mode
         const costBasis = this._consumeHeldBase(totalBase);
-        const revenue = totalBase
-          .times(currentPrice)
+        const grossRevenue = totalBase.times(currentPrice);
+        const feeQuote = grossRevenue.times(TAKER_FEE_RATE);
+        const revenue = grossRevenue
+          .minus(feeQuote)
           .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const pnl = revenue.minus(costBasis);
+        this._addFee(feeQuote);
         state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
           .plus(pnl)
           .toString();
@@ -1125,6 +1131,57 @@ export class ForegroundGridBot {
     return new Decimal(order.filled_quantity).times(fallbackPrice);
   }
 
+  private _feeSide(order: OrderDetails): "base" | "quote" | null {
+    const fee = order.total_fee ? new Decimal(order.total_fee) : new Decimal(0);
+    if (!fee.gt(0)) return null;
+    const [baseCurrency, quoteCurrency] = this._config.pair.split("-");
+    if (order.fee_currency === baseCurrency) return "base";
+    if (order.fee_currency === quoteCurrency) return "quote";
+    return null;
+  }
+
+  private _buyEconomics(
+    order: OrderDetails,
+    fallbackPrice: Decimal,
+  ): { baseReceived: Decimal; quoteCost: Decimal; feeQuote: Decimal } {
+    const feeQuote = this._feeQuote(order, fallbackPrice);
+    const filledAmount = this._filledAmount(order, fallbackPrice);
+    if (this._feeSide(order) === "base") {
+      return {
+        baseReceived: this._netBase(order),
+        quoteCost: filledAmount,
+        feeQuote,
+      };
+    }
+    return {
+      baseReceived: new Decimal(order.filled_quantity),
+      quoteCost: filledAmount.plus(feeQuote),
+      feeQuote,
+    };
+  }
+
+  private _sellEconomics(
+    order: OrderDetails,
+    fallbackPrice: Decimal,
+  ): { baseDelivered: Decimal; quoteProceeds: Decimal; feeQuote: Decimal } {
+    const feeQuote = this._feeQuote(order, fallbackPrice);
+    const filledAmount = this._filledAmount(order, fallbackPrice);
+    const filledQty = new Decimal(order.filled_quantity);
+    if (this._feeSide(order) === "base") {
+      const fee = new Decimal(order.total_fee!);
+      return {
+        baseDelivered: filledQty.plus(fee),
+        quoteProceeds: filledAmount,
+        feeQuote,
+      };
+    }
+    return {
+      baseDelivered: filledQty,
+      quoteProceeds: filledAmount.minus(feeQuote),
+      feeQuote,
+    };
+  }
+
   private _hasFilledQuantity(order: OrderDetails): boolean {
     return new Decimal(order.filled_quantity).gt(0);
   }
@@ -1171,8 +1228,11 @@ export class ForegroundGridBot {
       level.buyOrderQuoteSizes?.[order.id] ?? this._state!.quotePerLevel,
     );
     const filledAmount = this._filledAmount(order, fallbackPrice);
-    const feeQuote = this._feeQuote(order, fallbackPrice);
-    const netBase = this._netBase(order);
+    const {
+      baseReceived: netBase,
+      quoteCost,
+      feeQuote,
+    } = this._buyEconomics(order, fallbackPrice);
     const remainingQuote = floorToStep(
       Decimal.max(new Decimal(0), submittedQuote.minus(filledAmount)),
       this._getQuoteStep(),
@@ -1184,7 +1244,7 @@ export class ForegroundGridBot {
       position = {
         id: order.id,
         baseHeld: netBase.toString(),
-        fillCost: filledAmount.plus(feeQuote).toString(),
+        fillCost: quoteCost.toString(),
         sellOrderId: null,
       };
       level.positions.push(position);
@@ -1332,7 +1392,8 @@ export class ForegroundGridBot {
     fallbackPrice: Decimal,
   ): PositionSettlement {
     const heldBase = new Decimal(position.baseHeld);
-    const orderFilledBase = new Decimal(order.filled_quantity);
+    const sell = this._sellEconomics(order, fallbackPrice);
+    const orderFilledBase = sell.baseDelivered;
     const submittedBase = position.sellBaseSize
       ? new Decimal(position.sellBaseSize)
       : orderFilledBase;
@@ -1342,10 +1403,8 @@ export class ForegroundGridBot {
     }
 
     const fillRatio = settledBase.div(orderFilledBase);
-    const filledAmount = this._filledAmount(order, fallbackPrice).times(
-      fillRatio,
-    );
-    const feeQuote = this._feeQuote(order, fallbackPrice).times(fillRatio);
+    const proceeds = sell.quoteProceeds.times(fillRatio);
+    const feeQuote = sell.feeQuote.times(fillRatio);
     const fullCostBasis =
       position.fillCost && position.fillCost !== "0"
         ? new Decimal(position.fillCost)
@@ -1369,7 +1428,7 @@ export class ForegroundGridBot {
     return {
       quantity: settledBase,
       feeQuote,
-      profit: filledAmount.minus(feeQuote).minus(settledCostBasis),
+      profit: proceeds.minus(settledCostBasis),
       costBasis: settledCostBasis,
       remainingBase,
     };
@@ -1422,7 +1481,7 @@ export class ForegroundGridBot {
 
   private async _executeSplitMarketBuy(
     totalQuote: Decimal,
-  ): Promise<{ base: Decimal; amount: Decimal; fee: Decimal }> {
+  ): Promise<{ base: Decimal; cost: Decimal; fee: Decimal }> {
     const state = this._state!;
     const constraints = this._getOrderConstraints();
     state.splitRemainingQuote ??= totalQuote.toString();
@@ -1463,15 +1522,18 @@ export class ForegroundGridBot {
       }
 
       const fallbackPrice = new Decimal(state.gridPrice);
-      const filledBase = this._netBase(terminalOrder);
+      const {
+        baseReceived: filledBase,
+        quoteCost,
+        feeQuote,
+      } = this._buyEconomics(terminalOrder, fallbackPrice);
       const filledAmount = this._filledAmount(terminalOrder, fallbackPrice);
-      const feeQuote = this._feeQuote(terminalOrder, fallbackPrice);
       const submittedQuote: Decimal = new Decimal(state.splitOrderQuoteSize!);
       state.splitAccumulatedBase = new Decimal(state.splitAccumulatedBase)
         .plus(filledBase)
         .toString();
       state.splitAccumulatedAmount = new Decimal(state.splitAccumulatedAmount)
-        .plus(filledAmount)
+        .plus(quoteCost)
         .toString();
       state.splitAccumulatedFee = new Decimal(state.splitAccumulatedFee)
         .plus(feeQuote)
@@ -1488,7 +1550,7 @@ export class ForegroundGridBot {
 
     return {
       base: new Decimal(state.splitAccumulatedBase),
-      amount: new Decimal(state.splitAccumulatedAmount),
+      cost: new Decimal(state.splitAccumulatedAmount),
       fee: new Decimal(state.splitAccumulatedFee),
     };
   }
@@ -1593,7 +1655,7 @@ export class ForegroundGridBot {
     this._saveGridState(this._state);
 
     let splitBaseAcquired: Decimal | null = null;
-    let splitFilledAmount: Decimal | null = null;
+    let splitQuoteCost: Decimal | null = null;
     let splitFeeQuote = new Decimal(0);
     if (config.splitInvestment && !config.dryRun) {
       const marketBuyQuote = quotePerLevel.times(sellLevelIndices.size);
@@ -1609,7 +1671,7 @@ export class ForegroundGridBot {
       );
       const splitExecution = await this._executeSplitMarketBuy(marketBuyQuote);
       splitBaseAcquired = splitExecution.base;
-      splitFilledAmount = splitExecution.amount;
+      splitQuoteCost = splitExecution.cost;
       splitFeeQuote = splitExecution.fee;
       this._state.splitExecuted = true;
       this._saveGridState(this._state);
@@ -1643,9 +1705,11 @@ export class ForegroundGridBot {
       config.dryRun &&
       sellLevelIndices.size > 0
     ) {
-      const dryRunBase = quotePerLevel
-        .times(sellLevelIndices.size)
-        .div(currentPrice);
+      const dryRunQuote = quotePerLevel.times(sellLevelIndices.size);
+      const dryRunBase = dryRunQuote
+        .div(currentPrice)
+        .times(new Decimal(1).minus(TAKER_FEE_RATE));
+      this._addFee(dryRunQuote.times(TAKER_FEE_RATE));
       this._logTrade(
         "buy",
         currentPrice.toString(),
@@ -1700,7 +1764,10 @@ export class ForegroundGridBot {
       const totalBase =
         splitBaseAcquired ??
         floorToStep(
-          quotePerLevel.times(sellLevelIndices.size).div(currentPrice),
+          quotePerLevel
+            .times(sellLevelIndices.size)
+            .div(currentPrice)
+            .times(new Decimal(1).minus(TAKER_FEE_RATE)),
           baseStep,
         );
       const baseByLevel = allocateBaseOrderSizes(
@@ -1713,9 +1780,7 @@ export class ForegroundGridBot {
             : new Decimal(levels[index].price),
         ),
       );
-      const totalSplitCost = splitFilledAmount
-        ? splitFilledAmount.plus(splitFeeQuote)
-        : null;
+      const totalSplitCost = splitQuoteCost;
       const allocatedBase = baseByLevel.reduce(
         (sum, baseAmount) => sum.plus(baseAmount),
         new Decimal(0),
@@ -1976,7 +2041,7 @@ export class ForegroundGridBot {
       );
       const splitExecution = await this._executeSplitMarketBuy(marketBuyQuote);
       const splitBaseAcquired = splitExecution.base;
-      const splitFilledAmount = splitExecution.amount;
+      const splitQuoteCost = splitExecution.cost;
       const splitFeeQuote = splitExecution.fee;
       this._state.splitExecuted = true;
       if (!this._state.splitAccountingApplied) {
@@ -2026,7 +2091,7 @@ export class ForegroundGridBot {
           (sum, baseAmount) => sum.plus(baseAmount),
           new Decimal(0),
         );
-        const totalSplitCost = splitFilledAmount.plus(splitFeeQuote);
+        const totalSplitCost = splitQuoteCost;
         this._log(
           chalk.dim(
             `  Placing ${sellLevelsToRestore.length} initial sell orders...`,
