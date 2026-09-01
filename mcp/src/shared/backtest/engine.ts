@@ -1,4 +1,7 @@
 import { Decimal } from "decimal.js";
+import { TAKER_FEE_RATE } from "@revolut/revolut-x-api";
+
+const TAKER_FEE = new Decimal(TAKER_FEE_RATE);
 
 interface GridLevel {
   price: Decimal;
@@ -302,6 +305,7 @@ export function runBacktest(
     const splitCost = quotePerLevel.times(sellLevelIndices.length);
     const splitBase = splitCost
       .div(startPrice)
+      .times(new Decimal(1).minus(TAKER_FEE))
       .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
     const baseStep = new Decimal(1).div(new Decimal(10).pow(baseDp));
     const basePerLevel = splitBase
@@ -357,6 +361,7 @@ export function runBacktest(
           const baseHeld = position.baseHeld;
           const quoteReceived = baseHeld
             .times(fixedSlPrice)
+            .times(new Decimal(1).minus(TAKER_FEE))
             .toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
           const profit = quoteReceived.minus(position.costBasis);
           quoteBalance = quoteBalance.plus(quoteReceived);
