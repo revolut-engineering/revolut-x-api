@@ -677,6 +677,38 @@ export class ForegroundMartingaleBot {
               (id) => id !== buyOrderId,
             );
             ordersDead++;
+            // If the dead order had a partial fill, apply the accounting so
+            // that step 5 (recovery) only re-places the remaining quote.
+            if (
+              !level.filled &&
+              new Decimal(order.filled_quantity ?? "0").gt(0)
+            ) {
+              const levelPrice = new Decimal(level.price);
+              const netBase = this._netBase(order);
+              const filledAmount = this._filledAmount(order, levelPrice);
+              const feeQuote = this._feeQuote(order, levelPrice);
+              const state = this._state!;
+              state.totalQty = new Decimal(state.totalQty)
+                .plus(netBase)
+                .toString();
+              state.totalCost = new Decimal(state.totalCost)
+                .plus(filledAmount)
+                .plus(feeQuote)
+                .toString();
+              state.avgEntryPrice = new Decimal(state.totalCost)
+                .div(new Decimal(state.totalQty))
+                .toString();
+              state.lastBuyPrice = level.price;
+              this._addFee(feeQuote);
+              state.stats.totalBuys++;
+              // Shrink quoteSize so recovery step 5 places only the remainder.
+              const quoteDp = this._getQuoteStep().decimalPlaces();
+              const remaining = Decimal.max(
+                new Decimal(0),
+                new Decimal(level.quoteSize).minus(filledAmount),
+              ).toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
+              level.quoteSize = remaining.toString();
+            }
           } else {
             ordersKept++;
           }
@@ -1190,16 +1222,53 @@ export class ForegroundMartingaleBot {
             );
             // Re-place if level not yet filled
             if (!level.filled) {
-              try {
-                const orderId = await this._placeBuyOrder(level);
-                level.buyOrderIds.push(orderId);
-              } catch (err) {
-                rethrowIfInsecureKey(err);
-                await this._handleCannotPlaceOrder(
-                  `SO#${level.index + 1} (re-place)`,
-                  err instanceof Error ? err.message : String(err),
-                );
-                return;
+              // If the dead order had a partial fill, account for the received
+              // base and re-place only the remaining quote so we don't
+              // over-spend capital that was already used.
+              const hadPartialFill = new Decimal(
+                order.filled_quantity ?? "0",
+              ).gt(0);
+              if (hadPartialFill) {
+                const levelPrice = new Decimal(level.price);
+                const netBase = this._netBase(order);
+                const filledAmount = this._filledAmount(order, levelPrice);
+                const feeQuote = this._feeQuote(order, levelPrice);
+                // Apply partial fill to accounting (do NOT set level.filled or
+                // increment safetyOrdersFilled — the SO is not fully done).
+                state.totalQty = new Decimal(state.totalQty)
+                  .plus(netBase)
+                  .toString();
+                state.totalCost = new Decimal(state.totalCost)
+                  .plus(filledAmount)
+                  .plus(feeQuote)
+                  .toString();
+                state.avgEntryPrice = new Decimal(state.totalCost)
+                  .div(new Decimal(state.totalQty))
+                  .toString();
+                state.lastBuyPrice = level.price;
+                this._addFee(feeQuote);
+                state.stats.totalBuys++;
+                // Reduce the SO quote size to only the remaining unfilled portion.
+                const quoteDp = this._getQuoteStep().decimalPlaces();
+                const remaining = Decimal.max(
+                  new Decimal(0),
+                  new Decimal(level.quoteSize).minus(filledAmount),
+                ).toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
+                level.quoteSize = remaining.toString();
+              }
+              const minQuote = this._getMinOrderQuote();
+              if (new Decimal(level.quoteSize).gte(minQuote)) {
+                try {
+                  const orderId = await this._placeBuyOrder(level);
+                  level.buyOrderIds.push(orderId);
+                } catch (err) {
+                  rethrowIfInsecureKey(err);
+                  await this._handleCannotPlaceOrder(
+                    `SO#${level.index + 1} (re-place)`,
+                    err instanceof Error ? err.message : String(err),
+                  );
+                  return;
+                }
               }
             }
           }
@@ -1761,8 +1830,12 @@ export class ForegroundMartingaleBot {
 
     const soBar = Array.from(
       { length: state.config.maxSafetyOrders + 1 },
-      (_, i) =>
-        i < state.safetyOrdersFilled + (state.inPosition ? 1 : 0) ? "■" : "□",
+      (_, i) => {
+        if (i < state.safetyOrdersFilled + (state.inPosition ? 1 : 0))
+          return "■"; // filled
+        if ((state.levels[i]?.buyOrderIds.length ?? 0) > 0) return "▒"; // placed, not filled
+        return "□"; // not placed
+      },
     ).join("");
 
     const body = [
