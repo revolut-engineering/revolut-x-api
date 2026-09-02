@@ -297,11 +297,12 @@ export function renderMartingaleDashboard(
 
   const soFilled = state.safetyOrdersFilled;
   const soMax = cfg.maxSafetyOrders;
-  const soBar = Array.from({ length: soMax + 1 }, (_, i) =>
-    i < soFilled + (state.inPosition ? 1 : 0)
-      ? chalk.green("███")
-      : chalk.dim("···"),
-  ).join(" ");
+  const soBar = Array.from({ length: soMax + 1 }, (_, i) => {
+    if (i < soFilled + (state.inPosition ? 1 : 0)) return chalk.green("███");
+    if ((state.levels[i]?.buyOrderIds.length ?? 0) > 0)
+      return chalk.green("▒▒▒");
+    return chalk.dim("···");
+  }).join(" ");
 
   if (state.inPosition) {
     const base = state.pair.split("-")[0] ?? "";
