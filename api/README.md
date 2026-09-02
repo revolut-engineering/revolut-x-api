@@ -239,7 +239,7 @@ const myTrades = await client.getPrivateTrades("BTC-USD");
 const transactions = await client.getTransactions({
   startDate: 1700000000000,
   endDate: 1700086400000,
-  types: ["buy", "receive"],
+  types: ["buy", "sell", "receive", "send", "stake", "un_stake", "reward"],
   currencies: ["BTC", "USD"],
 });
 // → { data: Transaction[], metadata: { timestamp, next_cursor? } }

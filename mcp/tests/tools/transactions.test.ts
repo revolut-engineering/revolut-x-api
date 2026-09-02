@@ -28,10 +28,14 @@ const buyTransaction = {
   id: "buy-1",
   status: "completed",
   type: "buy",
-  source_currency: "USD",
-  source_amount: "1.00",
-  destination_currency: "BTC",
-  destination_amount: "0.00001564",
+  source: {
+    amount: "1.00",
+    currency: "USD",
+  },
+  destination: {
+    amount: "0.00001564",
+    currency: "BTC",
+  },
   created_date: 1786607516938,
   processed_date: 1786607517180,
 };
@@ -91,8 +95,10 @@ describe("transaction tools", () => {
       id: "receive-1",
       status: "completed",
       type: "receive",
-      destination_currency: "USD",
-      destination_amount: "14.70",
+      destination: {
+        amount: "14.70",
+        currency: "USD",
+      },
       created_date: 1786606457673,
       processed_date: 1786606457675,
     };
@@ -116,8 +122,10 @@ describe("transaction tools", () => {
       id: "send-1",
       status: "completed",
       type: "send",
-      source_currency: "BTC",
-      source_amount: "0.005",
+      source: {
+        amount: "0.005",
+        currency: "BTC",
+      },
       created_date: 1786606457673,
       processed_date: 1786606457675,
     };
@@ -143,7 +151,7 @@ describe("transaction tools", () => {
       arguments: {
         start_date: "2026-08-01",
         end_date: "2026-08-02",
-        types: ["buy", "receive"],
+        types: ["stake", "un_stake", "reward"],
         statuses: ["completed"],
         currencies: ["btc", "usd"],
         totalLimit: 50,
@@ -154,7 +162,7 @@ describe("transaction tools", () => {
       expect.objectContaining({
         startDate: expect.any(Number),
         endDate: expect.any(Number),
-        types: ["buy", "receive"],
+        types: ["stake", "un_stake", "reward"],
         statuses: ["completed"],
         currencies: ["BTC", "USD"],
         cursor: undefined,

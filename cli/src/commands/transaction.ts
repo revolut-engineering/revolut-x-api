@@ -17,14 +17,22 @@ import {
   type ColumnDef,
 } from "../output/formatter.js";
 
-const TRANSACTION_TYPES = ["buy", "sell", "send", "receive"] as const;
+const TRANSACTION_TYPES = [
+  "buy",
+  "sell",
+  "receive",
+  "send",
+  "stake",
+  "un_stake",
+  "reward",
+] as const;
 
 const TRANSACTION_STATUSES = [
   "pending",
   "completed",
-  "rejected",
+  "canceled",
   "failed",
-  "cancelled",
+  "reverted",
 ] as const;
 
 function formatPeriod(start?: number, end?: number): string {
@@ -81,7 +89,9 @@ function parseList<T extends string>(
 export function registerTransactionCommand(program: Command): void {
   const transaction = program
     .command("transaction")
-    .description("Transaction history (buys, sells, sends, and receives)")
+    .description(
+      "Transaction history (trades, transfers, staking, and rewards)",
+    )
     .configureOutput({
       outputError: (str, write) => {
         const cleanedMsg = str.replace(/^error:\s*/i, "").trim();
@@ -210,15 +220,15 @@ Without --start-date, the 30 days ending at --end-date (now by default) are retu
                 {
                   header: "Source Amount",
                   accessor: (t) =>
-                    formatFlow(t.source_amount, t.source_currency, "-"),
+                    formatFlow(t.source?.amount, t.source?.currency, "-"),
                   align: "right",
                 },
                 {
                   header: "Destination Amount",
                   accessor: (t) =>
                     formatFlow(
-                      t.destination_amount,
-                      t.destination_currency,
+                      t.destination?.amount,
+                      t.destination?.currency,
                       "+",
                     ),
                   align: "right",
@@ -248,7 +258,7 @@ function formatStatus(t: Transaction): string {
   const s = String(t.status);
   if (s === "completed") return chalk.green("completed");
   if (s === "pending") return chalk.yellow("pending");
-  if (s === "rejected" || s === "failed") return chalk.red(s);
-  if (s === "cancelled") return chalk.gray("cancelled");
+  if (s === "failed") return chalk.red(s);
+  if (s === "canceled" || s === "reverted") return chalk.gray(s);
   return s;
 }
