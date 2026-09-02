@@ -1050,6 +1050,38 @@ export class ForegroundGridBot {
     this.stop();
   }
 
+  private async _cancelAllOpenOrders(): Promise<void> {
+    const state = this._state;
+    if (!state || !this._client || this._config.dryRun) return;
+    const cancels: Promise<void>[] = [];
+    for (const level of state.levels) {
+      for (const buyOrderId of [...level.buyOrderIds]) {
+        cancels.push(
+          this._cancelOrderWithoutFill(buyOrderId)
+            .then(() => {
+              this._removeBuyOrder(level, buyOrderId);
+            })
+            .catch((err) => rethrowIfInsecureKey(err)),
+        );
+      }
+      for (const pos of level.positions) {
+        const sellOrderId = pos.sellOrderId;
+        if (sellOrderId) {
+          cancels.push(
+            this._cancelOrderWithoutFill(sellOrderId)
+              .then(() => {
+                pos.sellOrderId = null;
+                pos.sellBaseSize = undefined;
+                pos.sellClientOrderId = undefined;
+              })
+              .catch((err) => rethrowIfInsecureKey(err)),
+          );
+        }
+      }
+    }
+    await Promise.all(cancels);
+  }
+
   private async _handleCannotPlaceOrder(
     type: string,
     reason: string,
@@ -1060,6 +1092,7 @@ export class ForegroundGridBot {
       `Bot stopped — check the exchange and restart with --reset once resolved.`;
     this._warnings.push(msg);
     this._log(chalk.red(`\n  ✗ ${msg}`));
+    await this._cancelAllOpenOrders();
     await this._notifyAndWait(
       `🚨 Grid Bot ${pair}: Can't place ${type} order.\n` +
         `Reason: ${reason}\n` +
