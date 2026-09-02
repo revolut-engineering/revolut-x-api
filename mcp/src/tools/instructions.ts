@@ -36,6 +36,8 @@ Read-only data (safe to call):
   get_transactions      — buys, sells, sends, and receives
   grid_backtest         — run backtest simulation
   grid_optimize         — optimize grid parameters
+  martingale_backtest   — run martingale backtest simulation
+  martingale_optimize   — optimize martingale parameters
 
 Knowledge base (safe to call):
   list_kb_articles      — list available help articles with their intents
@@ -81,7 +83,7 @@ Trading capabilities available with the plugin:
   - Run live grid bots with real-time dashboard
   - Monitor prices with 10 indicator types (RSI, EMA, MACD, Bollinger, etc.)
   - Send alerts to Telegram
-  - Backtest and optimize grid strategies (also available in this MCP)
+  - Backtest and optimize grid and martingale strategies (also available in this MCP)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 IMPORTANT - Security Policy
