@@ -23,6 +23,7 @@ import {
 import { loadConnections, type TelegramConnection } from "../db/store.js";
 import { sendWithRetries } from "./notify.js";
 import { LiveStatusReporter } from "./live-status.js";
+import { TAKER_FEE_RATE } from "./grid-math.js";
 import {
   renderMartingaleDashboard,
   renderMartingaleShutdownSummary,
@@ -975,10 +976,13 @@ export class ForegroundMartingaleBot {
           await this._handleOrderFailureLimit("SL", currentPrice.toFixed(2));
         }
       } else if (this._config.dryRun) {
-        const revenue = totalQty
-          .times(currentPrice)
+        const grossRevenue = totalQty.times(currentPrice);
+        const feeQuote = grossRevenue.times(TAKER_FEE_RATE);
+        const revenue = grossRevenue
+          .minus(feeQuote)
           .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(new Decimal(state.totalCost));
+        this._addFee(feeQuote);
         state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
           .plus(profit)
           .toString();
@@ -991,6 +995,7 @@ export class ForegroundMartingaleBot {
           "dry-sl",
           "sl",
           profit.toFixed(2),
+          feeQuote.gt(0) ? feeQuote.toFixed(2) : undefined,
         );
       }
     }
@@ -1503,15 +1508,17 @@ export class ForegroundMartingaleBot {
     if (this._config.dryRun) {
       const baseStep = this._getBaseStep();
       const quoteSize = new Decimal(level.quoteSize);
+      const feeQuote = quoteSize.times(TAKER_FEE_RATE);
       const filledQty = quoteSize
         .div(currentPrice)
         .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
       const orderId = `dry-market-${randomUUID().slice(0, 8)}`;
       level.filled = true;
-      this._applyBuyFill(level, filledQty, quoteSize, new Decimal(0), orderId);
+      this._applyBuyFill(level, filledQty, quoteSize, feeQuote, orderId);
+      const feeStr = feeQuote.gt(0) ? ` | fee ${cs}${feeQuote.toFixed(2)}` : "";
       this._notify(
         `Martingale ${this._config.pair}: ENTRY (market) @ ${cs}${currentPrice.toFixed(2)} | ` +
-          `${filledQty} ${base} [DRY RUN]`,
+          `${filledQty} ${base} | avg ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr} [DRY RUN]`,
       );
       return;
     }
