@@ -9,6 +9,7 @@ import {
 import { loadPrivateKey } from "./auth/keypair.js";
 import { loadCredentials } from "./auth/index.js";
 import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
+import { MAKER_FEE_RATE, TAKER_FEE_RATE } from "./config/fees.js";
 import { ORDER_BOOK_DEFAULT_DEPTH } from "./pagination/constants.js";
 import { type LogCallback, Logger } from "./logging/logger.js";
 import { placeOrderSchema, replaceOrderSchema } from "./validation/schemas.js";
@@ -163,6 +164,14 @@ export class RevolutXClient {
   async getCurrencyPairs(): Promise<CurrencyPairMap> {
     this.requireAuth();
     return this.request<CurrencyPairMap>("GET", "/configuration/pairs");
+  }
+
+  getMakerFee(): string {
+    return MAKER_FEE_RATE;
+  }
+
+  getTakerFee(): string {
+    return TAKER_FEE_RATE;
   }
 
   async getTickers(

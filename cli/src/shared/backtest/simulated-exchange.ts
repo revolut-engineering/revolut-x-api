@@ -1,5 +1,6 @@
 import { Decimal } from "decimal.js";
 import { floorToStep } from "../../engine/grid-plan.js";
+import { MAKER_FEE_RATE, TAKER_FEE_RATE } from "../../engine/grid-math.js";
 
 interface SimOrder {
   id: string;
@@ -40,13 +41,19 @@ export class SimulatedExchange {
   private readonly _cancelledOrderIds = new Set<string>();
   private readonly _baseStep: Decimal;
   private readonly _quoteStep: Decimal;
+  private readonly _baseCurrency: string;
+  private readonly _quoteCurrency: string;
 
   constructor(
     baseStep = new Decimal("0.00001"),
     quoteStep = new Decimal("0.01"),
+    baseCurrency = "BTC",
+    quoteCurrency = "USD",
   ) {
     this._baseStep = baseStep;
     this._quoteStep = quoteStep;
+    this._baseCurrency = baseCurrency;
+    this._quoteCurrency = quoteCurrency;
   }
 
   /** Must be called before constructing to avoid ID collisions across instances */
@@ -151,14 +158,17 @@ export class SimulatedExchange {
         const qty = floorToStep(order.quoteSize.div(fillPrice), this._baseStep);
         this._filledBuysThisTick.push({
           price: fillPrice,
-          quantity: qty,
+          quantity: qty.minus(qty.times(TAKER_FEE_RATE)),
           quoteValue: order.quoteSize,
         });
         this._cashBalance = this._cashBalance.minus(order.quoteSize);
       } else if (params.side === "sell" && order.baseSize) {
-        const quoteReceived = floorToStep(
+        const grossQuote = floorToStep(
           order.baseSize.times(fillPrice),
           this._quoteStep,
+        );
+        const quoteReceived = grossQuote.minus(
+          grossQuote.times(TAKER_FEE_RATE),
         );
         this._filledSellsThisTick.push({
           price: fillPrice,
@@ -208,7 +218,7 @@ export class SimulatedExchange {
           filled_quantity: "0",
           filled_amount: "0",
           total_fee: "0",
-          fee_currency: "USD",
+          fee_currency: this._quoteCurrency,
         },
       };
     }
@@ -221,7 +231,7 @@ export class SimulatedExchange {
           filled_quantity: "0",
           filled_amount: "0",
           total_fee: "0",
-          fee_currency: "USD",
+          fee_currency: this._quoteCurrency,
         },
       };
     }
@@ -263,14 +273,21 @@ export class SimulatedExchange {
     // Remove from open orders after querying (the bot won't re-query it)
     this._orders.delete(id);
 
+    const feeRate = order.type === "market" ? TAKER_FEE_RATE : MAKER_FEE_RATE;
+    const fee = (order.side === "buy" ? filledQuantity : filledAmount).times(
+      feeRate,
+    );
+    const feeCurrency =
+      order.side === "buy" ? this._baseCurrency : this._quoteCurrency;
+
     return {
       data: {
         id,
         status: "filled",
         filled_quantity: filledQuantity.toString(),
         filled_amount: filledAmount.toString(),
-        total_fee: "0",
-        fee_currency: "USD",
+        total_fee: fee.toString(),
+        fee_currency: feeCurrency,
       },
     };
   }

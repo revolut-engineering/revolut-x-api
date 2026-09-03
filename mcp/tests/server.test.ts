@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockRevolutXClient = vi.hoisted(() => vi.fn());
 
-vi.mock("@revolut/revolut-x-api", () => ({
+vi.mock("@revolut/revolut-x-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@revolut/revolut-x-api")>()),
   RevolutXClient: mockRevolutXClient,
 }));
 

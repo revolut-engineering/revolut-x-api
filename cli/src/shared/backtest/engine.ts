@@ -5,7 +5,10 @@ import type {
   GridBotConfig,
   GridExchangeRateLimiter,
 } from "../../engine/grid-bot.js";
-import { trailUpTriggerFromBounds } from "../../engine/grid-math.js";
+import {
+  TAKER_FEE_RATE,
+  trailUpTriggerFromBounds,
+} from "../../engine/grid-math.js";
 import {
   createGridPlan,
   createGridPrices,
@@ -441,6 +444,7 @@ export function runBacktest(
     split,
     stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
     constraints,
+    takerFeeRate: TAKER_FEE_RATE,
   });
   const levels: GridLevel[] = plan.levels.map((level) => ({
     price: level.price,
@@ -500,7 +504,9 @@ export function runBacktest(
           const position = level.positions.pop()!;
           const baseHeld = position.baseHeld;
           const quoteReceived = floorToStep(
-            baseHeld.times(fixedSlPrice),
+            baseHeld
+              .times(fixedSlPrice)
+              .times(new Decimal(1).minus(TAKER_FEE_RATE)),
             quoteStep,
           );
           const profit = quoteReceived.minus(position.costBasis);
@@ -729,6 +735,7 @@ export function optimizeGridParams(
         split,
         stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
         constraints,
+        takerFeeRate: TAKER_FEE_RATE,
       });
     }
   }
@@ -845,6 +852,7 @@ function buildBotInitialState(
     split,
     stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
     constraints,
+    takerFeeRate: TAKER_FEE_RATE,
   });
   const levels: GridLevelState[] = plan.levels.map((level) => ({
     index: level.index,
@@ -981,6 +989,8 @@ export async function runBacktestBot(
   const exchange = new SimulatedExchange(
     constraints.baseStep,
     constraints.quoteStep,
+    "BTC",
+    "USD",
   );
 
   const { state, quotePerLevel } = buildBotInitialState(

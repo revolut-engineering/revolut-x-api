@@ -1,5 +1,12 @@
 import { Decimal } from "decimal.js";
+import {
+  MAKER_FEE_RATE as MAKER_FEE_RATE_RAW,
+  TAKER_FEE_RATE as TAKER_FEE_RATE_RAW,
+} from "@revolut/revolut-x-api";
 import type { GridLevelState } from "../db/grid-store.js";
+
+export const MAKER_FEE_RATE = new Decimal(MAKER_FEE_RATE_RAW);
+export const TAKER_FEE_RATE = new Decimal(TAKER_FEE_RATE_RAW);
 
 export function levelsPerSide(totalLevels: number): number {
   return totalLevels / 2;

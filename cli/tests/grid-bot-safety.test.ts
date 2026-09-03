@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { Decimal } from "decimal.js";
-import type { CurrencyPair } from "@revolut/revolut-x-api";
+import type { CurrencyPair, OrderDetails } from "@revolut/revolut-x-api";
 import { ForegroundGridBot } from "../src/engine/grid-bot.js";
 import {
   deleteGridState,
   saveGridState,
+  type GridLevelPosition,
+  type GridLevelState,
   type GridState,
 } from "../src/db/grid-store.js";
 
@@ -276,7 +278,7 @@ describe("grid bot safety", () => {
       };
       _executeSplitMarketBuy: (
         totalQuote: Decimal,
-      ) => Promise<{ base: Decimal; amount: Decimal; fee: Decimal }>;
+      ) => Promise<{ base: Decimal; cost: Decimal; fee: Decimal }>;
     };
     internals._state = state;
     internals._pairInfo = PAIR_INFO;
@@ -287,7 +289,7 @@ describe("grid bot safety", () => {
 
     // then
     expect(result.base.toString()).toBe("0.2");
-    expect(result.amount.toString()).toBe("20");
+    expect(result.cost.toString()).toBe("20");
     expect(placeOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         side: "buy",
@@ -838,7 +840,7 @@ describe("grid bot safety", () => {
     const message = String(notify.mock.calls[0][0]);
 
     // then
-    expect(message).toContain("Realized P&L: -$2.00");
+    expect(message).toContain("Realized P&L: -$2.01");
     expect(message).not.toContain("$-");
   });
 
@@ -1500,5 +1502,189 @@ describe("grid bot safety", () => {
     expect(saveGridState).toHaveBeenCalledWith(state);
     expect(state.splitOrderId).toBe("split-order-1");
     expect(state.splitClientOrderId).toBe("split-client-1");
+  });
+});
+
+describe("grid bot fee accounting", () => {
+  const GROSS_BASE = "0.00635024";
+  const NET_BASE = "0.00634452";
+  const BUY_QUOTE = "500.00";
+  const BASE_FEE = "0.00000572";
+  const BUY_PRICE = new Decimal("78737.18");
+
+  function baseFeeBuy(): OrderDetails {
+    return {
+      id: "buy-1",
+      status: "filled",
+      filled_quantity: GROSS_BASE,
+      filled_amount: BUY_QUOTE,
+      total_fee: BASE_FEE,
+      fee_currency: "BTC",
+    } as unknown as OrderDetails;
+  }
+
+  function internalsFor(state: GridState) {
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _settleTerminalBuyFill: (
+        level: GridLevelState,
+        order: OrderDetails,
+        fallbackPrice: Decimal,
+      ) => { position: GridLevelPosition | null; remainingQuote: Decimal };
+      _settlePositionFill: (
+        level: GridLevelState,
+        position: GridLevelPosition,
+        order: OrderDetails,
+        fallbackPrice: Decimal,
+      ) => { profit: Decimal; feeQuote: Decimal; costBasis: Decimal };
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    return internals;
+  }
+
+  it("does not add a base-denominated buy fee to the cost basis", async () => {
+    // given
+    const state = makeState();
+    const level = state.levels[0];
+    level.buyOrderIds = ["buy-1"];
+    const internals = internalsFor(state);
+
+    // when
+    const { position } = internals._settleTerminalBuyFill(
+      level,
+      baseFeeBuy(),
+      BUY_PRICE,
+    );
+
+    // then
+    expect(position?.baseHeld).toBe(NET_BASE);
+    expect(new Decimal(position!.fillCost!).toString()).toBe("500");
+    expect(new Decimal(state.stats.totalFees!).toFixed(2)).toBe("0.45");
+  });
+
+  it("adds a quote-denominated buy fee to the cost basis", async () => {
+    // given
+    const state = makeState();
+    const level = state.levels[0];
+    level.buyOrderIds = ["buy-1"];
+    const internals = internalsFor(state);
+
+    // when
+    const { position } = internals._settleTerminalBuyFill(
+      level,
+      {
+        id: "buy-1",
+        status: "filled",
+        filled_quantity: GROSS_BASE,
+        filled_amount: BUY_QUOTE,
+        total_fee: "0.45",
+        fee_currency: "USD",
+      } as unknown as OrderDetails,
+      BUY_PRICE,
+    );
+
+    // then
+    expect(position?.baseHeld).toBe(GROSS_BASE);
+    expect(new Decimal(position!.fillCost!).toString()).toBe("500.45");
+    expect(new Decimal(state.stats.totalFees!).toFixed(2)).toBe("0.45");
+  });
+
+  it("realises a profit on a round trip that clears the effective entry price", async () => {
+    // given
+    const state = makeState();
+    const level = state.levels[0];
+    level.buyOrderIds = ["buy-1"];
+    const internals = internalsFor(state);
+    const { position } = internals._settleTerminalBuyFill(
+      level,
+      baseFeeBuy(),
+      BUY_PRICE,
+    );
+
+    // when
+    const settlement = internals._settlePositionFill(
+      level,
+      position!,
+      {
+        id: "sell-1",
+        status: "filled",
+        filled_quantity: NET_BASE,
+        filled_amount: "500.29",
+        total_fee: "0",
+        fee_currency: "USD",
+      } as unknown as OrderDetails,
+      new Decimal("78854.46"),
+    );
+
+    // then
+    expect(settlement.profit.toFixed(2)).toBe("0.29");
+    expect(settlement.feeQuote.isZero()).toBe(true);
+  });
+
+  it("charges the split market buy fee once, against the base received", async () => {
+    // given
+    const state = makeState();
+    state.config.splitInvestment = true;
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "split-1" },
+    }));
+    const getOrder = vi.fn(async (orderId: string) => ({
+      data: {
+        id: orderId,
+        status: "filled",
+        filled_quantity: GROSS_BASE,
+        filled_amount: BUY_QUOTE,
+        total_fee: BASE_FEE,
+        fee_currency: "BTC",
+      },
+    }));
+    const getActiveOrders = vi.fn(async () => ({ data: [], metadata: {} }));
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "1000",
+      splitInvestment: true,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: {
+        getOrder: typeof getOrder;
+        getActiveOrders: typeof getActiveOrders;
+        placeOrder: typeof placeOrder;
+      };
+      _executeSplitMarketBuy: (
+        totalQuote: Decimal,
+      ) => Promise<{ base: Decimal; cost: Decimal; fee: Decimal }>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { getOrder, getActiveOrders, placeOrder };
+
+    // when
+    const result = await internals._executeSplitMarketBuy(new Decimal("500"));
+
+    // then
+    expect(result.base.toString()).toBe(NET_BASE);
+    expect(result.cost.toString()).toBe("500");
+    expect(result.fee.toFixed(2)).toBe("0.45");
   });
 });

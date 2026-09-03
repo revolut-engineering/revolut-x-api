@@ -20,6 +20,7 @@ export interface GridPlanInput {
   split: boolean;
   stopLoss?: Decimal;
   constraints: GridOrderConstraints;
+  takerFeeRate?: Decimal;
 }
 
 export interface GridPlanLevel {
@@ -124,9 +125,10 @@ export function createGridPlan(input: GridPlanInput): GridPlan {
   let splitBaseByLevel: Decimal[] = [];
   let splitCostByLevel: Decimal[] = [];
   if (split && sellLevelIndices.length > 0) {
+    const takerFeeRate = input.takerFeeRate ?? new Decimal(0);
     const splitQuote = quotePerLevel.times(sellLevelIndices.length);
     const splitBase = floorToStep(
-      splitQuote.div(startPrice),
+      splitQuote.div(startPrice).times(new Decimal(1).minus(takerFeeRate)),
       constraints.baseStep,
     );
     if (splitBase.gt(constraints.maxBase)) {
