@@ -34,10 +34,14 @@ const sampleTransaction = {
   id: "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
   status: "completed",
   type: "buy",
-  source_currency: "USD",
-  source_amount: "1000.00",
-  destination_currency: "BTC",
-  destination_amount: "0.01",
+  source: {
+    amount: "1000.00",
+    currency: "USD",
+  },
+  destination: {
+    amount: "0.01",
+    currency: "BTC",
+  },
   created_date: 1700000000000,
   processed_date: 1700000001000,
 };
@@ -131,11 +135,19 @@ describe("transaction list", () => {
       "transaction",
       "list",
       "--types",
-      "buy,receive",
+      "BUY,SELL,RECEIVE,SEND,STAKE,UN_STAKE,REWARD",
     ]);
     expect(mockGetTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
-        types: ["buy", "receive"],
+        types: [
+          "buy",
+          "sell",
+          "receive",
+          "send",
+          "stake",
+          "un_stake",
+          "reward",
+        ],
       }),
     );
   });
@@ -258,10 +270,8 @@ describe("transaction list", () => {
     const receiveTransaction = {
       ...sampleTransaction,
       type: "receive",
-      source_currency: undefined,
-      source_amount: undefined,
-      destination_currency: "USD",
-      destination_amount: "14.70",
+      source: undefined,
+      destination: { amount: "14.70", currency: "USD" },
     };
     mockGetTransactions.mockResolvedValue({ data: [receiveTransaction] });
     await program.parseAsync(["node", "revx", "transaction", "list"]);
@@ -274,10 +284,8 @@ describe("transaction list", () => {
     const sendTransaction = {
       ...sampleTransaction,
       type: "send",
-      source_currency: "BTC",
-      source_amount: "0.005",
-      destination_currency: undefined,
-      destination_amount: undefined,
+      source: { amount: "0.005", currency: "BTC" },
+      destination: undefined,
     };
     mockGetTransactions.mockResolvedValue({ data: [sendTransaction] });
     await program.parseAsync(["node", "revx", "transaction", "list"]);

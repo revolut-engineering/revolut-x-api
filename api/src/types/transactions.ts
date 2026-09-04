@@ -1,11 +1,18 @@
-export type TransactionType = "buy" | "sell" | "send" | "receive";
+export type TransactionType =
+  | "buy"
+  | "sell"
+  | "receive"
+  | "send"
+  | "stake"
+  | "un_stake"
+  | "reward";
 
 export type TransactionStatus =
   | "pending"
   | "completed"
-  | "rejected"
+  | "canceled"
   | "failed"
-  | "cancelled";
+  | "reverted";
 
 interface TransactionBase {
   id: string;
@@ -15,27 +22,16 @@ interface TransactionBase {
   processed_date?: number;
 }
 
-interface TransactionSource {
-  source_currency: string;
-  source_amount: string;
-}
-
-interface TransactionDestination {
-  destination_currency: string;
-  destination_amount: string;
+interface TransactionLeg {
+  amount: string;
+  currency: string;
 }
 
 export type Transaction = TransactionBase &
   (
-    | (TransactionSource & TransactionDestination)
-    | (TransactionSource & {
-        destination_currency?: never;
-        destination_amount?: never;
-      })
-    | (TransactionDestination & {
-        source_currency?: never;
-        source_amount?: never;
-      })
+    | { source: TransactionLeg; destination: TransactionLeg }
+    | { source: TransactionLeg; destination?: never }
+    | { destination: TransactionLeg; source?: never }
   );
 
 export interface TransactionsOptions {

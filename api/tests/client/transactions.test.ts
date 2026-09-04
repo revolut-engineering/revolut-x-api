@@ -46,10 +46,8 @@ describe("Transactions", () => {
         id: "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
         status: "completed",
         type: "buy",
-        source_currency: "USD",
-        source_amount: "1000.00",
-        destination_currency: "BTC",
-        destination_amount: "0.01",
+        source: { amount: "1000.00", currency: "USD" },
+        destination: { amount: "0.01", currency: "BTC" },
         created_date: 1700000000000,
         processed_date: 1700000001000,
       });
@@ -60,10 +58,8 @@ describe("Transactions", () => {
       const destinationOnly = {
         ...mockTransaction,
         type: "receive",
-        source_currency: undefined,
-        source_amount: undefined,
-        destination_currency: "USD",
-        destination_amount: "14.70",
+        source: undefined,
+        destination: { amount: "14.70", currency: "USD" },
       };
       nock(BASE_URL)
         .get("/api/1.0/transactions")
@@ -74,10 +70,11 @@ describe("Transactions", () => {
 
       const result = await client.getTransactions();
 
-      expect(result.data[0].source_currency).toBeUndefined();
-      expect(result.data[0].source_amount).toBeUndefined();
-      expect(result.data[0].destination_currency).toBe("USD");
-      expect(result.data[0].destination_amount).toBe("14.70");
+      expect(result.data[0].source).toBeUndefined();
+      expect(result.data[0].destination).toEqual({
+        amount: "14.70",
+        currency: "USD",
+      });
     });
 
     it("handles a source-only transaction", async () => {
@@ -85,10 +82,8 @@ describe("Transactions", () => {
       const sourceOnly = {
         ...mockTransaction,
         type: "send",
-        source_currency: "BTC",
-        source_amount: "0.01",
-        destination_currency: undefined,
-        destination_amount: undefined,
+        source: { amount: "0.01", currency: "BTC" },
+        destination: undefined,
       };
       nock(BASE_URL)
         .get("/api/1.0/transactions")
@@ -99,10 +94,11 @@ describe("Transactions", () => {
 
       const result = await client.getTransactions();
 
-      expect(result.data[0].source_currency).toBe("BTC");
-      expect(result.data[0].source_amount).toBe("0.01");
-      expect(result.data[0].destination_currency).toBeUndefined();
-      expect(result.data[0].destination_amount).toBeUndefined();
+      expect(result.data[0].source).toEqual({
+        amount: "0.01",
+        currency: "BTC",
+      });
+      expect(result.data[0].destination).toBeUndefined();
     });
 
     it("handles optional processed_date", async () => {
@@ -151,14 +147,22 @@ describe("Transactions", () => {
 
       nock(BASE_URL)
         .get("/api/1.0/transactions")
-        .query({ types: "buy,receive" })
+        .query({ types: "buy,sell,receive,send,stake,un_stake,reward" })
         .reply(200, {
           data: [],
           metadata: { timestamp: 1700000000000 },
         });
 
       const result = await client.getTransactions({
-        types: ["buy", "receive"],
+        types: [
+          "buy",
+          "sell",
+          "receive",
+          "send",
+          "stake",
+          "un_stake",
+          "reward",
+        ],
       });
 
       expect(result.data).toEqual([]);

@@ -36,19 +36,19 @@ revx account balances --currencies BTC,ETH,USD # Filter by multiple currencies
 ```bash
 revx transaction list                              # Last 30 days
 revx transaction list --start-date 7d              # Last 7 days
-revx transaction list --types buy,receive          # Types: buy, sell, send, receive
-revx transaction list --statuses completed,pending # Statuses: pending, completed, rejected, failed, cancelled
+revx transaction list --types buy,receive          # Types: buy, sell, receive, send, stake, un_stake, reward
+revx transaction list --statuses completed,pending # Filter by status
 revx transaction list --currencies BTC,USD         # Filter by either side
 revx transaction list --limit 100 --json            # Limit and JSON output
 ```
 
-**Filters:** `--start-date`, `--end-date`, `--types` (buy, sell, send, receive), `--statuses` (pending, completed, rejected, failed, cancelled), `--currencies`, `--limit`
+**Filters:** `--start-date`, `--end-date`, `--types` (buy, sell, receive, send, stake, un_stake, reward), `--statuses` (pending, completed, canceled, failed, reverted), `--currencies`, `--limit`
 
 **Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
 In table output, show the complete transaction UUID. The source side is `Source Amount` with a minus sign and the destination side is `Destination Amount` with a plus sign. A transaction may contain both sides, only `Source Amount`, or only `Destination Amount`. Do not expect account fields in transaction-list results.
 
-In JSON output, use `source_currency` with `source_amount` for billing and `destination_currency` with `destination_amount` for received funds. Each currency/amount pair is optional as a pair; at least one side is present. Processing time is `processed_date`.
+In JSON output, use `source.currency` with `source.amount` for billing and `destination.currency` with `destination.amount` for received funds. Each side is optional; at least one side is present. Processing time is `processed_date`.
 
 ---
 

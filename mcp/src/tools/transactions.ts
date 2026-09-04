@@ -29,7 +29,7 @@ export function registerTransactionTools(server: McpServer): void {
     {
       title: "Get Transactions",
       description:
-        "Get your transaction history, including buys, sells, sends, and receives. " +
+        "Get your transaction history, including trades, transfers, staking, and rewards. " +
         "Each transaction may contain a source amount, a destination amount, or both. " +
         "Defaults to the last 30 days and handles pagination internally.",
       inputSchema: {
@@ -46,16 +46,28 @@ export function registerTransactionTools(server: McpServer): void {
             "End of the date range in your local timezone. Accepts ISO format or a relative value. Defaults to now.",
           ),
         types: z
-          .array(z.enum(["buy", "sell", "send", "receive"]))
-          .optional()
-          .describe("Filter by transaction type: buy, sell, send, or receive."),
-        statuses: z
           .array(
-            z.enum(["pending", "completed", "rejected", "failed", "cancelled"]),
+            z.enum([
+              "buy",
+              "sell",
+              "receive",
+              "send",
+              "stake",
+              "un_stake",
+              "reward",
+            ]),
           )
           .optional()
           .describe(
-            "Filter by transaction status: pending, completed, rejected, failed, or cancelled.",
+            "Filter by transaction type: buy, sell, receive, send, stake, un_stake, or reward.",
+          ),
+        statuses: z
+          .array(
+            z.enum(["pending", "completed", "canceled", "failed", "reverted"]),
+          )
+          .optional()
+          .describe(
+            "Filter by transaction status: pending, completed, canceled, failed, or reverted.",
           ),
         currencies: z
           .array(z.string())
@@ -78,15 +90,31 @@ export function registerTransactionTools(server: McpServer): void {
             status: z.enum([
               "pending",
               "completed",
-              "rejected",
+              "canceled",
               "failed",
-              "cancelled",
+              "reverted",
             ]),
-            type: z.enum(["buy", "sell", "send", "receive"]),
-            source_currency: z.string().optional(),
-            source_amount: z.string().optional(),
-            destination_currency: z.string().optional(),
-            destination_amount: z.string().optional(),
+            type: z.enum([
+              "buy",
+              "sell",
+              "receive",
+              "send",
+              "stake",
+              "un_stake",
+              "reward",
+            ]),
+            source: z
+              .object({
+                amount: z.string(),
+                currency: z.string(),
+              })
+              .optional(),
+            destination: z
+              .object({
+                amount: z.string(),
+                currency: z.string(),
+              })
+              .optional(),
             created_date: z.number(),
             processed_date: z.number().optional(),
           }),
@@ -160,13 +188,13 @@ export function registerTransactionTools(server: McpServer): void {
       const lines = [`Transactions (${transactions.length} returned):\n`];
       for (const transaction of transactions) {
         const sourceAmount = formatFlow(
-          transaction.source_amount,
-          transaction.source_currency,
+          transaction.source?.amount,
+          transaction.source?.currency,
           "-",
         );
         const destinationAmount = formatFlow(
-          transaction.destination_amount,
-          transaction.destination_currency,
+          transaction.destination?.amount,
+          transaction.destination?.currency,
           "+",
         );
         lines.push(
