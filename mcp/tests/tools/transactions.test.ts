@@ -152,7 +152,7 @@ describe("transaction tools", () => {
         start_date: "2026-08-01",
         end_date: "2026-08-02",
         types: ["stake", "un_stake", "reward"],
-        statuses: ["completed"],
+        statuses: ["completed", "cancelled"],
         currencies: ["btc", "usd"],
         totalLimit: 50,
       },
@@ -163,12 +163,23 @@ describe("transaction tools", () => {
         startDate: expect.any(Number),
         endDate: expect.any(Number),
         types: ["stake", "un_stake", "reward"],
-        statuses: ["completed"],
+        statuses: ["completed", "cancelled"],
         currencies: ["BTC", "USD"],
         cursor: undefined,
         limit: expect.any(Number),
       }),
     );
+  });
+
+  it("rejects the US spelling canceled for statuses", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transactions",
+      arguments: { statuses: ["canceled"] },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(mockClient.getTransactions).not.toHaveBeenCalled();
   });
 
   it("fetches all cursor pages", async () => {

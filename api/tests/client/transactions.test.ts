@@ -121,6 +121,24 @@ describe("Transactions", () => {
       expect(result.data[0].processed_date).toBeUndefined();
     });
 
+    it("handles a cancelled transaction status", async () => {
+      const client = createTestClient();
+      const txCancelled = {
+        ...mockTransaction,
+        status: "cancelled",
+      };
+      nock(BASE_URL)
+        .get("/api/1.0/transactions")
+        .reply(200, {
+          data: [txCancelled],
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getTransactions();
+
+      expect(result.data[0].status).toBe("cancelled");
+    });
+
     it("filters by date range", async () => {
       const client = createTestClient();
       const startDate = 1700000000000;
@@ -173,14 +191,14 @@ describe("Transactions", () => {
 
       nock(BASE_URL)
         .get("/api/1.0/transactions")
-        .query({ statuses: "completed,pending" })
+        .query({ statuses: "completed,pending,cancelled" })
         .reply(200, {
           data: [mockTransaction],
           metadata: { timestamp: 1700000000000 },
         });
 
       const result = await client.getTransactions({
-        statuses: ["completed", "pending"],
+        statuses: ["completed", "pending", "cancelled"],
       });
 
       expect(result.data).toHaveLength(1);

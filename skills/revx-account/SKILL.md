@@ -42,7 +42,7 @@ revx transaction list --currencies BTC,USD         # Filter by either side
 revx transaction list --limit 100 --json            # Limit and JSON output
 ```
 
-**Filters:** `--start-date`, `--end-date`, `--types` (buy, sell, receive, send, stake, un_stake, reward), `--statuses` (pending, completed, canceled, failed, reverted), `--currencies`, `--limit`
+**Filters:** `--start-date`, `--end-date`, `--types` (buy, sell, receive, send, stake, un_stake, reward), `--statuses` (pending, completed, cancelled, failed, reverted), `--currencies`, `--limit`
 
 **Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 

@@ -30,7 +30,7 @@ const TRANSACTION_TYPES = [
 const TRANSACTION_STATUSES = [
   "pending",
   "completed",
-  "canceled",
+  "cancelled",
   "failed",
   "reverted",
 ] as const;
@@ -259,6 +259,7 @@ function formatStatus(t: Transaction): string {
   if (s === "completed") return chalk.green("completed");
   if (s === "pending") return chalk.yellow("pending");
   if (s === "failed") return chalk.red(s);
-  if (s === "canceled" || s === "reverted") return chalk.gray(s);
+  if (s === "canceled" || s === "cancelled" || s === "reverted")
+    return chalk.gray(s);
   return s;
 }

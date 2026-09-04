@@ -159,13 +159,30 @@ describe("transaction list", () => {
       "transaction",
       "list",
       "--statuses",
-      "completed,pending",
+      "completed,cancelled",
     ]);
     expect(mockGetTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
-        statuses: ["completed", "pending"],
+        statuses: ["completed", "cancelled"],
       }),
     );
+  });
+
+  it("rejects the US spelling canceled for --statuses", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "transaction",
+        "list",
+        "--statuses",
+        "canceled",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errOutput = errSpy.mock.calls.flat().join(" ");
+    expect(errOutput).toContain("Invalid statuses");
+    expect(errOutput).toContain("cancelled");
   });
 
   it("passes --currencies filter to API uppercased", async () => {
