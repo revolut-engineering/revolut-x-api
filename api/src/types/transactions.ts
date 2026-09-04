@@ -10,7 +10,7 @@ export type TransactionType =
 export type TransactionStatus =
   | "pending"
   | "completed"
-  | "canceled"
+  | "cancelled"
   | "failed"
   | "reverted";
 

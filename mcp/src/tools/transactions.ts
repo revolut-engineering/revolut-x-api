@@ -63,11 +63,11 @@ export function registerTransactionTools(server: McpServer): void {
           ),
         statuses: z
           .array(
-            z.enum(["pending", "completed", "canceled", "failed", "reverted"]),
+            z.enum(["pending", "completed", "cancelled", "failed", "reverted"]),
           )
           .optional()
           .describe(
-            "Filter by transaction status: pending, completed, canceled, failed, or reverted.",
+            "Filter by transaction status: pending, completed, cancelled, failed, or reverted.",
           ),
         currencies: z
           .array(z.string())
@@ -90,7 +90,7 @@ export function registerTransactionTools(server: McpServer): void {
             status: z.enum([
               "pending",
               "completed",
-              "canceled",
+              "cancelled",
               "failed",
               "reverted",
             ]),
