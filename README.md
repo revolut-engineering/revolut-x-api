@@ -4,12 +4,12 @@ Monorepo for open-source tooling around the [Revolut X](https://exchange.revolut
 
 ## Packages
 
-| Package              | Description                                                                                                                                                                         |
-|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [`api/`](api/)       | Typed HTTP client for the Revolut X REST API. Zero runtime dependencies — Node.js built-ins only.                                                                                   |
-| [`mcp/`](mcp/)       | MCP server exposing tools for market data, account management, orders, monitoring, and grid strategy backtests. Use with Claude Desktop, Claude Code, or any MCP-compatible client. |
-| [`cli/`](cli/)       | `revx` command-line interface for trading, monitoring, and running grid bots from the terminal.                                                                                     |
-| [`skills/`](skills/) | Claude Code skills —  focused `revx` CLI command references (auth, market, account, trading, monitor, telegram, strategy).                                                          |
+| Package              | Description                                                                                                                                                                                               |
+|----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [`api/`](api/)       | Typed HTTP client for the Revolut X REST API. Zero runtime dependencies — Node.js built-ins only.                                                                                                         |
+| [`mcp/`](mcp/)       | MCP server exposing tools for market data, account management, orders, monitoring, and strategy backtests (grid & martingale DCA). Use with Claude Desktop, Claude Code, or any MCP-compatible client.    |
+| [`cli/`](cli/)       | `revx` command-line interface for trading, monitoring, and running automated bots (grid & martingale DCA) from the terminal.                                                                              |
+| [`skills/`](skills/) | Claude Code skills — focused `revx` CLI command references (auth, market, account, trading, monitor, telegram, strategy).                                                                                 |
 
 ---
 
@@ -119,11 +119,21 @@ revx monitor price-change BTC-USD --direction rise --threshold 5.0 --lookback 24
 revx monitor atr-breakout BTC-USD --period 14 --multiplier 1.5
 revx monitor types                                          # List all monitor types
 
-# Strategy
+# Strategy — Grid Bot
 revx strategy grid backtest BTC-USD --levels 10 --range 10 --investment 1000
 revx strategy grid optimize BTC-USD --investment 1000 --days 30 --interval 1h
 revx strategy grid run BTC-USD --investment 500 --levels 10 --range 5
 revx strategy grid run BTC-USD --investment 500 --dry-run
+
+# Strategy — Martingale DCA Bot
+revx strategy martingale backtest BTC-USD \
+  --investment 1000 --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
+revx strategy martingale optimize BTC-USD \
+  --investment 1000 --stop-loss 15
+revx strategy martingale run BTC-USD \
+  --investment 500 --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15
+revx strategy martingale run BTC-USD \
+  --investment 500 --price-deviation 2 --scale 2 --max-safety-orders 5 --take-profit 1.5 --stop-loss 15 --dry-run
 
 # Connector (Telegram notifications)
 revx connector telegram add --token <token> --chat-id <id>
