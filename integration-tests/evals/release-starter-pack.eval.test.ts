@@ -26,6 +26,7 @@ const TICKERS = [
     bid: "95100",
     ask: "95200",
     mid: "95150",
+    index_price: "95150",
     last_price: "95150",
   },
   {
@@ -33,6 +34,7 @@ const TICKERS = [
     bid: "3490",
     ask: "3510",
     mid: "3500",
+    index_price: "3500",
     last_price: "3500",
   },
 ];
@@ -50,6 +52,7 @@ const MARKET_MOVERS: Array<{
     bid: string;
     ask: string;
     mid: string;
+    index_price: string;
     last_price: string;
   };
 }> = [
@@ -62,6 +65,7 @@ const MARKET_MOVERS: Array<{
       bid: "97600",
       ask: "97700",
       mid: "97650",
+      index_price: "97650",
       last_price: "97650",
     },
   },
@@ -74,6 +78,7 @@ const MARKET_MOVERS: Array<{
       bid: "3352",
       ask: "3358",
       mid: "3355",
+      index_price: "3355",
       last_price: "3355",
     },
   },
@@ -86,6 +91,7 @@ const MARKET_MOVERS: Array<{
       bid: "167.30",
       ask: "167.60",
       mid: "167.45",
+      index_price: "167.45",
       last_price: "167.45",
     },
   },
@@ -98,6 +104,7 @@ const MARKET_MOVERS: Array<{
       bid: "0.5486",
       ask: "0.5492",
       mid: "0.5489",
+      index_price: "0.5489",
       last_price: "0.5489",
     },
   },
@@ -110,6 +117,7 @@ const MARKET_MOVERS: Array<{
       bid: "0.12710",
       ask: "0.12730",
       mid: "0.12720",
+      index_price: "0.12720",
       last_price: "0.12720",
     },
   },
@@ -122,6 +130,7 @@ const MARKET_MOVERS: Array<{
       bid: "0.4297",
       ask: "0.4303",
       mid: "0.4300",
+      index_price: "0.4300",
       last_price: "0.4300",
     },
   },

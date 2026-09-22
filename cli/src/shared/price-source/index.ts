@@ -26,3 +26,4 @@ export {
   type LiveSourceContext,
 } from "./factory.js";
 export { withCachedPeek } from "./adapt.js";
+export { StablePriceTracker } from "./stability.js";

@@ -92,6 +92,7 @@ const sampleTickers = {
       bid: "99900",
       ask: "100100",
       mid: "100000",
+      index_price: "100050",
       last_price: "99999",
       low_24h: "98000",
       high_24h: "101000",
@@ -104,6 +105,7 @@ const sampleTickers = {
       bid: "3490",
       ask: "3510",
       mid: "3500",
+      index_price: "3501",
       last_price: "3495",
       low_24h: "3400",
       high_24h: "3600",
@@ -304,6 +306,8 @@ describe("market tickers", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC-USD");
     expect(output).toContain("ETH-USD");
+    expect(output).toContain("Index");
+    expect(output).toContain("100050");
     expect(output).toContain("98000");
     expect(output).toContain("101000");
     expect(output).toContain("500");
@@ -319,6 +323,8 @@ describe("market tickers", () => {
     expect(mockGetTickers).toHaveBeenCalledWith({ symbols: ["BTC-USD"] });
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC-USD");
+    expect(output).toContain("Index");
+    expect(output).toContain("100050");
     expect(output).toContain("Low 24h");
     expect(output).toContain("98000");
     expect(output).toContain("High 24h");
@@ -351,6 +357,7 @@ describe("market tickers", () => {
     const parsed = JSON.parse(output);
     expect(parsed.data).toHaveLength(2);
     expect(parsed.data[0]).toMatchObject({
+      index_price: "100050",
       low_24h: "98000",
       high_24h: "101000",
       price_change_24h: "500",

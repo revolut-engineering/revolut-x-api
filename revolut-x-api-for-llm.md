@@ -758,8 +758,8 @@ Get the latest market data snapshots for all supported currency pairs, or filter
 ```json
 {
   "data": [
-    {"symbol": "BTC/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000", "quote_volume_24h": "2469.13560000"},
-    {"symbol": "ETH/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000", "quote_volume_24h": ""}
+    {"symbol": "BTC/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "index_price": "0.02", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000", "quote_volume_24h": "2469.13560000"},
+    {"symbol": "ETH/USD", "bid": "0.02", "ask": "0.02", "mid": "0.02", "index_price": "", "last_price": "0.02", "low_24h": "0.01", "high_24h": "0.03", "price_change_24h": "0.01", "volume_24h": "123456.78000000", "quote_volume_24h": ""}
   ],
   "metadata": {"timestamp": 1770201294631}
 }
@@ -1019,12 +1019,13 @@ Used by: `GET /public/order-book/{symbol}`
 | bid | string (decimal) | yes | Current highest buy price |
 | ask | string (decimal) | yes | Current lowest sell price |
 | mid | string (decimal) | yes | Midpoint: `(bid + ask) / 2` |
+| index_price | string (decimal) | yes | Index price. The key is always present, but the value is an empty string when unavailable |
 | last_price | string (decimal) | yes | Most recent trade price |
 | low_24h | string (decimal) | yes | Lowest traded price over the last 24 hours |
 | high_24h | string (decimal) | yes | Highest traded price over the last 24 hours |
 | price_change_24h | string (decimal) | yes | Price change over the last 24 hours |
 | volume_24h | string (decimal) | yes | Traded volume in the base currency over the last 24 hours |
-| quote_volume_24h | string (decimal) | yes | Traded volume in the quote currency over the last 24 hours. The key is always present, but the value is an empty string when the figure is unavailable — as with `bid`, `ask`, `mid`, `last_price`, `low_24h`, `high_24h`, and `price_change_24h` |
+| quote_volume_24h | string (decimal) | yes | Traded volume in the quote currency over the last 24 hours. The key is always present, but the value is an empty string when the figure is unavailable — as with `bid`, `ask`, `mid`, `index_price`, `last_price`, `low_24h`, `high_24h`, and `price_change_24h` |
 
 ---
 

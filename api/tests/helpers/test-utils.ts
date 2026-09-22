@@ -77,6 +77,7 @@ export const mockTicker = {
   bid: "95000",
   ask: "95100",
   mid: "95050",
+  index_price: "95040",
   last_price: "95050",
   low_24h: "94000",
   high_24h: "96000",

@@ -166,4 +166,44 @@ describe("strategy machine output", () => {
     expect(output).toContain("$33.30");
     expect(output).not.toContain("$33.33");
   });
+
+  it("describes trailing confirmation and immediate stop-loss", () => {
+    // given
+    const program = new Command();
+    registerStrategyCommand(program);
+    const strategy = program.commands.find(
+      (command) => command.name() === "strategy",
+    )!;
+    const grid = strategy.commands.find(
+      (command) => command.name() === "grid",
+    )!;
+    const backtest = grid.commands.find(
+      (command) => command.name() === "backtest",
+    )!;
+    const optimize = grid.commands.find(
+      (command) => command.name() === "optimize",
+    )!;
+    const run = grid.commands.find((command) => command.name() === "run")!;
+
+    // when
+    const backtestTrailing = backtest.options.find(
+      (option) => option.long === "--trailing-up",
+    )!;
+    const optimizeTrailing = optimize.options.find(
+      (option) => option.long === "--trailing-up",
+    )!;
+    const runTrailing = run.options.find(
+      (option) => option.long === "--trailing-up",
+    )!;
+    const runStopLoss = run.options.find(
+      (option) => option.long === "--stop-loss",
+    )!;
+
+    // then
+    expect(backtestTrailing.description).toContain("second geometric level");
+    expect(optimizeTrailing.description).toContain("second geometric level");
+    expect(runTrailing.description).toContain("3 consecutive ticks");
+    expect(runTrailing.description).toContain("second geometric level");
+    expect(runStopLoss.description).toContain("immediately");
+  });
 });

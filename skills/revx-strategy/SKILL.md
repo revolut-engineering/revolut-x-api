@@ -37,7 +37,7 @@ revx strategy grid backtest BTC-USD --json
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
-| `--trailing-up` | off | Simulate grid rebuild when price exits the upper boundary |
+| `--trailing-up` | off | Rebuild when a candle high reaches the second geometric level above the upper boundary |
 | `--stop-loss <price>` | off | Stop backtest when price reaches this absolute value (must be below the lowest grid level) |
 | `--json` | off | Output as JSON |
 
@@ -49,6 +49,8 @@ revx strategy grid backtest BTC-USD --json
 | Bearish | `open > close` | open → high → low → close | All SELL orders at levels ≤ high, then all BUY orders at levels ≥ low |
 
 Limitation: real intra-candle price action may be more complex (e.g. multiple touches of high/low), which the backtest does not reproduce.
+
+Backtests confirm trailing-up from a single qualifying candle high and rebuild from that candle's close. Stop-loss also remains immediate because historical candles do not contain live tick sequences.
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
 
@@ -77,7 +79,7 @@ revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
-| `--trailing-up` | off | Simulate grid rebuild when price exits the upper boundary |
+| `--trailing-up` | off | Rebuild when a candle high reaches the second geometric level above the upper boundary |
 | `--stop-loss <price>` | off | Skip combinations where the stop-loss sits inside the grid; stop each backtest run when price reaches this absolute value |
 | `--json` | off | Output as JSON |
 
@@ -165,10 +167,14 @@ revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 | `--interval <sec>` | 10 | Polling interval in seconds |
 | `--dry-run` | off | Simulate without real orders |
 | `--reset` | off | Discard saved state, start fresh |
-| `--trailing-up` | off | Rebuild grid around current price when upper boundary is breached |
-| `--stop-loss <price>` | off | Stop bot when price reaches this absolute value (must be below the lowest grid level) |
+| `--trailing-up` | off | Rebuild after 3 consecutive ticks reach the second geometric level above the upper boundary |
+| `--stop-loss <price>` | off | Stop immediately when price reaches this absolute value (must be below the lowest grid level) |
 
 Ctrl+C for graceful shutdown (cancels open orders, prints summary).
+
+Live and dry-run trailing-up requires three consecutive qualifying prices. A price below the threshold resets confirmation. Stop-loss remains immediate on the first qualifying price.
+
+All grid limit orders are post-only. If the exchange reports `POST_ONLY_IMMEDIATE_MATCH`, the bot stops the current run, accounts any reported fill without placing a replacement, and uses the normal shutdown flow to cancel tracked orders. Failed cancellations or remaining inventory keep the saved state for normal reconciliation on the next startup.
 
 The dashboard displays at most 24 grid rows in a price-centred window and reports how many higher and lower levels are hidden, so 100-level-per-side grids remain readable.
 

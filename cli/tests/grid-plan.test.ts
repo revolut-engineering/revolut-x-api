@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Decimal } from "decimal.js";
 import {
   allocateBaseOrderSizes,
   createGridPlan,
+  createGridPrices,
   constraintsFromPair,
+  createTrailingGridRebuildPlan,
   normalizeBaseOrderSize,
   parseLevelsPerSide,
   type GridOrderConstraints,
@@ -270,6 +272,171 @@ describe("grid plan", () => {
         constraints,
       }),
     ).toThrow(/minimum quote order size/i);
+  });
+
+  it("preserves split allocations at their existing level indices", () => {
+    // given
+    const levels = ["90000", "96548.94", "103228.01", "110000"].map(
+      (price, index) => ({ index, price: new Decimal(price) }),
+    );
+    const buyCounts = [1, 2, 1, 0];
+
+    // when
+    const plan = createTrailingGridRebuildPlan({
+      levels,
+      currentPrice: new Decimal("126000"),
+      split: true,
+      buyCounts,
+      quoteStep: new Decimal("0.01"),
+    });
+
+    // then
+    expect(plan.levels.map((level) => level.price.toString())).toEqual([
+      "102882.76",
+      "110369.13",
+      "118004.26",
+      "125745.6",
+    ]);
+    expect(plan.buyCounts).toEqual(buyCounts);
+    expect(plan.shiftSteps).toBe(2);
+  });
+
+  it("keeps every non-split buy below an aligned rounding boundary", () => {
+    // given
+    const levels = createGridPrices(
+      new Decimal("100000"),
+      4,
+      new Decimal("0.001"),
+      new Decimal("0.05"),
+    );
+    const currentPrice = new Decimal("100233.6");
+
+    // when
+    const plan = createTrailingGridRebuildPlan({
+      levels,
+      currentPrice,
+      split: false,
+      buyCounts: [1, 1, 0, 0],
+      quoteStep: new Decimal("0.05"),
+    });
+
+    // then
+    expect(plan.shiftSteps).toBe(3);
+    expect(plan.buyCounts).toEqual([1, 1, 0, 0]);
+    expect(
+      plan.levels.every(
+        (level, index) =>
+          plan.buyCounts[index] === 0 || level.price.lt(currentPrice),
+      ),
+    ).toBe(true);
+    expect(plan.levels[2].price.lt(currentPrice)).toBe(true);
+  });
+
+  it("preserves trailing allocation invariants through 100 levels per side", () => {
+    // given
+    const ranges = ["0.01", "0.1", "0.5"];
+
+    // when
+    for (let levelsPerSide = 1; levelsPerSide <= 100; levelsPerSide++) {
+      for (const range of ranges) {
+        const levels = createGridPrices(
+          new Decimal("100000"),
+          levelsPerSide * 2,
+          new Decimal(range),
+          new Decimal("0.00000001"),
+        );
+        const lower = levels[0].price;
+        const upper = levels[levels.length - 1].price;
+        const ratio = upper
+          .div(lower)
+          .pow(new Decimal(1).div(levels.length - 1));
+        const currentPrice = upper.times(ratio.pow(2)).plus("0.00000001");
+        const nonSplitPlan = createTrailingGridRebuildPlan({
+          levels,
+          currentPrice,
+          split: false,
+          buyCounts: levels.map((level) =>
+            level.index < levelsPerSide ? 1 : 0,
+          ),
+          quoteStep: new Decimal("0.00000001"),
+        });
+        const splitCounts = levels.map(() => 1);
+        const splitPlan = createTrailingGridRebuildPlan({
+          levels,
+          currentPrice,
+          split: true,
+          buyCounts: splitCounts,
+          quoteStep: new Decimal("0.00000001"),
+        });
+
+        // then
+        expect(
+          nonSplitPlan.buyCounts.reduce((total, count) => total + count, 0),
+        ).toBe(levelsPerSide);
+        expect(
+          nonSplitPlan.levels.every(
+            (level, index) =>
+              nonSplitPlan.buyCounts[index] === 0 ||
+              level.price.lt(currentPrice),
+          ),
+        ).toBe(true);
+        expect(splitPlan.buyCounts).toEqual(splitCounts);
+        expect(
+          splitPlan.levels.every((level) => level.price.lt(currentPrice)),
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("bounds large-jump shift work for 100 levels per side", () => {
+    // given
+    const quoteStep = new Decimal("0.00000001");
+    const levels = createGridPrices(
+      new Decimal("100000"),
+      200,
+      new Decimal("0.001"),
+      quoteStep,
+    );
+    const currentPrice = new Decimal("1000000");
+    const nonSplitCounts = levels.map((level) => (level.index < 100 ? 1 : 0));
+    const splitCounts = levels.map(() => 1);
+    const pow = vi.spyOn(Decimal.prototype, "pow");
+
+    // when
+    const nonSplitPlan = createTrailingGridRebuildPlan({
+      levels,
+      currentPrice,
+      split: false,
+      buyCounts: nonSplitCounts,
+      quoteStep,
+    });
+    const nonSplitPowCalls = pow.mock.calls.length;
+    pow.mockClear();
+    const splitPlan = createTrailingGridRebuildPlan({
+      levels,
+      currentPrice,
+      split: true,
+      buyCounts: splitCounts,
+      quoteStep,
+    });
+    const splitPowCalls = pow.mock.calls.length;
+    pow.mockRestore();
+
+    // then
+    expect(nonSplitPowCalls).toBeLessThan(1_000);
+    expect(splitPowCalls).toBeLessThan(1_000);
+    expect(nonSplitPlan.buyCounts).toEqual(nonSplitCounts);
+    expect(splitPlan.buyCounts).toEqual(splitCounts);
+    for (const plan of [nonSplitPlan, splitPlan]) {
+      expect(
+        plan.levels.every(
+          (level, index) =>
+            level.price.mod(quoteStep).eq(0) &&
+            (index === 0 || level.price.gt(plan.levels[index - 1].price)) &&
+            (plan.buyCounts[index] === 0 || level.price.lt(currentPrice)),
+        ),
+      ).toBe(true);
+    }
   });
 });
 

@@ -16,6 +16,63 @@ function providerWithTickers(pair: string, data: unknown[]) {
 }
 
 describe("resolveTickerPrice", () => {
+  it("uses index price when its drift from mid is below five percent", () => {
+    expect(
+      resolveTickerPrice({
+        mid: "100",
+        index_price: "104.99",
+        last_price: "99",
+      })?.toString(),
+    ).toBe("104.99");
+  });
+
+  it("uses index price when its drift from mid is exactly five percent", () => {
+    expect(
+      resolveTickerPrice({
+        mid: "100",
+        index_price: "95",
+        last_price: "99",
+      })?.toString(),
+    ).toBe("95");
+  });
+
+  it("falls back to mid when index price drift exceeds five percent", () => {
+    expect(
+      resolveTickerPrice({
+        mid: "100",
+        index_price: "105.0001",
+        last_price: "99",
+      })?.toString(),
+    ).toBe("100");
+  });
+
+  it("does not use index price without a valid mid comparison", () => {
+    expect(
+      resolveTickerPrice({
+        mid: "",
+        index_price: "100",
+        last_price: "99",
+      })?.toString(),
+    ).toBe("99");
+  });
+
+  it("ignores invalid and non-positive index prices", () => {
+    expect(
+      resolveTickerPrice({
+        mid: "100",
+        index_price: "not-a-number",
+        last_price: "99",
+      })?.toString(),
+    ).toBe("100");
+    expect(
+      resolveTickerPrice({
+        mid: "100",
+        index_price: "0",
+        last_price: "99",
+      })?.toString(),
+    ).toBe("100");
+  });
+
   it("uses mid when present", () => {
     expect(
       resolveTickerPrice({ mid: "100", last_price: "99" })?.toString(),
@@ -25,6 +82,15 @@ describe("resolveTickerPrice", () => {
   it("falls back to last_price when mid is null", () => {
     expect(
       resolveTickerPrice({ mid: null, last_price: "3500" })?.toString(),
+    ).toBe("3500");
+  });
+
+  it("falls back to last_price when mid is empty or invalid", () => {
+    expect(
+      resolveTickerPrice({ mid: "", last_price: "3500" })?.toString(),
+    ).toBe("3500");
+    expect(
+      resolveTickerPrice({ mid: "invalid", last_price: "3500" })?.toString(),
     ).toBe("3500");
   });
 
@@ -38,11 +104,12 @@ describe("resolveTickerPrice", () => {
 });
 
 describe("TickerPriceProvider", () => {
-  it("returns the ticker mid for the matching symbol (slash-format response)", async () => {
+  it("returns the qualified index price for a slash-format symbol", async () => {
     const { provider, getTickers } = providerWithTickers("BTC-EUR", [
       {
         symbol: "BTC/EUR",
         mid: "54665.94",
+        index_price: "54670",
         last_price: "54660",
         bid: "54660",
         ask: "54671",
@@ -53,20 +120,25 @@ describe("TickerPriceProvider", () => {
     const price = await provider.peek();
 
     // then
-    expect(price.toString()).toBe("54665.94");
+    expect(price.toString()).toBe("54670");
     expect(getTickers).toHaveBeenCalledWith({ symbols: ["BTC-EUR"] });
   });
 
   it("next() wraps the price in a tick", async () => {
     const { provider } = providerWithTickers("BTC-EUR", [
-      { symbol: "BTC/EUR", mid: "100", last_price: "100" },
+      {
+        symbol: "BTC/EUR",
+        mid: "100",
+        index_price: "101",
+        last_price: "100",
+      },
     ]);
 
     // when
     const tick = await provider.next();
 
     // then
-    expect(tick?.price.toString()).toBe("100");
+    expect(tick?.price.toString()).toBe("101");
   });
 
   it("falls back to last_price when mid is null", async () => {

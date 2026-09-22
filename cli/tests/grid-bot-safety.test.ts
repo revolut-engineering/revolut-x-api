@@ -1688,3 +1688,551 @@ describe("grid bot fee accounting", () => {
     expect(result.fee.toFixed(2)).toBe("0.45");
   });
 });
+
+describe("grid bot post-only match rejection", () => {
+  function rejectedOrder(overrides: Partial<OrderDetails> = {}): OrderDetails {
+    return {
+      id: "rejected-order",
+      client_order_id: "client-order",
+      symbol: "BTC-USD",
+      side: "buy",
+      type: "limit",
+      quantity: "0",
+      filled_quantity: "0",
+      filled_amount: "0",
+      leaves_quantity: "0",
+      amount: "10",
+      price: "99",
+      status: "rejected",
+      reject_reason: "POST_ONLY_IMMEDIATE_MATCH",
+      time_in_force: "gtc",
+      execution_instructions: ["post_only"],
+      created_date: 1,
+      updated_date: 1,
+      ...overrides,
+    };
+  }
+
+  function placementInternals(state: GridState, order: OrderDetails) {
+    const placeOrder = vi.fn(async () => ({
+      data: {
+        venue_order_id: order.id,
+        client_order_id: order.client_order_id,
+        state: "rejected" as const,
+      },
+    }));
+    const getOrder = vi.fn(async () => ({ data: order }));
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: {
+        placeOrder: typeof placeOrder;
+        getOrder: typeof getOrder;
+      };
+      _placeBuyOrder: (
+        level: GridLevelState,
+        quoteSize: Decimal,
+        clientOrderId: string,
+      ) => Promise<string>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { placeOrder, getOrder };
+    return { internals, placeOrder };
+  }
+
+  it("stops a rejected placement with the exact match reason", async () => {
+    // given
+    const state = makeState();
+    state.levels[0].buyOrderIds = [];
+    const { internals } = placementInternals(state, rejectedOrder());
+
+    // when
+    const placement = internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("10"),
+      "client-order",
+    );
+
+    // then
+    await expect(placement).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+  });
+
+  it("does not classify a near-match rejection reason as fatal", async () => {
+    // given
+    const state = makeState();
+    state.levels[0].buyOrderIds = [];
+    const order = rejectedOrder({
+      reject_reason: "NOT_POST_ONLY_IMMEDIATE_MATCH",
+    });
+    const { internals } = placementInternals(state, order);
+
+    // when
+    const orderId = await internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("10"),
+      "client-order",
+    );
+
+    // then
+    expect(orderId).toBe("rejected-order");
+    expect(state.levels[0].buyOrderIds).toEqual(["rejected-order"]);
+  });
+
+  it("stops on a canonical rejection thrown by order placement", async () => {
+    // given
+    const state = makeState();
+    state.levels[0].buyOrderIds = [];
+    const order = rejectedOrder();
+    const { internals } = placementInternals(state, order);
+    internals._client.placeOrder = vi.fn(async () => {
+      throw new Error("Order rejected: POST_ONLY_IMMEDIATE_MATCH");
+    });
+
+    // when
+    const placement = internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("10"),
+      "client-order",
+    );
+
+    // then
+    await expect(placement).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+  });
+
+  it("accounts a reported rejected fill without placing a replacement", async () => {
+    // given
+    const state = makeState();
+    state.initializing = true;
+    state.levels[0].buyOrderIds = [];
+    const order = rejectedOrder({
+      filled_quantity: "0.1",
+      filled_amount: undefined,
+      average_fill_price: "98",
+      price: "99",
+    });
+    const { internals, placeOrder } = placementInternals(state, order);
+
+    // when
+    const placement = internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("10"),
+      "client-order",
+    );
+
+    // then
+    await expect(placement).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    expect(state.levels[0].positions).toEqual([
+      expect.objectContaining({ baseHeld: "0.1", fillCost: "9.8" }),
+    ]);
+    expect(state.levels[0].buyOrderIds).toEqual([]);
+  });
+
+  it("accounts a rejected sell at its reported execution price without re-buying", async () => {
+    // given
+    const state = makeState();
+    state.levels[0].buyOrderIds = [];
+    const position: GridLevelPosition = {
+      id: "split-1",
+      baseHeld: "0.1",
+      fillCost: "10",
+      sellOrderId: null,
+    };
+    state.levels[0].positions = [position];
+    const order = rejectedOrder({
+      id: "rejected-sell",
+      side: "sell",
+      filled_quantity: "0.1",
+      filled_amount: undefined,
+      average_fill_price: "190",
+      price: "200",
+    });
+    const placeOrder = vi.fn(async () => ({
+      data: {
+        venue_order_id: order.id,
+        client_order_id: order.client_order_id,
+        state: "rejected" as const,
+      },
+    }));
+    const getOrder = vi.fn(async () => ({ data: order }));
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: true,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: {
+        placeOrder: typeof placeOrder;
+        getOrder: typeof getOrder;
+      };
+      _placeSellOnLevel: (
+        sellLevel: GridLevelState,
+        position: GridLevelPosition,
+      ) => Promise<void>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { placeOrder, getOrder };
+
+    // when
+    const placement = internals._placeSellOnLevel(state.levels[1], position);
+
+    // then
+    await expect(placement).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    expect(state.levels[0].positions).toEqual([]);
+    expect(state.stats.realizedPnl).toBe("9");
+  });
+
+  it("propagates a match rejection while replacing a partial buy remainder", async () => {
+    // given
+    const state = makeState();
+    state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
+    let rejectedClientOrderId = "";
+    const placeOrder = vi.fn(async (request: { clientOrderId: string }) => {
+      rejectedClientOrderId = request.clientOrderId;
+      return {
+        data: {
+          venue_order_id: "rejected-remainder",
+          client_order_id: request.clientOrderId,
+          state: "rejected" as const,
+        },
+      };
+    });
+    const getOrder = vi.fn(async () => ({
+      data: rejectedOrder({
+        id: "rejected-remainder",
+        client_order_id: rejectedClientOrderId,
+      }),
+    }));
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: {
+        placeOrder: typeof placeOrder;
+        getOrder: typeof getOrder;
+      };
+      _placeSellOnLevel: ReturnType<typeof vi.fn>;
+      _processTerminalBuy: (
+        level: GridLevelState,
+        order: OrderDetails,
+        notify: boolean,
+      ) => Promise<boolean>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { placeOrder, getOrder };
+    internals._placeSellOnLevel = vi.fn(async () => undefined);
+
+    // when
+    const settlement = internals._processTerminalBuy(
+      state.levels[0],
+      {
+        id: "buy-1",
+        status: "partially_filled",
+        filled_quantity: "0.04",
+        filled_amount: "4",
+        total_fee: "0",
+        fee_currency: "USD",
+      },
+      false,
+    );
+
+    // then
+    await expect(settlement).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a match rejection while replacing a completed sell", async () => {
+    // given
+    const state = makeState();
+    state.levels[0].buyOrderIds = [];
+    const position: GridLevelPosition = {
+      id: "position-1",
+      baseHeld: "0.1",
+      fillCost: "10",
+      sellOrderId: "sell-1",
+      sellBaseSize: "0.1",
+    };
+    state.levels[0].positions = [position];
+    let rejectedClientOrderId = "";
+    const placeOrder = vi.fn(async (request: { clientOrderId: string }) => {
+      rejectedClientOrderId = request.clientOrderId;
+      return {
+        data: {
+          venue_order_id: "rejected-rebuy",
+          client_order_id: request.clientOrderId,
+          state: "rejected" as const,
+        },
+      };
+    });
+    const getOrder = vi.fn(async () => ({
+      data: rejectedOrder({
+        id: "rejected-rebuy",
+        client_order_id: rejectedClientOrderId,
+      }),
+    }));
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: {
+        placeOrder: typeof placeOrder;
+        getOrder: typeof getOrder;
+      };
+      _processTerminalSell: (
+        level: GridLevelState,
+        sellLevel: GridLevelState,
+        position: GridLevelPosition,
+        order: OrderDetails,
+        notify: boolean,
+      ) => Promise<unknown>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { placeOrder, getOrder };
+
+    // when
+    const settlement = internals._processTerminalSell(
+      state.levels[0],
+      state.levels[1],
+      position,
+      {
+        id: "sell-1",
+        status: "filled",
+        filled_quantity: "0.1",
+        filled_amount: "11",
+        total_fee: "0",
+        fee_currency: "USD",
+      },
+      false,
+    );
+
+    // then
+    await expect(settlement).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops when an already tracked order reports the canonical rejection", async () => {
+    // given
+    const state = makeState();
+    const order = rejectedOrder({ id: "buy-1" });
+    const getActiveOrders = vi.fn(async () => ({ data: [], metadata: {} }));
+    const getOrder = vi.fn(async () => ({ data: order }));
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: {
+        getActiveOrders: typeof getActiveOrders;
+        getOrder: typeof getOrder;
+      };
+      _tick: (price: Decimal) => Promise<void>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { getActiveOrders, getOrder };
+
+    // when
+    const tick = internals._tick(new Decimal("100"));
+
+    // then
+    await expect(tick).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(state.levels[0].buyOrderIds).toEqual([]);
+  });
+
+  it("waits for sibling initial placements before propagating a match rejection", async () => {
+    // given
+    let releaseSecondPlacement!: () => void;
+    const secondPlacement = new Promise<{
+      data: {
+        venue_order_id: string;
+        client_order_id: string;
+        state: "new";
+      };
+    }>((resolve) => {
+      releaseSecondPlacement = () =>
+        resolve({
+          data: {
+            venue_order_id: "accepted-order",
+            client_order_id: "accepted-client",
+            state: "new",
+          },
+        });
+    });
+    let rejectedClientOrderId = "";
+    const placeOrder = vi
+      .fn()
+      .mockImplementationOnce(async (request: { clientOrderId: string }) => {
+        rejectedClientOrderId = request.clientOrderId;
+        return {
+          data: {
+            venue_order_id: "rejected-order",
+            client_order_id: request.clientOrderId,
+            state: "rejected" as const,
+          },
+        };
+      })
+      .mockImplementationOnce(() => secondPlacement);
+    const getOrder = vi.fn(async () => ({
+      data: rejectedOrder({ client_order_id: rejectedClientOrderId }),
+    }));
+    const getBalances = vi.fn(async () => [
+      { currency: "USD", available: "1000" },
+    ]);
+    const bot = new ForegroundGridBot(
+      {
+        pair: "BTC-USD",
+        levels: 4,
+        rangePct: "0.01",
+        investment: "40",
+        splitInvestment: false,
+        intervalSec: 30,
+        dryRun: false,
+        reset: false,
+        trailingUp: false,
+      },
+      {
+        rateLimiter: {
+          place: (operation) => operation(),
+          cancel: (operation) => operation(),
+          query: (operation) => operation(),
+        },
+      },
+    );
+    const internals = bot as unknown as {
+      _pairInfo: CurrencyPair;
+      _client: {
+        placeOrder: typeof placeOrder;
+        getOrder: typeof getOrder;
+        getBalances: typeof getBalances;
+      };
+      _priceSource: { peek: () => Promise<Decimal> };
+      _initNewGrid: () => Promise<void>;
+    };
+    internals._pairInfo = PAIR_INFO;
+    internals._client = { placeOrder, getOrder, getBalances };
+    internals._priceSource = { peek: async () => new Decimal("100") };
+    let settled = false;
+
+    // when
+    const initialization = internals._initNewGrid().finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(placeOrder).toHaveBeenCalledTimes(2));
+
+    // then
+    expect(settled).toBe(false);
+    releaseSecondPlacement();
+    await expect(initialization).rejects.toMatchObject({
+      name: "PostOnlyImmediateMatchError",
+    });
+    expect(placeOrder).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("grid bot trailing-up confirmation", () => {
+  it("requires three consecutive qualifying live prices", () => {
+    // given
+    const state = makeState();
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: true,
+      reset: false,
+      trailingUp: true,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _shouldRebuildUp: boolean;
+      _checkBoundary: (price: Decimal) => void;
+    };
+    internals._state = state;
+    const trigger = new Decimal("102.030405060708091011");
+
+    // when
+    internals._checkBoundary(trigger);
+    const afterFirst = internals._shouldRebuildUp;
+    internals._checkBoundary(trigger.plus("1"));
+    const afterSecond = internals._shouldRebuildUp;
+    internals._checkBoundary(trigger.plus("2"));
+
+    // then
+    expect([afterFirst, afterSecond, internals._shouldRebuildUp]).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+});

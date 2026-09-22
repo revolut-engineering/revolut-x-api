@@ -59,9 +59,18 @@ function makeSpec(overrides?: Partial<MonitorSpec>): MonitorSpec {
   };
 }
 
-function tickerResponse(symbol: string, mid: string) {
+function tickerResponse(symbol: string, mid: string, indexPrice = mid) {
   return {
-    data: [{ symbol, mid, bid: mid, ask: mid, last_price: mid }],
+    data: [
+      {
+        symbol,
+        mid,
+        index_price: indexPrice,
+        bid: mid,
+        ask: mid,
+        last_price: mid,
+      },
+    ],
   };
 }
 
@@ -96,6 +105,32 @@ describe("ForegroundMonitor", () => {
       "123",
       expect.any(String),
     );
+  });
+
+  it("evaluates the alert against a healthy index price", async () => {
+    mockGetTickers.mockResolvedValue(
+      tickerResponse("BTC-USD", "99000", "103000"),
+    );
+    const mon = new ForegroundMonitor(makeSpec(), []);
+
+    const result = await runSingleTick(mon);
+
+    expect(result.price?.toString()).toBe("103000");
+    expect(result.evalResult?.conditionMet).toBe(true);
+    expect(result.triggered).toBe(true);
+  });
+
+  it("falls back to mid when index price drift is unhealthy", async () => {
+    mockGetTickers.mockResolvedValue(
+      tickerResponse("BTC-USD", "99000", "105000"),
+    );
+    const mon = new ForegroundMonitor(makeSpec(), []);
+
+    const result = await runSingleTick(mon);
+
+    expect(result.price?.toString()).toBe("99000");
+    expect(result.evalResult?.conditionMet).toBe(false);
+    expect(result.triggered).toBe(false);
   });
 
   it("does not re-notify on consecutive conditions met", async () => {
@@ -190,6 +225,7 @@ describe("ForegroundMonitor.buildMaps", () => {
       {
         symbol: "BTC-USD",
         mid: "100000",
+        index_price: "100500",
         bid: "99990",
         ask: "100010",
         last_price: "99999",
@@ -197,6 +233,7 @@ describe("ForegroundMonitor.buildMaps", () => {
       {
         symbol: "ETH-USD",
         mid: null,
+        index_price: "3500",
         bid: null,
         ask: null,
         last_price: "3500",
@@ -206,7 +243,7 @@ describe("ForegroundMonitor.buildMaps", () => {
       tickers as unknown as Ticker[],
     );
 
-    expect(priceMap.get("BTC-USD")?.toString()).toBe("100000");
+    expect(priceMap.get("BTC-USD")?.toString()).toBe("100500");
     expect(tickerMap.get("BTC-USD")?.bid?.toString()).toBe("99990");
     expect(tickerMap.get("BTC-USD")?.ask?.toString()).toBe("100010");
     expect(priceMap.get("ETH-USD")?.toString()).toBe("3500");
@@ -217,6 +254,7 @@ describe("ForegroundMonitor.buildMaps", () => {
       {
         symbol: "BTC/USD",
         mid: "100000",
+        index_price: "100500",
         bid: null,
         ask: null,
         last_price: "100000",
@@ -226,8 +264,8 @@ describe("ForegroundMonitor.buildMaps", () => {
       tickers as unknown as Ticker[],
     );
 
-    expect(priceMap.get("BTC/USD")?.toString()).toBe("100000");
-    expect(priceMap.get("BTC-USD")?.toString()).toBe("100000");
+    expect(priceMap.get("BTC/USD")?.toString()).toBe("100500");
+    expect(priceMap.get("BTC-USD")?.toString()).toBe("100500");
   });
 
   it("skips tickers with invalid price", () => {
@@ -235,6 +273,7 @@ describe("ForegroundMonitor.buildMaps", () => {
       {
         symbol: "BAD",
         mid: "not-a-number",
+        index_price: "100",
         bid: null,
         ask: null,
         last_price: "also-bad",

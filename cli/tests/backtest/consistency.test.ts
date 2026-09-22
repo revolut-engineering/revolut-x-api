@@ -265,7 +265,7 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
   it("trailing-up fires exactly at trailUpTriggerPrice, not before", async () => {
     const trigger = trailUpTriggerPrice(TRAIL_UP_LADDER);
     expect(trigger).not.toBeNull();
-    expect(trigger!.toFixed(2)).toBe("108205.85");
+    expect(trigger!.toFixed(2)).toBe("109288.78");
 
     const below = await runBacktestBot(
       [flat(100_000), at(trigger!.minus("0.01"))],
@@ -406,6 +406,64 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
     expect(cli.finalBase.eq(mcp.finalBase)).toBe(true);
     expect(cli.finalQuote.eq(mcp.finalQuote)).toBe(true);
     expect(cli.stopLossTriggered).toBe(mcp.stopLossTriggered);
+    expect(cli.tradeLog).toEqual(mcp.tradeLog);
+  });
+
+  it("keeps CLI and MCP large-jump rebuilds bounded and identical", () => {
+    // given
+    const quoteStep = new Decimal("0.00000001");
+    const baseStep = new Decimal("0.00000001");
+    const candles = [
+      flat(100_000),
+      {
+        open: new Decimal("100000"),
+        high: new Decimal("1000000"),
+        low: new Decimal("100000"),
+        close: new Decimal("1000000"),
+      },
+    ];
+
+    // when
+    const pow = vi.spyOn(Decimal.prototype, "pow");
+    const cli = runBacktest(
+      candles,
+      200,
+      new Decimal("0.001"),
+      new Decimal("1000"),
+      false,
+      true,
+      0,
+      undefined,
+      baseStep,
+      quoteStep,
+    );
+    const cliPowCalls = pow.mock.calls.length;
+    pow.mockClear();
+    const mcp = runBacktestMcp(
+      candles,
+      200,
+      new Decimal("0.001"),
+      new Decimal("1000"),
+      false,
+      true,
+      0,
+      baseStep,
+      quoteStep,
+    );
+    const mcpPowCalls = pow.mock.calls.length;
+    pow.mockRestore();
+
+    // then
+    expect(cliPowCalls).toBeLessThan(1_000);
+    expect(mcpPowCalls).toBeLessThan(1_000);
+    expect(cli.trailingUpShifts).toBe(1);
+    expect(mcp.trailingUpShifts).toBe(cli.trailingUpShifts);
+    expect(cli.totalBuys).toBe(mcp.totalBuys);
+    expect(cli.totalSells).toBe(mcp.totalSells);
+    expect(cli.totalTrades).toBe(mcp.totalTrades);
+    expect(cli.realizedPnl.eq(mcp.realizedPnl)).toBe(true);
+    expect(cli.finalBase.eq(mcp.finalBase)).toBe(true);
+    expect(cli.finalQuote.eq(mcp.finalQuote)).toBe(true);
     expect(cli.tradeLog).toEqual(mcp.tradeLog);
   });
 });

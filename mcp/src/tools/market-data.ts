@@ -199,7 +199,7 @@ export function registerMarketDataTools(server: McpServer): void {
     {
       title: "Get Tickers",
       description:
-        "Get the LIVE bid/ask/mid/last-price and 24h market statistics for one or more trading pairs. " +
+        "Get the LIVE bid/ask/mid/index/last-price and 24h market statistics for one or more trading pairs. " +
         "For historical price action use `get_candles`; this tool returns only a current snapshot.",
       inputSchema: {
         symbols: z
@@ -216,6 +216,7 @@ export function registerMarketDataTools(server: McpServer): void {
             bid: z.string(),
             ask: z.string(),
             mid: z.string(),
+            index_price: z.string(),
             last_price: z.string(),
             low_24h: z.string(),
             high_24h: z.string(),
@@ -259,15 +260,16 @@ export function registerMarketDataTools(server: McpServer): void {
       }
 
       const lines = [
-        `${"Pair".padEnd(12)} | ${"Bid".padStart(14)} | ${"Ask".padStart(14)} | ${"Mid".padStart(14)} | ${"Last".padStart(14)} | ${"Low 24h".padStart(14)} | ${"High 24h".padStart(14)} | ${"Change 24h".padStart(14)} | ${"Volume 24h".padStart(14)} | ${"Quote Vol 24h".padStart(14)}`,
+        `${"Pair".padEnd(12)} | ${"Bid".padStart(14)} | ${"Ask".padStart(14)} | ${"Mid".padStart(14)} | ${"Index".padStart(14)} | ${"Last".padStart(14)} | ${"Low 24h".padStart(14)} | ${"High 24h".padStart(14)} | ${"Change 24h".padStart(14)} | ${"Volume 24h".padStart(14)} | ${"Quote Vol 24h".padStart(14)}`,
       ];
-      lines.push("-".repeat(167));
+      lines.push("-".repeat(184));
       for (const t of tickers) {
         lines.push(
           `${t.symbol.padEnd(12)} | ` +
             `${t.bid.padStart(14)} | ` +
             `${t.ask.padStart(14)} | ` +
             `${t.mid.padStart(14)} | ` +
+            `${t.index_price.padStart(14)} | ` +
             `${t.last_price.padStart(14)} | ` +
             `${t.low_24h.padStart(14)} | ` +
             `${t.high_24h.padStart(14)} | ` +
