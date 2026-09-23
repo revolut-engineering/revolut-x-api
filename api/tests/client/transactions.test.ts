@@ -101,6 +101,66 @@ describe("Transactions", () => {
       expect(result.data[0].destination).toBeUndefined();
     });
 
+    it("includes per-leg account types", async () => {
+      const client = createTestClient();
+      const transactions = [
+        {
+          ...mockTransaction,
+          source: {
+            amount: "1000.00",
+            currency: "USD",
+            account: { type: "revolut" },
+          },
+          destination: {
+            amount: "0.01",
+            currency: "BTC",
+            account: { type: "revolut_x" },
+          },
+        },
+        {
+          ...mockTransaction,
+          id: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+          type: "send",
+          source: {
+            amount: "0.01",
+            currency: "BTC",
+            account: { type: "revolut_x" },
+          },
+          destination: undefined,
+        },
+        {
+          ...mockTransaction,
+          id: "c3d4e5f6-a7b8-9012-cdef-234567890123",
+          type: "receive",
+          source: undefined,
+          destination: {
+            amount: "0.01",
+            currency: "BTC",
+            account: { type: "revolut_x" },
+          },
+        },
+      ];
+      nock(BASE_URL)
+        .get("/api/1.0/transactions")
+        .reply(200, {
+          data: transactions,
+          metadata: { timestamp: 1700000000000 },
+        });
+
+      const result = await client.getTransactions();
+
+      expect(result.data[0].source?.account).toEqual({ type: "revolut" });
+      expect(result.data[0].destination?.account).toEqual({
+        type: "revolut_x",
+      });
+      expect(result.data[1].source?.account).toEqual({ type: "revolut_x" });
+      expect(result.data[1].destination).toBeUndefined();
+      expect(result.data[2].source).toBeUndefined();
+      expect(result.data[2].destination?.account).toEqual({
+        type: "revolut_x",
+      });
+    });
+
     it("handles optional processed_date", async () => {
       const client = createTestClient();
       const txPending = {
@@ -296,6 +356,202 @@ describe("Transactions", () => {
       const result = await client.getTransactions();
 
       expect(result.metadata.next_cursor).toBe("base64encodedcursor");
+    });
+  });
+
+  describe("getTransaction", () => {
+    const mockTransactionDetails = {
+      ...mockTransaction,
+      source: {
+        amount: "1000.00",
+        currency: "USD",
+        fee: "1.00",
+        fee_currency: "USD",
+        account: {
+          type: "revolut_x",
+          display_name: "Crypto Primary",
+        },
+      },
+      destination: {
+        amount: "0.01",
+        currency: "BTC",
+        account: {
+          type: "revolut_x",
+          display_name: "Crypto Primary",
+        },
+      },
+      description: "Test transaction",
+    };
+
+    it("returns transaction details for an id", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get(`/api/1.0/transactions/${mockTransaction.id}`)
+        .reply(200, mockTransactionDetails);
+
+      const result = await client.getTransaction(mockTransaction.id);
+
+      expect(result.id).toBe(mockTransaction.id);
+      expect(result.status).toBe("completed");
+      expect(result.type).toBe("buy");
+    });
+
+    it("maps detail fields correctly", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get(`/api/1.0/transactions/${mockTransaction.id}`)
+        .reply(200, {
+          ...mockTransactionDetails,
+          order_id: "order-123",
+          crypto_transaction_hash: "0xabc123",
+          network: "Ethereum",
+        });
+
+      const result = await client.getTransaction(mockTransaction.id);
+
+      expect(result.source).toMatchObject({
+        amount: "1000.00",
+        currency: "USD",
+        fee: "1.00",
+        fee_currency: "USD",
+      });
+      expect(result.destination).toMatchObject({
+        amount: "0.01",
+        currency: "BTC",
+      });
+      expect(result.source?.account).toEqual({
+        type: "revolut_x",
+        display_name: "Crypto Primary",
+      });
+      expect(result.description).toBe("Test transaction");
+      expect(result.order_id).toBe("order-123");
+      expect(result.crypto_transaction_hash).toBe("0xabc123");
+      expect(result.network).toBe("Ethereum");
+    });
+
+    it("handles an external crypto account with address", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get(`/api/1.0/transactions/${mockTransaction.id}`)
+        .reply(200, {
+          ...mockTransactionDetails,
+          type: "receive",
+          source: {
+            amount: "0.5",
+            currency: "ETH",
+            account: {
+              type: "external_crypto",
+              display_name: "Binance",
+              crypto_address: "0xdeadbeef",
+            },
+          },
+          destination: {
+            amount: "0.5",
+            currency: "ETH",
+            account: {
+              type: "revolut_x",
+              display_name: "Crypto Primary",
+            },
+          },
+        });
+
+      const result = await client.getTransaction(mockTransaction.id);
+
+      expect(result.source?.account).toEqual({
+        type: "external_crypto",
+        display_name: "Binance",
+        crypto_address: "0xdeadbeef",
+      });
+      expect(result.destination?.account).toEqual({
+        type: "revolut_x",
+        display_name: "Crypto Primary",
+      });
+    });
+
+    it("shows only the source leg with an account for a stake", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get(`/api/1.0/transactions/${mockTransaction.id}`)
+        .reply(200, {
+          ...mockTransactionDetails,
+          type: "stake",
+          source: {
+            amount: "0.01",
+            currency: "BTC",
+            account: {
+              type: "revolut_x",
+              display_name: "Crypto Primary",
+            },
+          },
+          destination: undefined,
+        });
+
+      const result = await client.getTransaction(mockTransaction.id);
+
+      expect(result.source?.account).toEqual({
+        type: "revolut_x",
+        display_name: "Crypto Primary",
+      });
+      expect(result.destination).toBeUndefined();
+    });
+
+    it("handles a sub-account as a transaction leg account", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get(`/api/1.0/transactions/${mockTransaction.id}`)
+        .reply(200, {
+          ...mockTransactionDetails,
+          type: "send",
+          destination: {
+            amount: "0.01",
+            currency: "BTC",
+            account: {
+              type: "revolut_x",
+              display_name: "My X Account",
+            },
+          },
+        });
+
+      const result = await client.getTransaction(mockTransaction.id);
+
+      expect(result.destination?.account).toEqual({
+        type: "revolut_x",
+        display_name: "My X Account",
+      });
+    });
+
+    it("handles a destination-only detail without extra fields", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get(`/api/1.0/transactions/${mockTransaction.id}`)
+        .reply(200, {
+          id: mockTransaction.id,
+          status: "completed",
+          type: "reward",
+          destination: { amount: "0.0001", currency: "ETH" },
+          created_date: 1700000000000,
+        });
+
+      const result = await client.getTransaction(mockTransaction.id);
+
+      expect(result.destination).toEqual({
+        amount: "0.0001",
+        currency: "ETH",
+      });
+      expect(result.source).toBeUndefined();
+      expect(result.description).toBeUndefined();
+      expect(result.processed_date).toBeUndefined();
+    });
+
+    it("throws NotFoundError for an unknown id", async () => {
+      const client = createTestClient();
+      nock(BASE_URL).get("/api/1.0/transactions/does-not-exist").reply(404, {
+        message: "Transaction not found",
+        error_id: "err-1",
+        timestamp: 1700000000000,
+      });
+
+      await expect(client.getTransaction("does-not-exist")).rejects.toThrow();
     });
   });
 });

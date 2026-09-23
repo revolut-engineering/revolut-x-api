@@ -25,7 +25,11 @@ import {
   ReplaceOrderParams,
 } from "./types/orders.js";
 import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
-import type { Transaction, TransactionsOptions } from "./types/transactions.js";
+import type {
+  Transaction,
+  TransactionDetails,
+  TransactionsOptions,
+} from "./types/transactions.js";
 import {
   mapPublicTrade,
   mapTrade,
@@ -495,6 +499,14 @@ export class RevolutXClient {
       "GET",
       "/transactions",
       params,
+    );
+  }
+
+  async getTransaction(transactionId: string): Promise<TransactionDetails> {
+    this.requireAuth();
+    return this.request<TransactionDetails>(
+      "GET",
+      `/transactions/${transactionId}`,
     );
   }
 }

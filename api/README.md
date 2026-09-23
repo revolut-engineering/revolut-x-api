@@ -156,6 +156,7 @@ const candles = await client.getCandles("BTC-USD", {
 // Order book (authenticated)
 const book = await client.getOrderBook("BTC-USD", { limit: 10 }); // depth per side, 1-192, default 50
 // → { data: { asks, bids }, metadata: { timestamp } }
+// asks ascending (asks[0] = best/lowest ask), bids descending (bids[0] = best/highest bid)
 ```
 
 ---
@@ -244,7 +245,23 @@ const transactions = await client.getTransactions({
   currencies: ["BTC", "USD"],
 });
 // → { data: Transaction[], metadata: { timestamp, next_cursor? } }
-// A transaction may have source fields, destination fields, or both.
+// A transaction may have source fields, destination fields, or both:
+// buys and sells have both legs, sends and stakes only a source,
+// receives, rewards, and un_stakes only a destination.
+// Each leg includes account: { type } — revolut, revolut_x,
+// external_fiat, or external_crypto.
+
+// Single transaction by ID (includes fees, account details, description)
+const transaction = await client.getTransaction("a1b2c3d4-e5f6-7890-abcd-ef0123456789");
+// → TransactionDetails
+// Detail legs may include fee, fee_currency, and account
+// (type, optional display_name, optional crypto_address).
+// Receives and sends show both legs in details (only one in the list);
+// stakes show only a source and un_stakes and rewards only a destination.
+// Fees appear on at most one leg — the leg paid in the fee's currency
+// (the source leg for same-currency sends/receives). Stake, un_stake, reward,
+// and external top-ups never show fees.
+// May also include order_id, crypto_transaction_hash, network, and description.
 ```
 
 ---

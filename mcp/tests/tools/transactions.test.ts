@@ -6,6 +6,7 @@ import { registerTransactionTools } from "../../src/tools/transactions.js";
 
 const mockClient = {
   getTransactions: vi.fn(),
+  getTransaction: vi.fn(),
 };
 
 vi.mock("../../src/server.js", () => ({
@@ -31,11 +32,41 @@ const buyTransaction = {
   source: {
     amount: "1.00",
     currency: "USD",
+    account: { type: "revolut_x" },
   },
   destination: {
     amount: "0.00001564",
     currency: "BTC",
+    account: { type: "revolut_x" },
   },
+  created_date: 1786607516938,
+  processed_date: 1786607517180,
+};
+
+const buyTransactionDetails = {
+  id: "buy-1",
+  status: "completed",
+  type: "buy",
+  source: {
+    amount: "1.00",
+    currency: "USD",
+    fee: "0.001",
+    fee_currency: "USD",
+    account: {
+      type: "revolut_x",
+      display_name: "Crypto Primary",
+    },
+  },
+  destination: {
+    amount: "0.00001564",
+    currency: "BTC",
+    account: {
+      type: "revolut_x",
+      display_name: "Crypto Primary",
+    },
+  },
+  order_id: "order-123",
+  description: "Bought via Revolut X",
   created_date: 1786607516938,
   processed_date: 1786607517180,
 };
@@ -84,10 +115,44 @@ describe("transaction tools", () => {
     });
     const text = getText(result);
 
-    expect(text).toContain("Source Amount: -1.00 USD");
-    expect(text).toContain("Destination Amount: +0.00001564 BTC");
+    expect(text).toContain("Source Amount: -1.00 USD (revolut_x)");
+    expect(text).toContain("Destination Amount: +0.00001564 BTC (revolut_x)");
     expect(text).toContain("Processed:");
     expect(getTransactions(result)).toEqual([buyTransaction]);
+  });
+
+  it("reports per-leg account types on a sell", async () => {
+    const sellTransaction = {
+      id: "sell-1",
+      status: "completed",
+      type: "sell",
+      source: {
+        amount: "0.01",
+        currency: "BTC",
+        account: { type: "revolut_x" },
+      },
+      destination: {
+        amount: "100.00",
+        currency: "USD",
+        account: { type: "revolut" },
+      },
+      created_date: 1786607516938,
+      processed_date: 1786607517180,
+    };
+    mockClient.getTransactions.mockResolvedValue({
+      data: [sellTransaction],
+      metadata: {},
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transactions",
+      arguments: {},
+    });
+    const text = getText(result);
+
+    expect(text).toContain("Source Amount: -0.01 BTC (revolut_x)");
+    expect(text).toContain("Destination Amount: +100.00 USD (revolut)");
+    expect(getTransactions(result)).toEqual([sellTransaction]);
   });
 
   it("formats a destination-only transaction", async () => {
@@ -140,7 +205,7 @@ describe("transaction tools", () => {
     });
     const text = getText(result);
 
-    expect(text).toContain("Source Amount: -0.005 BTC");
+    expect(text).toContain("Source Amount: -0.005 BTC\n");
     expect(text).not.toContain("Destination Amount:");
   });
 
@@ -232,6 +297,161 @@ describe("transaction tools", () => {
     const result = await client.callTool({
       name: "get_transactions",
       arguments: {},
+    });
+
+    expect(getText(result)).toContain("Setup guide text");
+  });
+});
+
+describe("get_transaction tool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.getTransaction.mockResolvedValue(buyTransactionDetails);
+  });
+
+  it("fetches the transaction by id and returns structured details", async () => {
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transaction",
+      arguments: { transaction_id: "buy-1" },
+    });
+
+    expect(mockClient.getTransaction).toHaveBeenCalledWith("buy-1");
+    const text = getText(result);
+    expect(text).toContain("Transaction buy-1");
+    expect(text).toContain("Source Amount: -1.00 USD");
+    expect(text).toContain("Fee: 0.001 USD");
+    expect(text).toContain("Account: Crypto Primary · revolut_x");
+    expect(text).toContain("Destination Amount: +0.00001564 BTC");
+    expect(text).toContain("Order ID: order-123");
+    expect(text).toContain("Description: Bought via Revolut X");
+
+    if (!("structuredContent" in result)) throw new Error("missing");
+    expect(
+      (result.structuredContent as Record<string, unknown>).transaction,
+    ).toEqual(buyTransactionDetails);
+  });
+
+  it("shows on-chain fields when present", async () => {
+    mockClient.getTransaction.mockResolvedValue({
+      ...buyTransactionDetails,
+      type: "send",
+      source: {
+        amount: "0.5",
+        currency: "ETH",
+        account: {
+          type: "revolut_x",
+          display_name: "Crypto Primary",
+        },
+      },
+      destination: {
+        amount: "0.5",
+        currency: "ETH",
+        account: {
+          type: "external_crypto",
+        },
+      },
+      order_id: undefined,
+      crypto_transaction_hash: "0xabc123",
+      network: "Ethereum",
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transaction",
+      arguments: { transaction_id: "buy-1" },
+    });
+    const text = getText(result);
+
+    expect(text).toContain("Source Amount: -0.5 ETH");
+    expect(text).toContain("Account: Crypto Primary · revolut_x");
+    expect(text).toContain("Account: external_crypto");
+    expect(text).toContain("Crypto Transaction Hash: 0xabc123");
+    expect(text).toContain("Network: Ethereum");
+    expect(text).not.toContain("Order ID:");
+  });
+
+  it("shows the crypto address of an external wallet account", async () => {
+    mockClient.getTransaction.mockResolvedValue({
+      ...buyTransactionDetails,
+      type: "send",
+      destination: {
+        amount: "0.5",
+        currency: "ETH",
+        fee: "0.0001",
+        fee_currency: "ETH",
+        account: {
+          type: "external_crypto",
+          display_name: "External Wallet",
+          crypto_address: "0xdeadbeef",
+        },
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transaction",
+      arguments: { transaction_id: "buy-1" },
+    });
+    const text = getText(result);
+
+    expect(text).toContain(
+      "Account: External Wallet · external_crypto · 0xdeadbeef",
+    );
+  });
+
+  it("shows a sub-account as the leg account", async () => {
+    mockClient.getTransaction.mockResolvedValue({
+      ...buyTransactionDetails,
+      type: "send",
+      destination: {
+        amount: "0.01",
+        currency: "BTC",
+        account: {
+          type: "revolut_x",
+          display_name: "My X Account",
+        },
+      },
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transaction",
+      arguments: { transaction_id: "buy-1" },
+    });
+    const text = getText(result);
+
+    expect(text).toContain("Account: My X Account · revolut_x");
+  });
+
+  it("omits optional fields that are absent", async () => {
+    mockClient.getTransaction.mockResolvedValue({
+      id: "reward-1",
+      status: "completed",
+      type: "reward",
+      destination: { amount: "0.0001", currency: "ETH" },
+      created_date: 1786607516938,
+    });
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transaction",
+      arguments: { transaction_id: "reward-1" },
+    });
+    const text = getText(result);
+
+    expect(text).toContain("Destination Amount: +0.0001 ETH");
+    expect(text).not.toContain("Fee:");
+    expect(text).not.toContain("Order ID:");
+    expect(text).not.toContain("Description:");
+    expect(text).not.toContain("Processed:");
+  });
+
+  it("returns the setup guide on an authentication error", async () => {
+    const { AuthNotConfiguredError } = await import("@revolut/revolut-x-api");
+    mockClient.getTransaction.mockRejectedValue(
+      new AuthNotConfiguredError("not configured"),
+    );
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_transaction",
+      arguments: { transaction_id: "buy-1" },
     });
 
     expect(getText(result)).toContain("Setup guide text");

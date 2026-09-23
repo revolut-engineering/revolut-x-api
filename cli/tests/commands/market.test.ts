@@ -656,6 +656,8 @@ describe("market orderbook", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("100100");
     expect(output).toContain("99900");
+    expect(output.indexOf("100100")).toBeLessThan(output.indexOf("100200"));
+    expect(output.indexOf("99900")).toBeLessThan(output.indexOf("99800"));
   });
 
   it("outputs JSON when --json is set", async () => {

@@ -2,6 +2,7 @@ import { Command, Option } from "commander";
 import chalk from "chalk";
 import {
   type Transaction,
+  type TransactionDetailLeg,
   paginateWithDynamicWindows,
   TRANSACTIONS_API_LIMIT,
 } from "@revolut/revolut-x-api";
@@ -12,6 +13,7 @@ import {
   isJsonOutput,
   printJson,
   printTable,
+  printKeyValue,
   formatLocalDateTime,
   LOCAL_TIME_NOTE,
   type ColumnDef,
@@ -66,6 +68,32 @@ function formatFlow(
   return `${sign}${unsignedAmount} ${currency}`;
 }
 
+function formatAccount(
+  account: TransactionDetailLeg["account"],
+): string | undefined {
+  if (!account) return undefined;
+  const parts = [account.display_name, account.type].filter(Boolean);
+  if (account.crypto_address) parts.push(account.crypto_address);
+  return parts.join(" · ");
+}
+
+function pushLegRows(
+  rows: [string, string][],
+  label: string,
+  leg: TransactionDetailLeg | undefined,
+): void {
+  if (!leg) return;
+  rows.push([chalk.cyan.bold(`\n❖ ${label}`), ""]);
+  rows.push([chalk.gray("  ↳ Amount"), `${leg.amount} ${leg.currency}`]);
+  if (leg.fee)
+    rows.push([
+      chalk.gray("  ↳ Fee"),
+      `${leg.fee}${leg.fee_currency ? ` ${leg.fee_currency}` : ""}`,
+    ]);
+  const account = formatAccount(leg.account);
+  if (account) rows.push([chalk.gray("  ↳ Account"), account]);
+}
+
 function parseList<T extends string>(
   value: string | undefined,
   validValues: readonly T[],
@@ -104,11 +132,12 @@ export function registerTransactionCommand(program: Command): void {
 Examples:
   $ revx transaction list                                Recent transactions
   $ revx transaction list --limit 100                    Last 100 transactions
-  $ revx transaction list --start-date 7d                Transactions in last 7 days
+  $ revx transaction list --start-date 7d               Transactions in last 7 days
   $ revx transaction list --types buy,receive            Filter by type
   $ revx transaction list --statuses completed           Filter by status
   $ revx transaction list --currencies BTC,USD           Filter by currency
   $ revx transaction list --json                         Output as JSON
+  $ revx transaction get <transaction-id>                Full details of one transaction
 
 Without --start-date, the 30 days ending at --end-date (now by default) are returned.`,
     );
@@ -252,9 +281,64 @@ Without --start-date, the 30 days ending at --end-date (now by default) are retu
         }
       },
     );
+
+  transaction
+    .command("get")
+    .description("Get details of a specific transaction")
+    .argument(
+      "<transaction-id>",
+      "Transaction ID as shown by `revx transaction list`",
+    )
+    .option("--json", "Output as JSON")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
+    .action(
+      async (
+        transactionId: string,
+        opts: { json?: boolean; output?: string },
+      ) => {
+        try {
+          const client = getClient({ requireAuth: true });
+          const t = await client.getTransaction(transactionId);
+
+          if (isJsonOutput(opts)) {
+            printJson(t);
+          } else {
+            printSectionHeader("Transaction Details");
+            console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
+
+            const rows: [string, string][] = [
+              ["ID", chalk.white.bold(t.id)],
+              ["Type", t.type],
+              ["Status", formatStatus(t)],
+            ];
+
+            pushLegRows(rows, "Source", t.source);
+            pushLegRows(rows, "Destination", t.destination);
+
+            if (t.description) rows.push(["Description", t.description]);
+            if (t.order_id) rows.push(["Order ID", t.order_id]);
+            if (t.crypto_transaction_hash)
+              rows.push(["Crypto Transaction Hash", t.crypto_transaction_hash]);
+            if (t.network) rows.push(["Network", t.network]);
+
+            rows.push(["Created", formatLocalDateTime(t.created_date)]);
+            if (t.processed_date !== undefined)
+              rows.push(["Processed", formatLocalDateTime(t.processed_date)]);
+
+            printKeyValue(rows);
+          }
+        } catch (err) {
+          handleError(err);
+        }
+      },
+    );
 }
 
-function formatStatus(t: Transaction): string {
+function formatStatus(t: Pick<Transaction, "status">): string {
   const s = String(t.status);
   if (s === "completed") return chalk.green("completed");
   if (s === "pending") return chalk.yellow("pending");

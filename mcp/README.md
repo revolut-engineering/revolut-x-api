@@ -154,7 +154,8 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 
 | Tool | Description |
 |------|-------------|
-| `get_transactions` | Get trades, transfers, staking activity, and rewards. Source and destination amounts are signed; either side may be absent. |
+| `get_transactions` | Get trades, transfers, staking activity, and rewards. Source and destination amounts are signed; buys and sells show both legs, sends and stakes only a source, receives, rewards, and un_stakes only a destination. Each leg reports its account type (revolut, revolut_x, external_fiat, external_crypto). |
+| `get_transaction` | Get full details of a single transaction by ID, including per-leg fees, account details (type, optional display name, optional crypto address), and — when present — order ID, on-chain hash, network, and description. |
 
 ### Market Data
 
@@ -162,8 +163,8 @@ This runs `generate_keypair`, `configure_api_key`, and `check_auth_status` in se
 |------|-------------|
 | `get_currencies` | List all available currencies with name, asset type, precision, and status. |
 | `get_currency_pairs` | List all tradeable pairs with step sizes, min/max order sizes, and status. |
-| `get_tickers` | Get current bid/ask/mid/index/last prices and 24h stats. Optionally filter by symbols. |
-| `get_order_book` | Get the order book for a pair. `limit` controls depth per side (1–192, default 50). |
+| `get_tickers` | Get current bid/ask/mid/last prices and 24h stats. Optionally filter by symbols. |
+| `get_order_book` | Get the order book for a pair. `limit` controls depth per side (1–192, default 50). Asks are ascending (best ask first); bids are descending (best bid first). |
 | `get_candles` | Get OHLCV candles. Supports resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`, `"1d"`, `"2d"`, `"4d"`, `"1w"`, `"2w"`, `"4w"`. Auto-paginates when `start_date`/`end_date` are provided. |
 | `get_public_trades` | Get public trades for a pair. |
 

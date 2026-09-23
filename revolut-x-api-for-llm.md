@@ -683,8 +683,8 @@ Get the current order book snapshot (bids and asks) for a specific trading pair.
 
 **Response (200):** `{ data: { asks: [OrderBookPriceLevel], bids: [OrderBookPriceLevel] }, metadata: { timestamp } }`
 
-- `asks`: sell orders, sorted by price **descending**
-- `bids`: buy orders, sorted by price **descending**
+- `asks`: sell orders, sorted by price **ascending** — `asks[0]` is the best (lowest) ask
+- `bids`: buy orders, sorted by price **descending** — `bids[0]` is the best (highest) bid
 - `metadata.timestamp`: int64, Unix epoch milliseconds
 - Note: all timestamps in this response (`pdt`, `metadata.timestamp`) are **int64 Unix epoch milliseconds**.
 
@@ -693,8 +693,8 @@ Get the current order book snapshot (bids and asks) for a specific trading pair.
 {
   "data": {
     "asks": [
-      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4600", "pc": "USD", "pn": "MONE", "q": "17", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "3", "ts": "CLOB", "pdt": 3318215482991},
-      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4555", "pc": "USD", "pn": "MONE", "q": "2.1234", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "2", "ts": "CLOB", "pdt": 3318215482991}
+      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4555", "pc": "USD", "pn": "MONE", "q": "2.1234", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "2", "ts": "CLOB", "pdt": 3318215482991},
+      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4600", "pc": "USD", "pn": "MONE", "q": "17", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "3", "ts": "CLOB", "pdt": 3318215482991}
     ],
     "bids": [
       {"aid": "ETH", "anm": "Ethereum", "s": "BUYI", "p": "4550", "pc": "USD", "pn": "MONE", "q": "0.25", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "1", "ts": "CLOB", "pdt": 3318215482991},
@@ -827,8 +827,8 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 **Response (200):** `{ data: { asks: [OrderBookPublicPriceLevel], bids: [OrderBookPublicPriceLevel] }, metadata: { timestamp } }`
 
 - Maximum 5 price levels per side
-- `asks`: sell orders, sorted by price descending
-- `bids`: buy orders, sorted by price descending
+- `asks`: sell orders, sorted by price ascending — `asks[0]` is the best (lowest) ask
+- `bids`: buy orders, sorted by price descending — `bids[0]` is the best (highest) bid
 - `metadata.timestamp`: ISO-8601 string (not epoch ms)
 - `OrderBookPublicPriceLevel.pdt`: ISO-8601 string (not epoch ms)
 - **Important:** Unlike the authenticated `GET /order-book/{symbol}`, all timestamps here are ISO-8601 strings, not int64 epoch milliseconds.
@@ -838,8 +838,8 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 {
   "data": {
     "asks": [
-      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4600", "pc": "USD", "pn": "MONE", "q": "17", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "3", "ts": "CLOB", "pdt": "2025-08-08T21:40:36.124538Z"},
-      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4555", "pc": "USD", "pn": "MONE", "q": "2.1234", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "2", "ts": "CLOB", "pdt": "2025-08-08T21:40:36.124538Z"}
+      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4555", "pc": "USD", "pn": "MONE", "q": "2.1234", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "2", "ts": "CLOB", "pdt": "2025-08-08T21:40:36.124538Z"},
+      {"aid": "ETH", "anm": "Ethereum", "s": "SELL", "p": "4600", "pc": "USD", "pn": "MONE", "q": "17", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "3", "ts": "CLOB", "pdt": "2025-08-08T21:40:36.124538Z"}
     ],
     "bids": [
       {"aid": "ETH", "anm": "Ethereum", "s": "BUYI", "p": "4550", "pc": "USD", "pn": "MONE", "q": "0.25", "qc": "ETH", "qn": "UNIT", "ve": "REVX", "no": "1", "ts": "CLOB", "pdt": "2025-08-08T21:40:36.124538Z"},

@@ -186,7 +186,10 @@ describe("Market Data", () => {
         .query({ limit: "50" })
         .reply(200, {
           data: {
-            asks: [mockOrderBookLevel],
+            asks: [
+              mockOrderBookLevel,
+              { ...mockOrderBookLevel, p: "95200", q: "2", no: "1" },
+            ],
             bids: [{ ...mockOrderBookLevel, s: "BUYI", p: "95000", no: "3" }],
           },
           metadata: { timestamp: 1700000000000 },
@@ -194,9 +197,10 @@ describe("Market Data", () => {
 
       const result = await client.getOrderBook("BTC-USD");
 
-      expect(result.data.asks).toHaveLength(1);
+      expect(result.data.asks).toHaveLength(2);
       expect(result.data.bids).toHaveLength(1);
       expect(result.data.asks[0].price).toBe("95100");
+      expect(result.data.asks[1].price).toBe("95200");
       expect(result.data.bids[0].price).toBe("95000");
     });
 
