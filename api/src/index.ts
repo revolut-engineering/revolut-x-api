@@ -66,6 +66,8 @@ export {
   ORDER_BOOK_DEFAULT_DEPTH,
 } from "./pagination/index.js";
 
+export { TRANSACTION_ACCOUNT_TYPES } from "./types/index.js";
+
 export type {
   ErrorResponse,
   PaginationMetadata,
@@ -110,6 +112,11 @@ export type {
   TransactionType,
   TransactionStatus,
   Transaction,
+  TransactionDetails,
+  TransactionDetailLeg,
+  TransactionAccountRef,
+  TransactionAccount,
+  TransactionAccountType,
   TransactionsOptions,
   Ticker,
   TickersOptions,

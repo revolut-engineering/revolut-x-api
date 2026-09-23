@@ -123,6 +123,7 @@ export function registerMarketDataTools(server: McpServer): void {
       title: "Get Order Book",
       description:
         "Get the LIVE order book (bid/ask depth) for a trading pair. Use for current spread, depth, and immediate-market structure — not historical price action. " +
+        "Asks are sorted ascending, so asks[0] is the best (lowest) ask; bids are sorted descending, so bids[0] is the best (highest) bid. " +
         "Spread is the difference between the best bid and ask",
       inputSchema: {
         symbol: z.string().describe('Trading pair symbol, e.g. "BTC-USD"'),
@@ -167,7 +168,7 @@ export function registerMarketDataTools(server: McpServer): void {
         `${"Price".padStart(14)} | ${"Quantity".padStart(14)} | ${"Orders".padStart(6)}`,
       );
       outputLines.push("-".repeat(42));
-      for (const ask of [...asks].reverse()) {
+      for (const ask of asks) {
         outputLines.push(
           `${ask.price.padStart(14)} | ` +
             `${ask.quantity.padStart(14)} | ` +

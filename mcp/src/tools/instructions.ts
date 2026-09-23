@@ -34,6 +34,7 @@ Read-only data (safe to call):
   get_order_by_id       — single order detail (incl. fees paid)
   get_order_fills       — fill details for an order
   get_transactions      — buys, sells, sends, and receives
+  get_transaction       — single transaction detail (incl. fees, account, on-chain info)
   grid_backtest         — run backtest simulation
   grid_optimize         — optimize grid parameters
 

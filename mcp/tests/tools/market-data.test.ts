@@ -156,7 +156,10 @@ describe("market data tools", () => {
   it("get_order_book returns formatted data", async () => {
     mockClient.getOrderBook.mockResolvedValue({
       data: {
-        asks: [{ price: "100000", quantity: "0.5", orderCount: 3 }],
+        asks: [
+          { price: "100000", quantity: "0.5", orderCount: 3 },
+          { price: "100100", quantity: "0.8", orderCount: 2 },
+        ],
         bids: [{ price: "99000", quantity: "1.0", orderCount: 5 }],
       },
       metadata: { timestamp: 1700000000000 },
@@ -173,6 +176,7 @@ describe("market data tools", () => {
     expect(text).toContain("0.5");
     expect(text).toContain("99000");
     expect(text).toContain("1.0");
+    expect(text.indexOf("100000")).toBeLessThan(text.indexOf("100100"));
     expect(mockClient.getOrderBook).toHaveBeenCalledWith("BTC-USD", {
       limit: 50,
     });

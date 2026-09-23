@@ -3,10 +3,12 @@ import { Command } from "commander";
 import { registerTransactionCommand } from "../../src/commands/transaction.js";
 
 const mockGetTransactions = vi.fn();
+const mockGetTransaction = vi.fn();
 
 vi.mock("../../src/util/client.js", () => ({
   getClient: vi.fn(() => ({
     getTransactions: mockGetTransactions,
+    getTransaction: mockGetTransaction,
   })),
 }));
 
@@ -42,6 +44,34 @@ const sampleTransaction = {
     amount: "0.01",
     currency: "BTC",
   },
+  created_date: 1700000000000,
+  processed_date: 1700000001000,
+};
+
+const sampleTransactionDetails = {
+  id: "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+  status: "completed",
+  type: "buy",
+  source: {
+    amount: "1000.00",
+    currency: "USD",
+    fee: "1.00",
+    fee_currency: "USD",
+    account: {
+      type: "revolut_x",
+      display_name: "Crypto Primary",
+    },
+  },
+  destination: {
+    amount: "0.01",
+    currency: "BTC",
+    account: {
+      type: "revolut_x",
+      display_name: "Crypto Primary",
+    },
+  },
+  order_id: "order-123",
+  description: "Test transaction",
   created_date: 1700000000000,
   processed_date: 1700000001000,
 };
@@ -247,6 +277,51 @@ describe("transaction list", () => {
     expect(parsed.data[0].id).toBe(sampleTransaction.id);
   });
 
+  it("includes per-leg account types in JSON output", async () => {
+    const buyTransaction = {
+      ...sampleTransaction,
+      source: {
+        amount: "1000.00",
+        currency: "USD",
+        account: { type: "revolut" },
+      },
+      destination: {
+        amount: "0.01",
+        currency: "BTC",
+        account: { type: "revolut_x" },
+      },
+    };
+    mockGetTransactions.mockResolvedValue({ data: [buyTransaction] });
+    await program.parseAsync(["node", "revx", "transaction", "list", "--json"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    const parsed = JSON.parse(output);
+    expect(parsed.data[0].source.account.type).toBe("revolut");
+    expect(parsed.data[0].destination.account.type).toBe("revolut_x");
+  });
+
+  it("omits per-leg account types from the list table", async () => {
+    const buyTransaction = {
+      ...sampleTransaction,
+      source: {
+        amount: "1000.00",
+        currency: "USD",
+        account: { type: "revolut" },
+      },
+      destination: {
+        amount: "0.01",
+        currency: "BTC",
+        account: { type: "revolut_x" },
+      },
+    };
+    mockGetTransactions.mockResolvedValue({ data: [buyTransaction] });
+    await program.parseAsync(["node", "revx", "transaction", "list"]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("-1000.00 USD");
+    expect(output).toContain("+0.01 BTC");
+    expect(output).not.toContain("(revolut)");
+    expect(output).not.toContain("(revolut_x)");
+  });
+
   it("fetches all pages automatically within a date window", async () => {
     const tx2 = { ...sampleTransaction, id: "page2tx1" };
     mockGetTransactions
@@ -349,5 +424,190 @@ describe("transaction list", () => {
         limit: expect.any(Number),
       }),
     );
+  });
+});
+
+describe("transaction get", () => {
+  let program: Command;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    program = makeProgram();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    mockGetTransaction.mockResolvedValue(sampleTransactionDetails);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("fetches the transaction by id", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+    ]);
+    expect(mockGetTransaction).toHaveBeenCalledWith(
+      sampleTransactionDetails.id,
+    );
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain(sampleTransactionDetails.id);
+  });
+
+  it("shows leg amounts, fees, and account details", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("1000.00 USD");
+    expect(output).toContain("0.01 BTC");
+    expect(output).toContain("1.00 USD");
+    expect(output).toContain("Crypto Primary");
+    expect(output).toContain("revolut_x");
+  });
+
+  it("shows only the source leg for a stake", async () => {
+    mockGetTransaction.mockResolvedValue({
+      ...sampleTransactionDetails,
+      type: "stake",
+      source: {
+        amount: "0.01",
+        currency: "BTC",
+        account: {
+          type: "revolut_x",
+          display_name: "Crypto Primary",
+        },
+      },
+      destination: undefined,
+    });
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Crypto Primary · revolut_x");
+    expect(output).not.toContain("Destination");
+  });
+
+  it("shows a sub-account as the leg account", async () => {
+    mockGetTransaction.mockResolvedValue({
+      ...sampleTransactionDetails,
+      type: "send",
+      destination: {
+        amount: "0.01",
+        currency: "BTC",
+        account: {
+          type: "revolut_x",
+          display_name: "My X Account",
+        },
+      },
+    });
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("My X Account · revolut_x");
+  });
+
+  it("shows optional detail fields when present", async () => {
+    mockGetTransaction.mockResolvedValue({
+      ...sampleTransactionDetails,
+      type: "receive",
+      source: {
+        amount: "0.01",
+        currency: "BTC",
+        account: {
+          type: "external_crypto",
+          crypto_address: "bc1qsourcewallet",
+        },
+      },
+      crypto_transaction_hash: "0xabc123",
+      network: "Ethereum",
+      order_id: undefined,
+    });
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Test transaction");
+    expect(output).toContain("0xabc123");
+    expect(output).toContain("Ethereum");
+    expect(output).toContain("external_crypto · bc1qsourcewallet");
+    expect(output).not.toContain("Order ID");
+  });
+
+  it("omits missing optional fields", async () => {
+    mockGetTransaction.mockResolvedValue({
+      id: sampleTransactionDetails.id,
+      status: "pending",
+      type: "send",
+      source: { amount: "0.01", currency: "BTC" },
+      created_date: 1700000000000,
+    });
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).not.toContain("Description");
+    expect(output).not.toContain("Order ID");
+    expect(output).not.toContain("Network");
+    expect(output).not.toContain("Processed");
+  });
+
+  it("outputs JSON when --json is set", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "transaction",
+      "get",
+      sampleTransactionDetails.id,
+      "--json",
+    ]);
+    const output = logSpy.mock.calls.flat().join(" ");
+    const parsed = JSON.parse(output);
+    expect(parsed.id).toBe(sampleTransactionDetails.id);
+    expect(parsed.source.fee).toBe("1.00");
+  });
+
+  it("exits with error when the transaction is not found", async () => {
+    mockGetTransaction.mockRejectedValue(
+      new Error("Not Found (404): Transaction not found"),
+    );
+    await expect(
+      program.parseAsync(["node", "revx", "transaction", "get", "missing-id"]),
+    ).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errOutput = errSpy.mock.calls.flat().join(" ");
+    expect(errOutput).toContain("Transaction not found");
   });
 });

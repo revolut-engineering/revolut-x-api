@@ -48,10 +48,17 @@ export type {
 
 export type { Trade, TradesOptions } from "./trades.js";
 
+export { TRANSACTION_ACCOUNT_TYPES } from "./transactions.js";
+
 export type {
   TransactionType,
   TransactionStatus,
   Transaction,
+  TransactionDetails,
+  TransactionDetailLeg,
+  TransactionAccountRef,
+  TransactionAccount,
+  TransactionAccountType,
   TransactionsOptions,
 } from "./transactions.js";
 

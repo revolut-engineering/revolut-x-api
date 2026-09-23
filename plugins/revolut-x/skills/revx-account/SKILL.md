@@ -3,9 +3,10 @@ name: revx-account
 description: >
   Revolut X account, transaction, order, and trade queries. Use when the user asks to
   "check my balances", "transaction history", "deposits", "withdrawals", "buys", "sells",
-  "sends", "receives", "view open orders", "order history", "TWAP order", "order fills",
-  "my trades", "trade history", or runs revx account, revx transaction, revx order open,
-  revx order history, revx order get, revx order fills, or revx trade commands.
+  "sends", "receives", "transaction details", "transaction fees", "view open orders",
+  "order history", "TWAP order", "order fills", "my trades", "trade history", or runs
+  revx account, revx transaction, revx order open, revx order history, revx order get,
+  revx order fills, or revx trade commands.
 ---
 
 # Account, Transaction & Order Queries
@@ -39,16 +40,30 @@ revx transaction list --start-date 7d              # Last 7 days
 revx transaction list --types buy,receive          # Types: buy, sell, receive, send, stake, un_stake, reward
 revx transaction list --statuses completed,pending # Filter by status
 revx transaction list --currencies BTC,USD         # Filter by either side
-revx transaction list --limit 100 --json            # Limit and JSON output
+revx transaction list --limit 100 --json           # Limit and JSON output
+revx transaction get <transaction-id>               # Full details of one transaction
 ```
 
 **Filters:** `--start-date`, `--end-date`, `--types` (buy, sell, receive, send, stake, un_stake, reward), `--statuses` (pending, completed, cancelled, failed, reverted), `--currencies`, `--limit`
 
 **Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
-In table output, show the complete transaction UUID. The source side is `Source Amount` with a minus sign and the destination side is `Destination Amount` with a plus sign. A transaction may contain both sides, only `Source Amount`, or only `Destination Amount`. Do not expect account fields in transaction-list results.
+In table output, show the complete transaction UUID. The source side is `Source Amount` with a minus sign and the destination side is `Destination Amount` with a plus sign; account fields are not shown in the table. Buys and sells show both sides; sends and stakes show only `Source Amount`; receives, rewards, and un_stakes show only `Destination Amount`.
 
-In JSON output, use `source.currency` with `source.amount` for billing and `destination.currency` with `destination.amount` for received funds. Each side is optional; at least one side is present. Processing time is `processed_date`.
+In JSON output, use `source.currency` with `source.amount` for billing and `destination.currency` with `destination.amount` for received funds. Each side is optional; at least one side is present. Each leg carries `account.type` (`revolut`, `revolut_x`, `external_fiat`, `external_crypto`); account names and crypto addresses only appear via `revx transaction get`. Processing time is `processed_date`.
+
+### Transaction Details
+
+`revx transaction get <transaction-id>` returns one transaction with fields the list omits:
+
+- Each leg may include `fee` and `fee_currency`, and an `account` object with `type` (`revolut`, `revolut_x`, `external_fiat`, `external_crypto`), optional `display_name` (`Personal` for the main Revolut account, `Savings` for savings vaults, `Crypto Primary` or the account name for X sub-accounts, `Staking` for staking destinations), and (for external crypto wallets) `crypto_address`
+- `order_id` — the venue order behind a buy or sell
+- `crypto_transaction_hash` and `network` — on-chain info for external crypto sends/receives
+- `description` — free-text note when present
+
+Fees appear on at most one leg: the leg whose currency matches `fee_currency` (for same-currency sends/receives it's the source). `stake`, `un_stake`, `reward`, and external top-ups (crypto or bank) never show fees. Receives and sends carry both sides in details — the list shows only `Source Amount` for sends and only `Destination Amount` for receives. Stakes show only `Source Amount`, and un_stakes and rewards only `Destination Amount`, in both list and details.
+
+Optional fields appear only when present. Use this command for questions about a specific transaction's fees, counterparty account, or on-chain details.
 
 ---
 

@@ -70,6 +70,8 @@ revx market orderbook BTC-USD --limit 192   # Deepest book available
 
 Depth: 1–192 levels per side.
 
+Asks are sorted ascending — `asks[0]` is the best (lowest) ask. Bids are sorted descending — `bids[0]` is the best (highest) bid.
+
 > **Note on defaults:** The Revolut X REST API returns 20 levels by default and accepts up to 192 per call. `revx` requests 50 by default so pass `--limit 192` when you need the full book. Values outside 1–192 are rejected with an error rather than silently reduced.
 
 ---

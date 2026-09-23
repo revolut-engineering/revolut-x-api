@@ -197,9 +197,11 @@ revx transaction list                           # Transactions from the last 30 
   --currencies BTC,USD                          # Filter by either transaction side
   --limit 100                                   # Max results
   --json                                        # Raw API fields as JSON
+revx transaction get <transaction-id>           # Full details of one transaction
+  --json                                        # Raw API fields as JSON
 ```
 
-Table output shows signed `Source Amount` and `Destination Amount` values. Either side can be empty.
+Table output shows signed `Source Amount` and `Destination Amount` values. Either side can be empty: buys and sells show both sides, sends and stakes only the source, receives, rewards, and un_stakes only the destination. In JSON output each leg carries `account.type` (revolut, revolut_x, external_fiat, external_crypto); the table omits account fields. `revx transaction get` adds account display names and crypto addresses, and shows both sides for receives and sends too (stakes always show only the source, un_stakes and rewards only the destination).
 
 ---
 

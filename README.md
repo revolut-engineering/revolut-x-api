@@ -215,10 +215,10 @@ Order Book: BTC-USD
                        ASKS (Sell)
          Price Currency |       Quantity   Unit | Orders
 ----------------------------------------------------------
-      97250.00      USD |       0.15000    BTC |      3
-      97245.00      USD |       0.08500    BTC |      2
-      97240.00      USD |       0.22000    BTC |      5
       97238.20      USD |       0.05000    BTC |      1
+      97240.00      USD |       0.22000    BTC |      5
+      97245.00      USD |       0.08500    BTC |      2
+      97250.00      USD |       0.15000    BTC |      3
 
                        BIDS (Buy)
          Price Currency |       Quantity   Unit | Orders

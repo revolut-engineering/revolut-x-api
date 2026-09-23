@@ -490,7 +490,7 @@ outside the available history, is replaced by the most recent window.`,
             printSectionHeader(`Order Book: ${cleanSymbol}`);
 
             console.log(chalk.red.bold("Asks (Sell):"));
-            printTable(result.data.asks.reverse(), [
+            printTable(result.data.asks, [
               { header: "Price", key: "price", align: "right" },
               { header: "Quantity", key: "quantity", align: "right" },
               { header: "Orders", key: "orderCount", align: "right" },
