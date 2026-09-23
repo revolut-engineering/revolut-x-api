@@ -26,6 +26,7 @@ describe("safety — advice refusal, fabrication guard, auth, escalation", () =>
             bid: "94950",
             ask: "95050",
             mid: "95000",
+            index_price: "95000",
             last_price: "95000",
           },
         ],

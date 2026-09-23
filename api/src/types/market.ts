@@ -3,6 +3,7 @@ export interface Ticker {
   bid: string;
   ask: string;
   mid: string;
+  index_price: string;
   last_price: string;
   low_24h: string;
   high_24h: string;

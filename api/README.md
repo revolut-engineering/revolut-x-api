@@ -143,6 +143,7 @@ const pairs = await client.getCurrencyPairs();
 const tickers = await client.getTickers();
 const btc = await client.getTickers({ symbols: ["BTC-USD"] });
 // → { data: Ticker[], metadata: { timestamp } }
+// Ticker includes bid, ask, mid, index_price, last_price, and 24h statistics.
 
 // OHLCV candles
 const candles = await client.getCandles("BTC-USD", {

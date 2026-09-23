@@ -229,6 +229,7 @@ describe("market data tools", () => {
           bid: "99000",
           ask: "100000",
           mid: "99500",
+          index_price: "99600",
           last_price: "99800",
           low_24h: "98000",
           high_24h: "101000",
@@ -247,6 +248,8 @@ describe("market data tools", () => {
     const text = getText(result);
     expect(text).toContain("BTC-USD");
     expect(text).toContain("99000");
+    expect(text).toContain("Index");
+    expect(text).toContain("99600");
     expect(text).toContain("Low 24h");
     expect(text).toContain("98000");
     expect(text).toContain("High 24h");
@@ -258,6 +261,7 @@ describe("market data tools", () => {
     expect(text).toContain("Quote Vol 24h");
     expect(text).toContain("1233987.66000000");
     expect(getStructuredContent(result).tickers?.[0]).toMatchObject({
+      index_price: "99600",
       low_24h: "98000",
       high_24h: "101000",
       price_change_24h: "500",
@@ -274,6 +278,7 @@ describe("market data tools", () => {
           bid: "99000",
           ask: "100000",
           mid: "99500",
+          index_price: "99600",
           last_price: "99800",
           low_24h: "98000",
           high_24h: "101000",
@@ -286,6 +291,7 @@ describe("market data tools", () => {
           bid: "2900",
           ask: "3000",
           mid: "2950",
+          index_price: "2960",
           last_price: "2980",
           low_24h: "2800",
           high_24h: "3100",

@@ -5,6 +5,8 @@ import type {
 } from "@revolut/revolut-x-api";
 import type { ScenarioCandle, LivePriceSource, PriceTick } from "../types.js";
 
+const MAX_INDEX_PRICE_DRIFT = new Decimal("0.05");
+
 export interface ApiBatchOptions {
   client: RevolutXClient;
   pair: string;
@@ -48,15 +50,25 @@ export function parseApiCandles(candles: ApiCandle[]): ScenarioCandle[] {
 
 export function resolveTickerPrice(t: {
   mid?: string | null;
+  index_price?: string | null;
   last_price?: string | null;
 }): Decimal | null {
-  const raw = t.mid ?? t.last_price;
-  if (raw == null) {
-    return null;
-  }
+  const mid = parseTickerPrice(t.mid);
+  const fallback = mid ?? parseTickerPrice(t.last_price);
+  if (!mid) return fallback;
+
+  const indexPrice = parseTickerPrice(t.index_price);
+  if (!indexPrice) return fallback;
+
+  const drift = indexPrice.minus(mid).abs().div(mid);
+  return drift.lte(MAX_INDEX_PRICE_DRIFT) ? indexPrice : fallback;
+}
+
+function parseTickerPrice(raw: string | null | undefined): Decimal | null {
+  if (raw == null || String(raw).trim() === "") return null;
   try {
     const price = new Decimal(String(raw));
-    return price.isFinite() ? price : null;
+    return price.isFinite() && price.gt(0) ? price : null;
   } catch {
     return null;
   }
@@ -98,7 +110,7 @@ export class TickerPriceProvider implements LivePriceSource {
     const price = resolveTickerPrice(ticker);
     if (price == null || price.lte(0)) {
       throw new Error(
-        `Invalid ticker price for ${this._pair}: mid=${ticker.mid} last=${ticker.last_price}`,
+        `Invalid ticker price for ${this._pair}: index=${ticker.index_price} mid=${ticker.mid} last=${ticker.last_price}`,
       );
     }
     return price;

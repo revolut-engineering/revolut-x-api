@@ -6,6 +6,7 @@ import type {
   GridExchangeRateLimiter,
 } from "../../engine/grid-bot.js";
 import {
+  findFirstGeometricShiftAbovePrice,
   TAKER_FEE_RATE,
   trailUpTriggerFromBounds,
 } from "../../engine/grid-math.js";
@@ -576,7 +577,6 @@ export function runBacktest(
       quoteStep,
     );
 
-    // Trailing up check: did the candle's high breach the upper boundary + one step?
     if (trailingUp) {
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
@@ -593,12 +593,15 @@ export function runBacktest(
 
         let k: number;
         if (split) {
-          k = 1;
-          while (upper.times(ratio.pow(k)).lte(rebuildPrice)) k++;
+          k = findFirstGeometricShiftAbovePrice(upper, ratio, rebuildPrice, 1);
         } else {
           const sellBoundary = levels[Math.floor(levels.length / 2)].price;
-          k = Math.floor(levels.length / 2) + 1;
-          while (sellBoundary.times(ratio.pow(k)).lte(rebuildPrice)) k++;
+          k = findFirstGeometricShiftAbovePrice(
+            sellBoundary,
+            ratio,
+            rebuildPrice,
+            Math.floor(levels.length / 2) + 1,
+          );
         }
         const ratioK = ratio.pow(k);
         const candidatePrices = levels.map((level) =>
@@ -1036,6 +1039,7 @@ export async function runBacktestBot(
     rateLimiter: PASSTHROUGH_RATE_LIMITER,
     persistState: false,
     orderConstraints: constraints,
+    trailingUpConfirmationTicks: 1,
   });
   const b = bot as unknown as Record<string, unknown>;
   b._client = exchange;

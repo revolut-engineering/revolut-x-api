@@ -44,6 +44,7 @@ export const mockTicker = {
   bid: "95000",
   ask: "95100",
   mid: "95050",
+  index_price: "95050",
   last_price: "95050",
 };
 

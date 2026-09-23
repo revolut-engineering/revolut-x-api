@@ -1,5 +1,6 @@
 import { Decimal } from "decimal.js";
 import type { CurrencyPair } from "@revolut/revolut-x-api";
+import { findFirstGeometricShiftAbovePrice } from "./grid-math.js";
 
 export const MAX_LEVELS_PER_SIDE = 100;
 export const MAX_TOTAL_LEVELS = MAX_LEVELS_PER_SIDE * 2;
@@ -35,6 +36,20 @@ export interface GridPlan {
   quotePerLevel: Decimal;
   splitBaseByLevel: Decimal[];
   splitCostByLevel: Decimal[];
+}
+
+export interface TrailingGridRebuildPlanInput {
+  levels: GridPlanLevel[];
+  currentPrice: Decimal;
+  split: boolean;
+  buyCounts: number[];
+  quoteStep: Decimal;
+}
+
+export interface TrailingGridRebuildPlan {
+  levels: GridPlanLevel[];
+  buyCounts: number[];
+  shiftSteps: number;
 }
 
 export function parseLevelsPerSide(value: string): number {
@@ -257,6 +272,117 @@ export function createGridPrices(
   return levels;
 }
 
+export function createTrailingGridRebuildPlan(
+  input: TrailingGridRebuildPlanInput,
+): TrailingGridRebuildPlan {
+  validateTrailingGridRebuildInput(input);
+
+  const levelCount = input.levels.length;
+  const lower = input.levels[0].price;
+  const upper = input.levels[levelCount - 1].price;
+  const ratio = upper.div(lower).pow(new Decimal(1).div(levelCount - 1));
+  let shiftSteps: number;
+
+  if (input.split) {
+    shiftSteps = findFirstGeometricShiftAbovePrice(
+      upper,
+      ratio,
+      input.currentPrice,
+      1,
+    );
+
+    let highestAllocatedLevelIndex = -1;
+    for (let index = 0; index < input.buyCounts.length; index++) {
+      if (input.buyCounts[index] > 0) {
+        highestAllocatedLevelIndex = index;
+      }
+    }
+    let adjustmentCount = 0;
+    while (
+      highestAllocatedLevelIndex >= 0 &&
+      shiftSteps > 0 &&
+      shiftedGridPrice(
+        input.levels[highestAllocatedLevelIndex].price,
+        ratio,
+        shiftSteps,
+        input.quoteStep,
+      ).gte(input.currentPrice)
+    ) {
+      if (adjustmentCount >= levelCount + 1) {
+        throw new Error("Trailing grid rounding adjustment did not converge.");
+      }
+      shiftSteps--;
+      adjustmentCount++;
+    }
+  } else {
+    const levelsPerSide = levelCount / 2;
+    const sellBoundary = input.levels[levelsPerSide].price;
+    shiftSteps = findFirstGeometricShiftAbovePrice(
+      sellBoundary,
+      ratio,
+      input.currentPrice,
+      levelsPerSide + 1,
+    );
+    let adjustmentCount = 0;
+    while (
+      shiftSteps > 0 &&
+      shiftedGridPrice(
+        input.levels[levelsPerSide - 1].price,
+        ratio,
+        shiftSteps,
+        input.quoteStep,
+      ).gte(input.currentPrice)
+    ) {
+      if (adjustmentCount >= levelCount + 1) {
+        throw new Error("Trailing grid rounding adjustment did not converge.");
+      }
+      shiftSteps--;
+      adjustmentCount++;
+    }
+    adjustmentCount = 0;
+    while (
+      shiftedGridPrice(
+        input.levels[levelsPerSide - 1].price,
+        ratio,
+        shiftSteps + 1,
+        input.quoteStep,
+      ).lt(input.currentPrice)
+    ) {
+      if (adjustmentCount >= levelCount + 1) {
+        throw new Error("Trailing grid rounding adjustment did not converge.");
+      }
+      shiftSteps++;
+      adjustmentCount++;
+    }
+  }
+
+  const shiftRatio = ratio.pow(shiftSteps);
+  const levels = input.levels.map((level) => ({
+    index: level.index,
+    price: roundToStep(level.price.times(shiftRatio), input.quoteStep),
+  }));
+  const buyCounts = input.split
+    ? [...input.buyCounts]
+    : levels.map((_, index) => (index < levelCount / 2 ? 1 : 0));
+
+  for (let index = 0; index < levels.length; index++) {
+    const level = levels[index];
+    const previous = levels[index - 1];
+    if (!level.price.gt(0) || (previous && !level.price.gt(previous.price))) {
+      throw new Error(
+        "Trailing grid does not produce unique prices at the pair precision.",
+      );
+    }
+    if (buyCounts[index] > 0 && !level.price.lt(input.currentPrice)) {
+      throw new Error(
+        "Trailing grid cannot place every planned buy below the current price.",
+      );
+    }
+  }
+
+  return { levels, buyCounts, shiftSteps };
+}
+
 export function floorToStep(value: Decimal, step: Decimal): Decimal {
   if (!step.gt(0)) {
     throw new Error(`Order step must be greater than zero, received ${step}.`);
@@ -324,6 +450,60 @@ function validateInput(input: GridPlanInput): void {
   if (input.constraints.minQuote.lt(0)) {
     throw new Error("Minimum quote order size cannot be negative.");
   }
+}
+
+function validateTrailingGridRebuildInput(
+  input: TrailingGridRebuildPlanInput,
+): void {
+  if (
+    input.levels.length < 2 ||
+    input.levels.length > MAX_TOTAL_LEVELS ||
+    input.levels.length % 2 !== 0
+  ) {
+    throw new Error(
+      "Trailing grid must contain an even number of levels between 2 and 200.",
+    );
+  }
+  if (input.buyCounts.length !== input.levels.length) {
+    throw new Error("Trailing grid buy counts must match the level count.");
+  }
+  if (!input.currentPrice.isFinite() || !input.currentPrice.gt(0)) {
+    throw new Error("Trailing grid current price must be greater than zero.");
+  }
+  if (!input.quoteStep.isFinite() || !input.quoteStep.gt(0)) {
+    throw new Error("Trailing grid quote step must be greater than zero.");
+  }
+
+  for (let index = 0; index < input.levels.length; index++) {
+    const level = input.levels[index];
+    const previous = input.levels[index - 1];
+    if (
+      !level.price.isFinite() ||
+      !level.price.gt(0) ||
+      (previous && !level.price.gt(previous.price))
+    ) {
+      throw new Error(
+        "Trailing grid source prices must be strictly increasing.",
+      );
+    }
+    if (
+      !Number.isSafeInteger(input.buyCounts[index]) ||
+      input.buyCounts[index] < 0
+    ) {
+      throw new Error(
+        "Trailing grid buy counts must be non-negative safe integers.",
+      );
+    }
+  }
+}
+
+function shiftedGridPrice(
+  price: Decimal,
+  ratio: Decimal,
+  shiftSteps: number,
+  quoteStep: Decimal,
+): Decimal {
+  return roundToStep(price.times(ratio.pow(shiftSteps)), quoteStep);
 }
 
 function validateBaseAmount(

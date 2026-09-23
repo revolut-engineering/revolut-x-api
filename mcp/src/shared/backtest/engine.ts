@@ -41,6 +41,53 @@ export interface OptimizationResult {
   calmarApprox: Decimal;
 }
 
+function findFirstGeometricShiftAbovePrice(
+  boundaryPrice: Decimal,
+  ratio: Decimal,
+  targetPrice: Decimal,
+  minimumShift: number,
+): number {
+  if (!boundaryPrice.isFinite() || !boundaryPrice.gt(0)) {
+    throw new Error("Shift boundary price must be finite and positive.");
+  }
+  if (!ratio.isFinite() || !ratio.gt(1)) {
+    throw new Error("Shift ratio must be finite and greater than one.");
+  }
+  if (!targetPrice.isFinite() || !targetPrice.gt(0)) {
+    throw new Error("Shift target price must be finite and positive.");
+  }
+  if (!Number.isSafeInteger(minimumShift) || minimumShift < 0) {
+    throw new Error("Minimum shift must be a non-negative safe integer.");
+  }
+
+  const isAboveTarget = (shift: number) =>
+    boundaryPrice.times(ratio.pow(shift)).gt(targetPrice);
+  if (isAboveTarget(minimumShift)) return minimumShift;
+
+  let lower = minimumShift;
+  if (minimumShift > Math.floor(Number.MAX_SAFE_INTEGER / 2)) {
+    throw new Error("Grid shift exceeds the supported safe integer range.");
+  }
+  let upper = minimumShift === 0 ? 1 : minimumShift * 2;
+  while (!isAboveTarget(upper)) {
+    lower = upper;
+    if (upper > Math.floor(Number.MAX_SAFE_INTEGER / 2)) {
+      throw new Error("Grid shift exceeds the supported safe integer range.");
+    }
+    upper *= 2;
+  }
+
+  while (lower + 1 < upper) {
+    const candidate = lower + Math.floor((upper - lower) / 2);
+    if (isAboveTarget(candidate)) {
+      upper = candidate;
+    } else {
+      lower = candidate;
+    }
+  }
+  return upper;
+}
+
 function createEmptyResult(): BacktestResult {
   return {
     totalTrades: 0,
@@ -392,7 +439,6 @@ export function runBacktest(
       quoteDp,
     );
 
-    // Trailing up check: did the candle's high breach the upper boundary + one step?
     if (trailingUp) {
       const upper = levels[levels.length - 1].price;
       const lower = levels[0].price;
@@ -400,15 +446,7 @@ export function runBacktest(
       const hasOpenPositions = levels.some(
         (level) => level.positions.length > 0,
       );
-      if (
-        candle.high.gte(
-          upper
-            .times(ratio)
-            .plus(upper.times(ratio.pow(2)))
-            .div(2),
-        ) &&
-        !hasOpenPositions
-      ) {
+      if (candle.high.gte(upper.times(ratio.pow(2))) && !hasOpenPositions) {
         const rebuildPrice = candle.close;
 
         // Save buyCount before sell pass clears things (used to restore split slots)
@@ -417,12 +455,15 @@ export function runBacktest(
         // Shift the grid by ratio^k steps (preserves geometric spacing)
         let k: number;
         if (split) {
-          k = 1;
-          while (upper.times(ratio.pow(k)).lte(rebuildPrice)) k++;
+          k = findFirstGeometricShiftAbovePrice(upper, ratio, rebuildPrice, 1);
         } else {
           const sellBoundary = levels[Math.floor(levels.length / 2)].price;
-          k = Math.floor(levels.length / 2) + 1;
-          while (sellBoundary.times(ratio.pow(k)).lte(rebuildPrice)) k++;
+          k = findFirstGeometricShiftAbovePrice(
+            sellBoundary,
+            ratio,
+            rebuildPrice,
+            Math.floor(levels.length / 2) + 1,
+          );
         }
         const ratioK = ratio.pow(k);
         for (let i = 0; i < levels.length; i++) {

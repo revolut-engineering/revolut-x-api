@@ -49,6 +49,7 @@ describe("market data — live prices, candles, depth, reference", () => {
             bid: "95100",
             ask: "95200",
             mid: "95150",
+            index_price: "95150",
             last_price: "95150",
           },
         ],

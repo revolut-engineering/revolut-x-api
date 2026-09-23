@@ -262,11 +262,11 @@ revx strategy grid backtest BTC-USD --json
 
 | Flag | Description | Default |
 |---|---|---|
-| `--levels <n>` | Number of grid levels | `10` |
+| `--levels <n>` | Grid levels per side | `5` |
 | `--range <pct>` | Grid range as % (e.g. `10` for ±10%) | `10` |
 | `--investment <amount>` | Capital in quote currency | `1000` |
-| `--days <n>` | Days of historical data | `30` |
-| `--interval <res>` | Candle resolution (`1m` `5m` `15m` `30m` `1h` `4h` `1d`) | `1h` |
+| `--days <n>` | Days of historical data | `3` |
+| `--interval <res>` | Candle resolution (`1m` `5m` `15m` `30m` `1h` `4h` `1d`) | `1m` |
 | `--json` | Output as JSON | — |
 
 ##### Optimize
@@ -282,8 +282,8 @@ revx strategy grid optimize BTC-USD --levels 5,10,15,20 --ranges 3,5,10 --top 5
 | Flag | Description | Default |
 |---|---|---|
 | `--investment <amount>` | Capital in quote currency | `1000` |
-| `--days <n>` | Days of historical data | `30` |
-| `--interval <res>` | Candle resolution | `1h` |
+| `--days <n>` | Days of historical data | `3` |
+| `--interval <res>` | Candle resolution | `1m` |
 | `--levels <csv>` | Level counts to test (comma-separated) | `5,8,10,12,15,20,25,30` |
 | `--ranges <csv>` | Range percentages to test (comma-separated) | `3,5,7,10,12,15,20` |
 | `--top <n>` | Number of top results to show | `10` |
@@ -303,11 +303,17 @@ revx strategy grid run BTC-USD --investment 100 --dry-run
 | Flag | Description | Default |
 |---|---|---|
 | `--investment <amount>` | Capital in quote currency (required) | — |
-| `--levels <n>` | Number of grid levels | `10` |
+| `--levels <n>` | Grid levels per side (total levels = 2×n) | `5` |
 | `--range <pct>` | Grid range as % (e.g. `5` for ±5%) | `5` |
 | `--split` | Market-buy 50% of investment at start | — |
-| `--interval <sec>` | Polling interval in seconds | `30` |
+| `--interval <sec>` | Polling interval in seconds | `10` |
 | `--dry-run` | Simulate without placing real orders | — |
+| `--trailing-up` | Rebuild after 3 consecutive prices reach the second geometric level above the grid | — |
+| `--stop-loss <price>` | Stop immediately when price reaches or falls below this value | — |
+
+Live and dry-run trailing-up requires three consecutive qualifying prices; a price below the threshold resets confirmation. Historical backtests use one qualifying candle high and rebuild from that candle's close. Stop-loss remains immediate in every mode.
+
+All grid limit orders are post-only. If the exchange reports `POST_ONLY_IMMEDIATE_MATCH`, the bot stops the current run, accounts any reported fill without replacement, and cancels its tracked orders through the normal shutdown flow. Tracked orders are cancelled sequentially through the local rate limiter, so shutdown can take time for large grids. Failed cancellations or remaining inventory keep the saved state for normal reconciliation on the next startup.
 
 **Persistence:** State is saved periodically during the session. On clean shutdown (`Ctrl+C`), all open orders are cancelled and state is cleared — the next session starts fresh. If orders couldn't be cancelled (e.g. network error), the state file is kept for automatic reconciliation on next startup.
 

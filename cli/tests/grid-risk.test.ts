@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Decimal } from "decimal.js";
 import { stripVTControlCharacters } from "node:util";
 import {
+  findFirstGeometricShiftAbovePrice,
   levelsPerSide,
   trailUpTriggerFromBounds,
   trailUpTriggerPrice,
@@ -64,7 +65,7 @@ describe("trailUpTriggerPrice", () => {
   it("matches the boundary-check formula for a 95k-105k ladder", () => {
     const trigger = trailUpTriggerPrice(LADDER);
     expect(trigger).not.toBeNull();
-    expect(trigger!.toFixed(2)).toBe("108205.85");
+    expect(trigger!.toFixed(2)).toBe("109288.78");
   });
 
   it("sits above the top grid level", () => {
@@ -102,6 +103,105 @@ describe("trailUpTriggerFromBounds", () => {
     expect(trailUpTriggerFromBounds(new Decimal(0), UPPER, 6)).toBeNull();
     expect(trailUpTriggerFromBounds(LOWER, new Decimal(0), 6)).toBeNull();
     expect(trailUpTriggerFromBounds(new Decimal(-1), UPPER, 6)).toBeNull();
+  });
+});
+
+describe("findFirstGeometricShiftAbovePrice", () => {
+  it.each([
+    { target: "105", minimumShift: 0, expected: 1 },
+    { target: "50", minimumShift: 4, expected: 4 },
+    { target: "120.99", minimumShift: 1, expected: 2 },
+    { target: "121", minimumShift: 1, expected: 3 },
+  ])(
+    "returns shift $expected for target $target from minimum $minimumShift",
+    ({ target, minimumShift, expected }) => {
+      // when
+      const shift = findFirstGeometricShiftAbovePrice(
+        new Decimal("100"),
+        new Decimal("1.1"),
+        new Decimal(target),
+        minimumShift,
+      );
+
+      // then
+      expect(shift).toBe(expected);
+    },
+  );
+
+  it("finds a 250001-step result with bounded exponent evaluations", () => {
+    // given
+    const boundaryPrice = new Decimal("100");
+    const ratio = new Decimal("1.00001");
+    const targetPrice = boundaryPrice.times(ratio.pow(250_000));
+    const pow = vi.spyOn(Decimal.prototype, "pow");
+
+    // when
+    const shift = findFirstGeometricShiftAbovePrice(
+      boundaryPrice,
+      ratio,
+      targetPrice,
+      1,
+    );
+
+    // then
+    expect(shift).toBe(250_001);
+    expect(pow.mock.calls.length).toBeLessThan(64);
+    pow.mockRestore();
+  });
+
+  it.each([
+    { ratio: "1.001", target: "100.1", minimumShift: 0 },
+    { ratio: "1.001", target: "150", minimumShift: 50 },
+    { ratio: "1.01", target: "1000", minimumShift: 1 },
+    { ratio: "1.1", target: "250", minimumShift: 8 },
+  ])(
+    "matches the historical search for ratio $ratio and target $target",
+    ({ ratio, target, minimumShift }) => {
+      // given
+      const boundaryPrice = new Decimal("100");
+      const gridRatio = new Decimal(ratio);
+      const targetPrice = new Decimal(target);
+      let historicalShift = minimumShift;
+      while (
+        boundaryPrice.times(gridRatio.pow(historicalShift)).lte(targetPrice)
+      ) {
+        historicalShift++;
+      }
+
+      // then
+      expect(
+        findFirstGeometricShiftAbovePrice(
+          boundaryPrice,
+          gridRatio,
+          targetPrice,
+          minimumShift,
+        ),
+      ).toBe(historicalShift);
+    },
+  );
+
+  it("rejects a non-increasing ratio", () => {
+    // then
+    expect(() =>
+      findFirstGeometricShiftAbovePrice(
+        new Decimal("100"),
+        new Decimal("1"),
+        new Decimal("200"),
+        1,
+      ),
+    ).toThrow(/ratio/i);
+  });
+
+  it("rejects an unsafe minimum shift", () => {
+    // then
+    expect(() =>
+      findFirstGeometricShiftAbovePrice(
+        new Decimal("100"),
+        new Decimal("1.1"),
+        new Decimal("200"),
+        Number.MAX_SAFE_INTEGER + 1,
+      ),
+    ).toThrow(/safe integer/i);
   });
 });
 
@@ -155,7 +255,7 @@ describe("renderRiskLine", () => {
 
   it("renders the trailing-up trigger with distance from current price", () => {
     expect(renderRiskLine(makeState({ trailingUp: true }), PRICE)).toBe(
-      "Trail up $108,205.85 (+8.2%)",
+      "Trail up $109,288.78 (+9.3%)",
     );
   });
 
@@ -168,14 +268,14 @@ describe("renderRiskLine", () => {
   it("renders both when configured together", () => {
     expect(
       renderRiskLine(makeState({ trailingUp: true, stopLoss: "82000" }), PRICE),
-    ).toBe("Trail up $108,205.85 (+8.2%) \u00B7 Stop $82,000.00 (-18.0%)");
+    ).toBe("Trail up $109,288.78 (+9.3%) \u00B7 Stop $82,000.00 (-18.0%)");
   });
 
   it("groups the shift count with the trailing-up segment", () => {
     const state = makeState({ trailingUp: true, stopLoss: "82000" });
     state.shiftCount = 2;
     expect(renderRiskLine(state, PRICE)).toBe(
-      "Trail up $108,205.85 (+8.2%) \u00B7 Shifts 2 \u00B7 Stop $82,000.00 (-18.0%)",
+      "Trail up $109,288.78 (+9.3%) \u00B7 Shifts 2 \u00B7 Stop $82,000.00 (-18.0%)",
     );
   });
 
@@ -219,7 +319,7 @@ describe("renderDashboard trailing-up row", () => {
   it("shows the trigger price when trailing-up is enabled", () => {
     const out = dashboard(makeState({ trailingUp: true }));
     expect(out).toContain("Trail Up");
-    expect(out).toContain("$108,205.85");
+    expect(out).toContain("$109,288.78");
   });
 
   it("omits the row when trailing-up is disabled", () => {

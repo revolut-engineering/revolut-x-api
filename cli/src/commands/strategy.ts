@@ -1006,7 +1006,7 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
-      "Simulate grid rebuild when price exits upper boundary",
+      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary",
     )
     .option(
       "--stop-loss <price>",
@@ -1058,7 +1058,7 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
-      "Simulate grid rebuild when price exits upper boundary",
+      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary",
     )
     .option(
       "--stop-loss <price>",
@@ -1103,11 +1103,11 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--reset", "Discard saved state and start a fresh grid")
     .option(
       "--trailing-up",
-      "Rebuild grid around current price when upper boundary is breached",
+      "Rebuild grid after price reaches the second geometric level above the upper boundary for 3 consecutive ticks",
     )
     .option(
       "--stop-loss <price>",
-      "Stop bot when price reaches this absolute value (must be below the lowest grid level)",
+      "Stop bot immediately when price reaches or falls below this absolute value (must be below the lowest grid level)",
     )
     .option(
       "--prices <spec>",

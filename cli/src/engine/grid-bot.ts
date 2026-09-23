@@ -5,11 +5,16 @@ import {
   InsecureKeyPermissionsError,
   NotFoundError,
 } from "@revolut/revolut-x-api";
-import type { CurrencyPair, OrderDetails } from "@revolut/revolut-x-api";
+import type {
+  CurrencyPair,
+  OrderDetails,
+  OrderPlacementResult,
+} from "@revolut/revolut-x-api";
 import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
 import type { LivePriceSource } from "../shared/price-source/index.js";
 import {
+  StablePriceTracker,
   TickerPriceProvider,
   withCachedPeek,
 } from "../shared/price-source/index.js";
@@ -48,9 +53,9 @@ import {
   allocateBaseOrderSizes,
   constraintsFromPair,
   createGridPlan,
+  createTrailingGridRebuildPlan,
   floorToStep,
   normalizeBaseOrderSize,
-  roundToStep,
   type GridOrderConstraints,
 } from "./grid-plan.js";
 import { ExchangeRateLimiter } from "./exchange-rate-limiter.js";
@@ -93,6 +98,7 @@ export interface GridBotOptions {
   rateLimiter?: GridExchangeRateLimiter;
   persistState?: boolean;
   orderConstraints?: GridOrderConstraints;
+  trailingUpConfirmationTicks?: number;
 }
 
 interface PositionSettlement {
@@ -107,6 +113,33 @@ const FILLED_STATUSES = new Set(["filled"]);
 const DEAD_STATUSES = new Set(["cancelled", "rejected", "replaced"]);
 const PARTIALLY_FILLED_STATUS = "partially_filled";
 const LADDER_MAX_ROWS = 80;
+const POST_ONLY_IMMEDIATE_MATCH = "POST_ONLY_IMMEDIATE_MATCH";
+const TRAILING_UP_CONFIRMATION_TICKS = 3;
+
+class PostOnlyImmediateMatchError extends Error {
+  constructor(
+    readonly side: "buy" | "sell",
+    readonly price: string,
+    readonly order: OrderDetails | null = null,
+  ) {
+    super(`Post-only ${side} order at ${price} would match immediately.`);
+    this.name = "PostOnlyImmediateMatchError";
+  }
+}
+
+function isPostOnlyImmediateMatchReason(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.trim().toUpperCase() === POST_ONLY_IMMEDIATE_MATCH
+  );
+}
+
+function hasPostOnlyImmediateMatchReason(value: unknown): boolean {
+  const message = value instanceof Error ? value.message : String(value);
+  return /(?:^|[^A-Z0-9_])POST_ONLY_IMMEDIATE_MATCH(?:$|[^A-Z0-9_])/i.test(
+    message,
+  );
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -151,6 +184,7 @@ export class ForegroundGridBot {
   private readonly _persistState: boolean;
   private readonly _orderConstraints: GridOrderConstraints | null;
   private readonly _humanOutput: NodeJS.WritableStream;
+  private readonly _trailingUpPriceTracker: StablePriceTracker;
 
   constructor(config: GridBotConfig, options: GridBotOptions = {}) {
     this._config = config;
@@ -162,6 +196,9 @@ export class ForegroundGridBot {
     this._persistState = options.persistState !== false;
     this._orderConstraints = options.orderConstraints ?? null;
     this._humanOutput = options.humanOutput ?? process.stdout;
+    this._trailingUpPriceTracker = new StablePriceTracker(
+      options.trailingUpConfirmationTicks ?? TRAILING_UP_CONFIRMATION_TICKS,
+    );
   }
 
   stop(): void {
@@ -303,6 +340,27 @@ export class ForegroundGridBot {
   }
 
   async run(): Promise<void> {
+    try {
+      await this._run();
+    } catch (err) {
+      if (err instanceof PostOnlyImmediateMatchError) {
+        this.stop();
+        this._log(
+          chalk.red(
+            `\n  Halting grid bot: post-only ${err.side} order at ${err.price} would match immediately.`,
+          ),
+        );
+        const notification = this._notifyAndWait(
+          `Grid Bot ${this._config.pair} stopped: post-only ${err.side} order at ${err.price} would match immediately.`,
+        );
+        await this.shutdown();
+        await notification;
+      }
+      throw err;
+    }
+  }
+
+  private async _run(): Promise<void> {
     this._running = true;
     this._startTime = Date.now();
     this._client = new RevolutXClient({
@@ -697,7 +755,12 @@ export class ForegroundGridBot {
 
     if (this._config.trailingUp) {
       const trailUpPrice = trailUpTriggerPrice(levels);
-      if (trailUpPrice !== null && currentPrice.gte(trailUpPrice)) {
+      if (
+        trailUpPrice !== null &&
+        this._trailingUpPriceTracker.observe(currentPrice, (price) =>
+          price.gte(trailUpPrice),
+        )
+      ) {
         this._shouldRebuildUp = true;
         this._boundaryAlerted = false;
         return;
@@ -741,36 +804,18 @@ export class ForegroundGridBot {
     // Save per-level buy order counts before clearing (used for split mode)
     const savedCounts = state.levels.map((l) => l.buyOrderIds.length);
 
-    // Compute ratio from existing level prices (before shift)
-    const lower = new Decimal(state.levels[0].price);
-    const upper = new Decimal(state.levels[N - 1].price);
-    const ratio = upper.div(lower).pow(new Decimal(1).div(N - 1));
     const quoteStep = this._getQuoteStep();
-
-    // Shift amount:
-    //   split:    find smallest k such that new upper (old_upper × ratio^k) > currentPrice
-    //             buy counts come from savedCounts; intermediate empty levels are acceptable
-    //   no-split: find smallest k such that levels[N/2] (first sell-destination) > currentPrice
-    //             this guarantees exactly N/2 buy levels below price after the shift
-    let k: number;
-    if (this._config.splitInvestment) {
-      k = 1;
-      while (upper.times(ratio.pow(k)).lte(currentPrice)) {
-        k++;
-      }
-    } else {
-      const sellBoundaryPrice = new Decimal(
-        state.levels[Math.floor(N / 2)].price,
-      );
-      k = Math.floor(N / 2) + 1;
-      while (sellBoundaryPrice.times(ratio.pow(k)).lte(currentPrice)) {
-        k++;
-      }
-    }
-    const ratioK = ratio.pow(k);
-    const candidatePrices = state.levels.map((level) =>
-      roundToStep(new Decimal(level.price).times(ratioK), quoteStep),
-    );
+    const rebuildPlan = createTrailingGridRebuildPlan({
+      levels: state.levels.map((level) => ({
+        index: level.index,
+        price: new Decimal(level.price),
+      })),
+      currentPrice,
+      split: this._config.splitInvestment,
+      buyCounts: savedCounts,
+      quoteStep,
+    });
+    const candidatePrices = rebuildPlan.levels.map((level) => level.price);
     const constraints = this._getOrderConstraints();
     const quotePerLevel = new Decimal(state.quotePerLevel);
 
@@ -781,8 +826,8 @@ export class ForegroundGridBot {
           "Trailing grid does not produce unique prices at the pair precision.",
         );
       }
-      const count = this._config.splitInvestment ? savedCounts[i] : 1;
-      if (price.lt(currentPrice) && count > 0) {
+      const count = rebuildPlan.buyCounts[i];
+      if (count > 0) {
         const executionPrice = this._config.stopLoss
           ? new Decimal(this._config.stopLoss)
           : candidatePrices[Math.min(i + 1, candidatePrices.length - 1)];
@@ -856,27 +901,35 @@ export class ForegroundGridBot {
     const rebuilds: Promise<unknown>[] = [];
     for (let i = 0; i < N; i++) {
       const level = state.levels[i];
-      if (!new Decimal(level.price).lt(currentPrice)) continue;
-
-      // split: restore savedCounts per level; no-split: exactly 1 buy per level below price
-      const count = this._config.splitInvestment ? savedCounts[i] : 1;
+      const count = rebuildPlan.buyCounts[i];
+      if (count === 0) continue;
       level.expectedBuys = count;
 
       for (let j = 0; j < count; j++) {
-        rebuilds.push(
-          this._placeBuyOrder(level, quotePerLevel).catch((err) => {
-            rethrowIfInsecureKey(err);
-            this._warnings.push(
-              `Rebuild buy @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }),
+        rebuilds.push(this._placeBuyOrder(level, quotePerLevel));
+      }
+    }
+    const rebuildResults = await Promise.allSettled(rebuilds);
+    const fatalRebuild = rebuildResults.find(
+      (result) =>
+        result.status === "rejected" &&
+        result.reason instanceof PostOnlyImmediateMatchError,
+    );
+    if (fatalRebuild?.status === "rejected") {
+      throw fatalRebuild.reason;
+    }
+    for (const result of rebuildResults) {
+      if (result.status === "rejected") {
+        rethrowIfInsecureKey(result.reason);
+        this._warnings.push(
+          `Rebuild buy: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
         );
       }
     }
-    await Promise.all(rebuilds);
 
     state.shiftCount = (state.shiftCount ?? 0) + 1;
     this._saveGridState(state);
+    this._trailingUpPriceTracker.reset();
 
     this._notify(
       `Grid Bot ${state.pair}: trailing up — grid rebuilt around ${fmtPrice(currentPrice, cs)} ` +
@@ -1105,9 +1158,10 @@ export class ForegroundGridBot {
     if (order.fee_currency === quoteCurrency) return fee;
     if (order.fee_currency === baseCurrency) {
       const filledQty = new Decimal(order.filled_quantity);
+      const executionPrice = this._executionPrice(order, fallbackPrice);
       const filledAmount = order.filled_amount
         ? new Decimal(order.filled_amount)
-        : filledQty.times(fallbackPrice);
+        : filledQty.times(executionPrice);
       const price = filledQty.gt(0)
         ? filledAmount.div(filledQty)
         : fallbackPrice;
@@ -1128,7 +1182,23 @@ export class ForegroundGridBot {
 
   private _filledAmount(order: OrderDetails, fallbackPrice: Decimal): Decimal {
     if (order.filled_amount) return new Decimal(order.filled_amount);
-    return new Decimal(order.filled_quantity).times(fallbackPrice);
+    return new Decimal(order.filled_quantity).times(
+      this._executionPrice(order, fallbackPrice),
+    );
+  }
+
+  private _executionPrice(
+    order: OrderDetails,
+    fallbackPrice: Decimal,
+  ): Decimal {
+    for (const rawPrice of [order.average_fill_price, order.price]) {
+      if (!rawPrice) continue;
+      try {
+        const price = new Decimal(rawPrice);
+        if (price.isFinite() && price.gt(0)) return price;
+      } catch {}
+    }
+    return fallbackPrice;
   }
 
   private _feeSide(order: OrderDetails): "base" | "quote" | null {
@@ -1184,6 +1254,92 @@ export class ForegroundGridBot {
 
   private _hasFilledQuantity(order: OrderDetails): boolean {
     return new Decimal(order.filled_quantity).gt(0);
+  }
+
+  private _postOnlyMatchErrorFromOrder(
+    order: OrderDetails,
+    side: "buy" | "sell",
+    price: string,
+  ): PostOnlyImmediateMatchError | null {
+    if (
+      order.status !== "rejected" ||
+      !isPostOnlyImmediateMatchReason(order.reject_reason)
+    ) {
+      return null;
+    }
+    return new PostOnlyImmediateMatchError(side, price, order);
+  }
+
+  private async _postOnlyMatchErrorFromPlacement(
+    placement: OrderPlacementResult,
+    side: "buy" | "sell",
+    price: string,
+  ): Promise<PostOnlyImmediateMatchError | null> {
+    if (placement.state !== "rejected") return null;
+    const response = await this._rateLimiter.query(() =>
+      this._client!.getOrder(placement.venue_order_id),
+    );
+    return this._postOnlyMatchErrorFromOrder(response.data, side, price);
+  }
+
+  private _clearPendingBuy(level: GridLevelState, clientOrderId: string): void {
+    level.pendingBuyClientOrderIds = (
+      level.pendingBuyClientOrderIds ?? []
+    ).filter((pendingId) => pendingId !== clientOrderId);
+    if (level.pendingBuyQuoteSizes) {
+      delete level.pendingBuyQuoteSizes[clientOrderId];
+    }
+  }
+
+  private async _handleRejectedBuy(
+    level: GridLevelState,
+    error: PostOnlyImmediateMatchError,
+    quoteSize?: Decimal,
+  ): Promise<never> {
+    const order = error.order;
+    if (order) {
+      this._clearPendingBuy(level, order.client_order_id);
+      if (this._hasFilledQuantity(order)) {
+        level.buyOrderQuoteSizes ??= {};
+        level.buyOrderQuoteSizes[order.id] = (
+          quoteSize ?? new Decimal(this._state!.quotePerLevel)
+        ).toString();
+        if (!level.buyOrderIds.includes(order.id)) {
+          level.buyOrderIds.push(order.id);
+        }
+        await this._processTerminalBuy(level, order, false, false);
+      } else {
+        this._removeBuyOrder(level, order.id);
+        this._saveGridState(this._state!);
+      }
+    }
+    throw error;
+  }
+
+  private async _handleRejectedSell(
+    level: GridLevelState,
+    sellLevel: GridLevelState,
+    position: GridLevelPosition,
+    error: PostOnlyImmediateMatchError,
+  ): Promise<never> {
+    const order = error.order;
+    if (order && this._hasFilledQuantity(order)) {
+      position.sellOrderId = order.id;
+      await this._processTerminalSell(
+        level,
+        sellLevel,
+        position,
+        order,
+        false,
+        false,
+      );
+    } else {
+      position.sellOrderId = null;
+      position.sellBaseSize = undefined;
+      position.sellClientOrderId = undefined;
+      this._saveGridState(this._state!);
+    }
+    throw error;
   }
 
   private _removeBuyOrder(level: GridLevelState, orderId: string): void {
@@ -1286,6 +1442,7 @@ export class ForegroundGridBot {
     level: GridLevelState,
     order: OrderDetails,
     notify: boolean,
+    replaceOrders = true,
   ): Promise<boolean> {
     if (!this._hasFilledQuantity(order)) {
       this._removeBuyOrder(level, order.id);
@@ -1297,7 +1454,7 @@ export class ForegroundGridBot {
     const settlement = this._settleTerminalBuyFill(level, order, levelPrice);
     if (settlement.position) {
       const sellLevel = this._state!.levels[level.index + 1];
-      if (sellLevel) {
+      if (sellLevel && replaceOrders) {
         await this._placeSellOnLevel(sellLevel, settlement.position);
       }
       if (notify) {
@@ -1311,11 +1468,12 @@ export class ForegroundGridBot {
         );
       }
     }
-    if (settlement.remainingQuote.gt(0)) {
+    if (replaceOrders && settlement.remainingQuote.gt(0)) {
       try {
         await this._placeRemainingBuy(level, settlement.remainingQuote);
       } catch (err) {
         rethrowIfInsecureKey(err);
+        if (err instanceof PostOnlyImmediateMatchError) throw err;
         this._warnings.push(
           `Partial buy remainder @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1330,6 +1488,7 @@ export class ForegroundGridBot {
     position: GridLevelPosition,
     order: OrderDetails,
     notify: boolean,
+    replaceOrders = true,
   ): Promise<PositionSettlement> {
     const sellPrice = new Decimal(sellLevel.price);
     const settlement = this._settlePositionFill(
@@ -1365,18 +1524,19 @@ export class ForegroundGridBot {
       );
     }
 
-    if (settlement.remainingBase.gt(0)) {
+    if (replaceOrders && settlement.remainingBase.gt(0)) {
       await this._placeSellOnLevel(sellLevel, position);
     }
 
     const rebuyQuote = FILLED_STATUSES.has(order.status)
       ? new Decimal(this._state!.quotePerLevel)
       : floorToStep(settlement.costBasis, this._getQuoteStep());
-    if (rebuyQuote.gt(0)) {
+    if (replaceOrders && rebuyQuote.gt(0)) {
       try {
         await this._placeRemainingBuy(level, rebuyQuote);
       } catch (err) {
         rethrowIfInsecureKey(err);
+        if (err instanceof PostOnlyImmediateMatchError) throw err;
         this._warnings.push(
           `Partial sell re-buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1723,17 +1883,25 @@ export class ForegroundGridBot {
     let buysPlaced = 0;
     const errors: string[] = [];
     this._log(chalk.dim(`  Placing ${buyLevels.length} initial buy orders...`));
-    await Promise.all(
-      buyLevels.map(async (level) => {
-        try {
-          await this._placeBuyOrder(level, quotePerLevel);
-          buysPlaced++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`buy @${level.price}: ${msg}`);
-        }
-      }),
+    const buyResults = await Promise.allSettled(
+      buyLevels.map((level) => this._placeBuyOrder(level, quotePerLevel)),
     );
+    let fatalBuyError: PostOnlyImmediateMatchError | null = null;
+    buyResults.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        buysPlaced++;
+        return;
+      }
+      if (result.reason instanceof PostOnlyImmediateMatchError) {
+        fatalBuyError ??= result.reason;
+      }
+      const message =
+        result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason);
+      errors.push(`buy @${buyLevels[index].price}: ${message}`);
+    });
+    if (fatalBuyError) throw fatalBuyError;
 
     if (buysPlaced === 0 && buyLevels.length > 0) {
       const detail = errors.length > 0 ? `\n  First error: ${errors[0]}` : "";
@@ -1792,33 +1960,45 @@ export class ForegroundGridBot {
           ),
         );
 
-        await Promise.all(
-          sortedSellLevelIndices.map(async (sellIdx, allocationIndex) => {
+        const splitPositions = sortedSellLevelIndices.map(
+          (sellIdx, allocationIndex) => {
             const sellLevel = levels[sellIdx];
             const buyLevel = levels[sellIdx - 1];
+            const baseForLevel = baseByLevel[allocationIndex];
+            const costForLevel = totalSplitCost
+              ? totalSplitCost.times(baseForLevel).div(allocatedBase)
+              : quotePerLevel;
+            const position: GridLevelPosition = {
+              id: `split-${sellIdx}`,
+              baseHeld: baseForLevel.toString(),
+              fillCost: costForLevel.toString(),
+              sellOrderId: null,
+            };
+            buyLevel.positions.push(position);
+            return { sellLevel, position };
+          },
+        );
+        this._state.initializing = false;
+        this._clearSplitExecutionState();
+        this._saveGridState(this._state);
 
-            if (buyLevel) {
-              const baseForLevel = baseByLevel[allocationIndex];
-              const costForLevel = totalSplitCost
-                ? totalSplitCost.times(baseForLevel).div(allocatedBase)
-                : quotePerLevel;
-              const pos: GridLevelPosition = {
-                id: `split-${sellIdx}`,
-                baseHeld: baseForLevel.toString(),
-                fillCost: costForLevel.toString(),
-                sellOrderId: null,
-              };
-              buyLevel.positions.push(pos);
-              await this._placeSellOnLevel(sellLevel, pos);
-              if (pos.sellOrderId) {
-                sellsPlaced++;
-                this._saveGridState(this._state!);
-              } else if (!pos.sellClientOrderId) {
-                buyLevel.positions.pop();
-              }
+        const sellResults = await Promise.allSettled(
+          splitPositions.map(async ({ sellLevel, position }) => {
+            await this._placeSellOnLevel(sellLevel, position);
+            if (position.sellOrderId) {
+              sellsPlaced++;
+              this._saveGridState(this._state!);
             }
           }),
         );
+        const fatalSellError = sellResults.find(
+          (result) =>
+            result.status === "rejected" &&
+            result.reason instanceof PostOnlyImmediateMatchError,
+        );
+        if (fatalSellError?.status === "rejected") {
+          throw fatalSellError.reason;
+        }
 
         this._log(
           chalk.dim(
@@ -1915,6 +2095,14 @@ export class ForegroundGridBot {
             client.getOrder(buyOrderId),
           );
           const order = resp.data;
+          const rejection = this._postOnlyMatchErrorFromOrder(
+            order,
+            "buy",
+            level.price,
+          );
+          if (rejection) {
+            await this._handleRejectedBuy(level, rejection);
+          }
           if (
             FILLED_STATUSES.has(order.status) ||
             (DEAD_STATUSES.has(order.status) &&
@@ -1933,6 +2121,7 @@ export class ForegroundGridBot {
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
+          if (err instanceof PostOnlyImmediateMatchError) throw err;
           if (err instanceof NotFoundError) {
             this._removeBuyOrder(level, buyOrderId);
             ordersDead++;
@@ -1962,6 +2151,19 @@ export class ForegroundGridBot {
             client.getOrder(sellOrderId),
           );
           const order = resp.data;
+          const rejection = this._postOnlyMatchErrorFromOrder(
+            order,
+            "sell",
+            sellLevel?.price ?? level.price,
+          );
+          if (rejection) {
+            await this._handleRejectedSell(
+              level,
+              sellLevel ?? level,
+              pos,
+              rejection,
+            );
+          }
           if (
             FILLED_STATUSES.has(order.status) ||
             (DEAD_STATUSES.has(order.status) &&
@@ -1993,6 +2195,7 @@ export class ForegroundGridBot {
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
+          if (err instanceof PostOnlyImmediateMatchError) throw err;
           if (err instanceof NotFoundError) {
             pos.sellOrderId = null;
             pos.sellBaseSize = undefined;
@@ -2006,6 +2209,8 @@ export class ForegroundGridBot {
         }
       }
     }
+
+    const restoringInitialization = this._state.initializing === true;
 
     // Phase 3: Handle split mode
     if (
@@ -2098,40 +2303,49 @@ export class ForegroundGridBot {
           ),
         );
         let sellsPlaced = 0;
-        await Promise.all(
-          sellLevelsToRestore.map(async (sellLevel) => {
-            const buyLevel = this._state!.levels[sellLevel.index - 1];
-            if (buyLevel) {
-              const allocationIndex = sellLevel.index - sellLevels[0].index;
-              const baseForLevel = baseByLevel[allocationIndex];
-              const costForLevel = totalSplitCost
-                .times(baseForLevel)
-                .div(allocatedBase);
-              const existingPosition = buyLevel.positions.find(
-                (position) =>
-                  position.id.startsWith("split-") && !position.sellOrderId,
-              );
-              const pos: GridLevelPosition = existingPosition ?? {
-                id: `split-reconcile-${sellLevel.index}`,
-                baseHeld: baseForLevel.toString(),
-                fillCost: costForLevel.toString(),
-                sellOrderId: null,
-              };
-              if (!existingPosition) {
-                buyLevel.positions.push(pos);
-              }
-              await this._placeSellOnLevel(sellLevel, pos);
-              if (pos.sellOrderId) {
-                sellsPlaced++;
-                this._saveGridState(this._state!);
-              } else if (!existingPosition && !pos.sellClientOrderId) {
-                buyLevel.positions = buyLevel.positions.filter(
-                  (position) => position !== pos,
-                );
-              }
+        const splitPositions = sellLevelsToRestore.map((sellLevel) => {
+          const buyLevel = this._state!.levels[sellLevel.index - 1];
+          const allocationIndex = sellLevel.index - sellLevels[0].index;
+          const baseForLevel = baseByLevel[allocationIndex];
+          const costForLevel = totalSplitCost
+            .times(baseForLevel)
+            .div(allocatedBase);
+          const existingPosition = buyLevel.positions.find(
+            (position) =>
+              position.id.startsWith("split-") && !position.sellOrderId,
+          );
+          const position: GridLevelPosition = existingPosition ?? {
+            id: `split-reconcile-${sellLevel.index}`,
+            baseHeld: baseForLevel.toString(),
+            fillCost: costForLevel.toString(),
+            sellOrderId: null,
+          };
+          if (!existingPosition) {
+            buyLevel.positions.push(position);
+          }
+          return { sellLevel, position };
+        });
+        this._state.initializing = false;
+        this._clearSplitExecutionState();
+        this._saveGridState(this._state);
+
+        const sellResults = await Promise.allSettled(
+          splitPositions.map(async ({ sellLevel, position }) => {
+            await this._placeSellOnLevel(sellLevel, position);
+            if (position.sellOrderId) {
+              sellsPlaced++;
+              this._saveGridState(this._state!);
             }
           }),
         );
+        const fatalSellError = sellResults.find(
+          (result) =>
+            result.status === "rejected" &&
+            result.reason instanceof PostOnlyImmediateMatchError,
+        );
+        if (fatalSellError?.status === "rejected") {
+          throw fatalSellError.reason;
+        }
         this._log(
           chalk.dim(
             `  Sell orders placed: ${sellsPlaced}/${sellLevelsToRestore.length}`,
@@ -2151,32 +2365,39 @@ export class ForegroundGridBot {
       );
     }
 
-    if (this._state.initializing) {
+    if (restoringInitialization) {
       const currentPrice = await this._getCurrentPrice();
       const missingBuyLevels = this._state.levels
         .slice(0, this._state.levels.length / 2)
         .filter(
           (level) =>
             level.buyOrderIds.length === 0 &&
+            !level.positions.some(
+              (position) => !position.id.startsWith("split-"),
+            ) &&
             !settledBuyLevelIndices.has(level.index) &&
             new Decimal(level.price).lt(currentPrice),
         );
       const restoreErrors: string[] = [];
-      await Promise.all(
-        missingBuyLevels.map(async (level) => {
-          try {
-            await this._placeBuyOrder(
-              level,
-              new Decimal(this._state!.quotePerLevel),
-            );
-          } catch (err) {
-            rethrowIfInsecureKey(err);
-            restoreErrors.push(
-              err instanceof Error ? err.message : String(err),
-            );
-          }
-        }),
+      const restoreResults = await Promise.allSettled(
+        missingBuyLevels.map((level) =>
+          this._placeBuyOrder(level, new Decimal(this._state!.quotePerLevel)),
+        ),
       );
+      let fatalRestoreError: PostOnlyImmediateMatchError | null = null;
+      for (const result of restoreResults) {
+        if (result.status === "fulfilled") continue;
+        rethrowIfInsecureKey(result.reason);
+        if (result.reason instanceof PostOnlyImmediateMatchError) {
+          fatalRestoreError ??= result.reason;
+        }
+        restoreErrors.push(
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason),
+        );
+      }
+      if (fatalRestoreError) throw fatalRestoreError;
       if (restoreErrors.length > 0) {
         throw new Error(
           `Failed to restore ${restoreErrors.length} initial buy order${restoreErrors.length === 1 ? "" : "s"}: ${restoreErrors[0]}`,
@@ -2258,6 +2479,9 @@ export class ForegroundGridBot {
         await this._tick(tick.price);
         this._lastError = null;
       } catch (err) {
+        if (err instanceof PostOnlyImmediateMatchError) {
+          throw err;
+        }
         if (err instanceof InsecureKeyPermissionsError) {
           this._log(
             chalk.red(
@@ -2481,6 +2705,14 @@ export class ForegroundGridBot {
             client.getOrder(buyOrderId),
           );
           const order = resp.data;
+          const rejection = this._postOnlyMatchErrorFromOrder(
+            order,
+            "buy",
+            level.price,
+          );
+          if (rejection) {
+            await this._handleRejectedBuy(level, rejection);
+          }
           if (
             FILLED_STATUSES.has(order.status) ||
             (DEAD_STATUSES.has(order.status) &&
@@ -2494,6 +2726,7 @@ export class ForegroundGridBot {
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
+          if (err instanceof PostOnlyImmediateMatchError) throw err;
           this._warnings.push(
             `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
           );
@@ -2514,6 +2747,14 @@ export class ForegroundGridBot {
             client.getOrder(pos.sellOrderId!),
           );
           const order = resp.data;
+          const rejection = this._postOnlyMatchErrorFromOrder(
+            order,
+            "sell",
+            sellLevel.price,
+          );
+          if (rejection) {
+            await this._handleRejectedSell(level, sellLevel, pos, rejection);
+          }
           if (
             FILLED_STATUSES.has(order.status) ||
             (DEAD_STATUSES.has(order.status) &&
@@ -2529,6 +2770,7 @@ export class ForegroundGridBot {
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
+          if (err instanceof PostOnlyImmediateMatchError) throw err;
           this._warnings.push(
             `Check sell #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
           );
@@ -2744,22 +2986,47 @@ export class ForegroundGridBot {
       position.sellClientOrderId ??= randomUUID();
       position.sellBaseSize = baseAmount.toString();
       this._saveGridState(this._state!);
-      const resp = await this._rateLimiter.place(() =>
-        this._client!.placeOrder({
-          symbol: this._config.pair,
-          side: "sell",
-          clientOrderId: position.sellClientOrderId,
-          limit: {
-            price: sellLevel.price,
-            baseSize: baseAmount.toString(),
-            executionInstructions: ["post_only"],
-          },
-        }),
+      const resp = await this._rateLimiter
+        .place(() =>
+          this._client!.placeOrder({
+            symbol: this._config.pair,
+            side: "sell",
+            clientOrderId: position.sellClientOrderId,
+            limit: {
+              price: sellLevel.price,
+              baseSize: baseAmount.toString(),
+              executionInstructions: ["post_only"],
+            },
+          }),
+        )
+        .catch((err) => {
+          if (hasPostOnlyImmediateMatchReason(err)) {
+            position.sellBaseSize = undefined;
+            position.sellClientOrderId = undefined;
+            this._saveGridState(this._state!);
+            throw new PostOnlyImmediateMatchError("sell", sellLevel.price);
+          }
+          throw err;
+        });
+      const rejection = await this._postOnlyMatchErrorFromPlacement(
+        resp.data,
+        "sell",
+        sellLevel.price,
       );
+      if (rejection) {
+        const sourceLevel = this._state!.levels[sellLevel.index - 1];
+        await this._handleRejectedSell(
+          sourceLevel,
+          sellLevel,
+          position,
+          rejection,
+        );
+      }
       position.sellOrderId = resp.data.venue_order_id;
       this._saveGridState(this._state!);
     } catch (err) {
       rethrowIfInsecureKey(err);
+      if (err instanceof PostOnlyImmediateMatchError) throw err;
       this._warnings.push(
         `Sell @${sellLevel.price}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -2777,6 +3044,7 @@ export class ForegroundGridBot {
       );
     } catch (err) {
       rethrowIfInsecureKey(err);
+      if (err instanceof PostOnlyImmediateMatchError) throw err;
       this._warnings.push(
         `Buy @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -2805,23 +3073,37 @@ export class ForegroundGridBot {
       level.pendingBuyQuoteSizes[clientOrderId] = requestedQuoteSize.toString();
       this._saveGridState(this._state!);
     }
-    const resp = await this._rateLimiter.place(() =>
-      this._client!.placeOrder({
-        symbol: this._config.pair,
-        side: "buy",
-        clientOrderId,
-        limit: {
-          price: level.price,
-          quoteSize: requestedQuoteSize.toString(),
-          executionInstructions: ["post_only"],
-        },
-      }),
+    const resp = await this._rateLimiter
+      .place(() =>
+        this._client!.placeOrder({
+          symbol: this._config.pair,
+          side: "buy",
+          clientOrderId,
+          limit: {
+            price: level.price,
+            quoteSize: requestedQuoteSize.toString(),
+            executionInstructions: ["post_only"],
+          },
+        }),
+      )
+      .catch((err) => {
+        if (hasPostOnlyImmediateMatchReason(err)) {
+          this._clearPendingBuy(level, clientOrderId);
+          this._saveGridState(this._state!);
+          throw new PostOnlyImmediateMatchError("buy", level.price);
+        }
+        throw err;
+      });
+    const rejection = await this._postOnlyMatchErrorFromPlacement(
+      resp.data,
+      "buy",
+      level.price,
     );
+    if (rejection) {
+      await this._handleRejectedBuy(level, rejection, requestedQuoteSize);
+    }
     const orderId = resp.data.venue_order_id;
-    level.pendingBuyClientOrderIds = level.pendingBuyClientOrderIds.filter(
-      (pendingId) => pendingId !== clientOrderId,
-    );
-    delete level.pendingBuyQuoteSizes[clientOrderId];
+    this._clearPendingBuy(level, clientOrderId);
     level.buyOrderQuoteSizes ??= {};
     level.buyOrderQuoteSizes[orderId] = requestedQuoteSize.toString();
     if (!level.buyOrderIds.includes(orderId)) {

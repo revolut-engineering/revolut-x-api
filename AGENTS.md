@@ -51,7 +51,7 @@ npm run format:check              # Check only
 ## Code Conventions
 
 - **TypeScript 5.7**, strict mode, ESM (`"type": "module"`)
-- **`var` keyword** mandatory for local variables
+- **`const` by default**, `let` only when reassignment is required; never use `var`
 - **Decimal.js** for all financial math — never use native floats for money
 - **Zod schemas** for API response validation
 - **Atomic file writes** for state persistence (write to `.tmp`, then rename)
