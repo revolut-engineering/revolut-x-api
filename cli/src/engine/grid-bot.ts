@@ -50,6 +50,14 @@ import {
   trailUpTriggerPrice,
 } from "./grid-math.js";
 import {
+  buyEconomics,
+  feeQuote,
+  filledAmount,
+  sellEconomics,
+  type BuyEconomics,
+  type SellEconomics,
+} from "./fee-math.js";
+import {
   allocateBaseOrderSizes,
   constraintsFromPair,
   createGridPlan,
@@ -1204,105 +1212,25 @@ export class ForegroundGridBot {
   // --------------- fees ---------------
 
   private _feeQuote(order: OrderDetails, fallbackPrice: Decimal): Decimal {
-    const fee = order.total_fee ? new Decimal(order.total_fee) : new Decimal(0);
-    if (fee.isZero()) return new Decimal(0);
-    const baseCurrency = this._config.pair.split("-")[0] ?? "";
-    const quoteCurrency = this._config.pair.split("-")[1] ?? "";
-    if (order.fee_currency === quoteCurrency) return fee;
-    if (order.fee_currency === baseCurrency) {
-      const filledQty = new Decimal(order.filled_quantity);
-      const executionPrice = this._executionPrice(order, fallbackPrice);
-      const filledAmount = order.filled_amount
-        ? new Decimal(order.filled_amount)
-        : filledQty.times(executionPrice);
-      const price = filledQty.gt(0)
-        ? filledAmount.div(filledQty)
-        : fallbackPrice;
-      return fee.times(price);
-    }
-    return new Decimal(0);
-  }
-
-  private _netBase(order: OrderDetails): Decimal {
-    const filledQty = new Decimal(order.filled_quantity);
-    const fee = order.total_fee ? new Decimal(order.total_fee) : new Decimal(0);
-    const baseCurrency = this._config.pair.split("-")[0] ?? "";
-    if (order.fee_currency === baseCurrency && fee.gt(0)) {
-      return Decimal.max(new Decimal(0), filledQty.minus(fee));
-    }
-    return filledQty;
+    return feeQuote(order, fallbackPrice, this._config.pair);
   }
 
   private _filledAmount(order: OrderDetails, fallbackPrice: Decimal): Decimal {
-    if (order.filled_amount) return new Decimal(order.filled_amount);
-    return new Decimal(order.filled_quantity).times(
-      this._executionPrice(order, fallbackPrice),
-    );
-  }
-
-  private _executionPrice(
-    order: OrderDetails,
-    fallbackPrice: Decimal,
-  ): Decimal {
-    for (const rawPrice of [order.average_fill_price, order.price]) {
-      if (!rawPrice) continue;
-      try {
-        const price = new Decimal(rawPrice);
-        if (price.isFinite() && price.gt(0)) return price;
-      } catch {}
-    }
-    return fallbackPrice;
-  }
-
-  private _feeSide(order: OrderDetails): "base" | "quote" | null {
-    const fee = order.total_fee ? new Decimal(order.total_fee) : new Decimal(0);
-    if (!fee.gt(0)) return null;
-    const [baseCurrency, quoteCurrency] = this._config.pair.split("-");
-    if (order.fee_currency === baseCurrency) return "base";
-    if (order.fee_currency === quoteCurrency) return "quote";
-    return null;
+    return filledAmount(order, fallbackPrice);
   }
 
   private _buyEconomics(
     order: OrderDetails,
     fallbackPrice: Decimal,
-  ): { baseReceived: Decimal; quoteCost: Decimal; feeQuote: Decimal } {
-    const feeQuote = this._feeQuote(order, fallbackPrice);
-    const filledAmount = this._filledAmount(order, fallbackPrice);
-    if (this._feeSide(order) === "base") {
-      return {
-        baseReceived: this._netBase(order),
-        quoteCost: filledAmount,
-        feeQuote,
-      };
-    }
-    return {
-      baseReceived: new Decimal(order.filled_quantity),
-      quoteCost: filledAmount.plus(feeQuote),
-      feeQuote,
-    };
+  ): BuyEconomics {
+    return buyEconomics(order, fallbackPrice, this._config.pair);
   }
 
   private _sellEconomics(
     order: OrderDetails,
     fallbackPrice: Decimal,
-  ): { baseDelivered: Decimal; quoteProceeds: Decimal; feeQuote: Decimal } {
-    const feeQuote = this._feeQuote(order, fallbackPrice);
-    const filledAmount = this._filledAmount(order, fallbackPrice);
-    const filledQty = new Decimal(order.filled_quantity);
-    if (this._feeSide(order) === "base") {
-      const fee = new Decimal(order.total_fee!);
-      return {
-        baseDelivered: filledQty.plus(fee),
-        quoteProceeds: filledAmount,
-        feeQuote,
-      };
-    }
-    return {
-      baseDelivered: filledQty,
-      quoteProceeds: filledAmount.minus(feeQuote),
-      feeQuote,
-    };
+  ): SellEconomics {
+    return sellEconomics(order, fallbackPrice, this._config.pair);
   }
 
   private _hasFilledQuantity(order: OrderDetails): boolean {

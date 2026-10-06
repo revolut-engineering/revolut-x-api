@@ -51,8 +51,11 @@ function flat(price: number) {
 //   L0+SO#1:        0.00433 × 100_459.22 = 434.98 → profit = 434.98 − 428.56 = 6.42
 //   L0+SO#1+SO#2:   0.01027 × 98_829.58  = 1_014.97 → profit = 1_014.97 − 999.98 = 14.99
 //
+// Market entry and SL exit are taker (9 bps); safety orders and TP are post_only
+// maker (0 bps). At these sizes the entry fee falls below the 5dp base step.
+//
 // SL after market entry + both SOs fill:
-//   revenue = 0.01027 × 85_000 = 872.95 → profit = 872.95 − 999.98 = −127.03
+//   revenue = 0.01027 × 85_000 × (1 − 0.0009) = 872.16 → profit = 872.16 − 999.98 = −127.82
 
 const PARAMS: MartingaleBacktestParams = {
   priceDeviation: d("0.02"),
@@ -190,7 +193,7 @@ describe("Martingale backtest scenarios (runMartingaleBacktest)", () => {
     expect(r.completedCycles).toBe(1); // SL counts as a completed cycle
     expect(r.winningCycles).toBe(0);
     expect(r.totalTrades).toBe(4); // entry + SO#1 + SO#2 + SL sell
-    expect(r.realizedPnl.toFixed(2)).toBe("-127.03");
+    expect(r.realizedPnl.toFixed(2)).toBe("-127.82");
     expect(r.finalBase.isZero()).toBe(true);
     expect(r.tradeLog.some((l) => l.includes("[STOP-LOSS]"))).toBe(true);
     // Verify the 3rd candle (flat 99_999) was NOT processed:

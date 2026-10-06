@@ -25,6 +25,13 @@ import { sendWithRetries } from "./notify.js";
 import { LiveStatusReporter } from "./live-status.js";
 import { TAKER_FEE_RATE } from "./grid-math.js";
 import {
+  buyEconomics,
+  filledAmount,
+  sellEconomics,
+  type BuyEconomics,
+  type SellEconomics,
+} from "./fee-math.js";
+import {
   renderMartingaleDashboard,
   renderMartingaleShutdownSummary,
   renderMartingaleReconciliationSummary,
@@ -662,13 +669,14 @@ export class ForegroundMartingaleBot {
             if (!level.filled) {
               level.filled = true;
               const levelPrice = new Decimal(level.price);
-              const netBase = this._netBase(order);
-              const filledAmount = this._filledAmount(order, levelPrice);
-              const feeQuote = this._feeQuote(order, levelPrice);
+              const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
+                order,
+                levelPrice,
+              );
               this._applyBuyFill(
                 level,
-                netBase,
-                filledAmount,
+                baseReceived,
+                quoteCost,
                 feeQuote,
                 order.id,
               );
@@ -685,16 +693,17 @@ export class ForegroundMartingaleBot {
               new Decimal(order.filled_quantity ?? "0").gt(0)
             ) {
               const levelPrice = new Decimal(level.price);
-              const netBase = this._netBase(order);
+              const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
+                order,
+                levelPrice,
+              );
               const filledAmount = this._filledAmount(order, levelPrice);
-              const feeQuote = this._feeQuote(order, levelPrice);
               const state = this._state!;
               state.totalQty = new Decimal(state.totalQty)
-                .plus(netBase)
+                .plus(baseReceived)
                 .toString();
               state.totalCost = new Decimal(state.totalCost)
-                .plus(filledAmount)
-                .plus(feeQuote)
+                .plus(quoteCost)
                 .toString();
               state.avgEntryPrice = new Decimal(state.totalCost)
                 .div(new Decimal(state.totalQty))
@@ -743,8 +752,10 @@ export class ForegroundMartingaleBot {
             : new Decimal(order.filled_amount || 0).div(
                 totalQty.gt(0) ? totalQty : 1,
               );
-          const filledAmount = this._filledAmount(order, tpPrice);
-          const feeQuote = this._feeQuote(order, tpPrice);
+          const { quoteProceeds, feeQuote } = this._sellEconomics(
+            order,
+            tpPrice,
+          );
           // Cancel any still-open safety buy orders before resetting the cycle.
           // TP filled means the current cycle is complete — any pending safety orders
           // that were placed but not yet filled must be cancelled so they don't
@@ -757,7 +768,7 @@ export class ForegroundMartingaleBot {
               }
             }
           }
-          this._applyTpFill(filledAmount, feeQuote, order.id, tpPrice);
+          this._applyTpFill(quoteProceeds, feeQuote, order.id, tpPrice);
         } else if (DEAD_STATUSES.has(order.status)) {
           this._state.tpOrderId = null;
           ordersDead++;
@@ -803,19 +814,16 @@ export class ForegroundMartingaleBot {
 
   private _applyBuyFill(
     level: MartingaleLevelState,
-    netBase: Decimal,
-    filledAmount: Decimal,
+    baseReceived: Decimal,
+    quoteCost: Decimal,
     feeQuote: Decimal,
     orderId: string,
   ): void {
     const state = this._state!;
     const isInitial = !state.inPosition;
 
-    state.totalQty = new Decimal(state.totalQty).plus(netBase).toString();
-    state.totalCost = new Decimal(state.totalCost)
-      .plus(filledAmount)
-      .plus(feeQuote)
-      .toString();
+    state.totalQty = new Decimal(state.totalQty).plus(baseReceived).toString();
+    state.totalCost = new Decimal(state.totalCost).plus(quoteCost).toString();
     state.avgEntryPrice = new Decimal(state.totalCost)
       .div(new Decimal(state.totalQty))
       .toString();
@@ -836,7 +844,7 @@ export class ForegroundMartingaleBot {
     this._logTrade(
       "buy",
       level.price,
-      netBase.toString(),
+      baseReceived.toString(),
       orderId,
       reason,
       undefined,
@@ -845,7 +853,7 @@ export class ForegroundMartingaleBot {
   }
 
   private _applyTpFill(
-    filledAmount: Decimal,
+    quoteProceeds: Decimal,
     feeQuote: Decimal,
     orderId: string,
     sellPrice: Decimal,
@@ -853,7 +861,7 @@ export class ForegroundMartingaleBot {
     const state = this._state!;
     const totalQty = new Decimal(state.totalQty);
     const totalCost = new Decimal(state.totalCost);
-    const revenue = filledAmount.minus(feeQuote);
+    const revenue = quoteProceeds;
     const profit = revenue.minus(totalCost);
 
     state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
@@ -939,9 +947,10 @@ export class ForegroundMartingaleBot {
               market: { baseSize: totalQty.toString() },
             });
             const filled = await this._awaitOrderFill(resp.data.venue_order_id);
-            const feeQuote = this._feeQuote(filled, currentPrice);
-            const filledAmount = this._filledAmount(filled, currentPrice);
-            const revenue = filledAmount.minus(feeQuote);
+            const { quoteProceeds: revenue, feeQuote } = this._sellEconomics(
+              filled,
+              currentPrice,
+            );
             const profit = revenue.minus(new Decimal(state.totalCost));
             state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
               .plus(profit)
@@ -1189,13 +1198,14 @@ export class ForegroundMartingaleBot {
             level.filled = true;
 
             const levelPrice = new Decimal(level.price);
-            const netBase = this._netBase(order);
-            const filledAmount = this._filledAmount(order, levelPrice);
-            const feeQuote = this._feeQuote(order, levelPrice);
+            const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
+              order,
+              levelPrice,
+            );
             this._applyBuyFill(
               level,
-              netBase,
-              filledAmount,
+              baseReceived,
+              quoteCost,
               feeQuote,
               order.id,
             );
@@ -1206,7 +1216,7 @@ export class ForegroundMartingaleBot {
               ? ` | fee ${cs}${feeQuote.toFixed(2)}`
               : "";
             this._notify(
-              `Martingale ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${netBase} ${base} | ` +
+              `Martingale ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${baseReceived} ${base} | ` +
                 `avg entry ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr}`,
             );
 
@@ -1235,17 +1245,16 @@ export class ForegroundMartingaleBot {
               ).gt(0);
               if (hadPartialFill) {
                 const levelPrice = new Decimal(level.price);
-                const netBase = this._netBase(order);
+                const { baseReceived, quoteCost, feeQuote } =
+                  this._buyEconomics(order, levelPrice);
                 const filledAmount = this._filledAmount(order, levelPrice);
-                const feeQuote = this._feeQuote(order, levelPrice);
                 // Apply partial fill to accounting (do NOT set level.filled or
                 // increment safetyOrdersFilled — the SO is not fully done).
                 state.totalQty = new Decimal(state.totalQty)
-                  .plus(netBase)
+                  .plus(baseReceived)
                   .toString();
                 state.totalCost = new Decimal(state.totalCost)
-                  .plus(filledAmount)
-                  .plus(feeQuote)
+                  .plus(quoteCost)
                   .toString();
                 state.avgEntryPrice = new Decimal(state.totalCost)
                   .div(new Decimal(state.totalQty))
@@ -1299,11 +1308,11 @@ export class ForegroundMartingaleBot {
               this._getQuoteStep().decimalPlaces(),
               Decimal.ROUND_UP,
             );
-          const filledAmount = this._filledAmount(order, tpPrice);
-          const feeQuote = this._feeQuote(order, tpPrice);
-          const profit = filledAmount
-            .minus(feeQuote)
-            .minus(new Decimal(state.totalCost));
+          const { quoteProceeds, feeQuote } = this._sellEconomics(
+            order,
+            tpPrice,
+          );
+          const profit = quoteProceeds.minus(new Decimal(state.totalCost));
 
           const cs = this._cs;
           const feeStr = feeQuote.gt(0)
@@ -1325,7 +1334,7 @@ export class ForegroundMartingaleBot {
               ),
             ),
           );
-          this._applyTpFill(filledAmount, feeQuote, order.id, tpPrice);
+          this._applyTpFill(quoteProceeds, feeQuote, order.id, tpPrice);
 
           // Start new cycle: market entry + TP + first safety order
           const newLevels = this._buildLevels(currentPrice);
@@ -1511,6 +1520,7 @@ export class ForegroundMartingaleBot {
       const feeQuote = quoteSize.times(TAKER_FEE_RATE);
       const filledQty = quoteSize
         .div(currentPrice)
+        .times(new Decimal(1).minus(TAKER_FEE_RATE))
         .toDecimalPlaces(baseStep.decimalPlaces(), Decimal.ROUND_DOWN);
       const orderId = `dry-market-${randomUUID().slice(0, 8)}`;
       level.filled = true;
@@ -1529,20 +1539,22 @@ export class ForegroundMartingaleBot {
       market: { quoteSize: level.quoteSize },
     });
     const filled = await this._awaitOrderFill(resp.data.venue_order_id);
-    const netBase = this._netBase(filled);
+    const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
+      filled,
+      currentPrice,
+    );
     const filledAmount = this._filledAmount(filled, currentPrice);
-    const feeQuote = this._feeQuote(filled, currentPrice);
     level.filled = true;
-    this._applyBuyFill(level, netBase, filledAmount, feeQuote, filled.id);
+    this._applyBuyFill(level, baseReceived, quoteCost, feeQuote, filled.id);
     const quoteDp = this._getQuoteStep().decimalPlaces();
     // Use actual avg fill price (filledAmount / netBase) instead of mid-price snapshot
-    const actualFillPrice = netBase.gt(0)
-      ? filledAmount.div(netBase)
+    const actualFillPrice = baseReceived.gt(0)
+      ? filledAmount.div(baseReceived)
       : currentPrice;
     const feeStr = feeQuote.gt(0) ? ` | fee ${cs}${feeQuote.toFixed(2)}` : "";
     this._notify(
       `Martingale ${this._config.pair}: ENTRY (market) @ ${cs}${actualFillPrice.toFixed(quoteDp)} | ` +
-        `${netBase} ${base} | avg ${cs}${new Decimal(state.avgEntryPrice).toFixed(quoteDp)}${feeStr}`,
+        `${baseReceived} ${base} | avg ${cs}${new Decimal(state.avgEntryPrice).toFixed(quoteDp)}${feeStr}`,
     );
   }
 
@@ -1682,38 +1694,22 @@ export class ForegroundMartingaleBot {
 
   // --------------- fees ---------------
 
-  private _feeQuote(order: OrderDetails, fallbackPrice: Decimal): Decimal {
-    const fee = order.total_fee ? new Decimal(order.total_fee) : new Decimal(0);
-    if (fee.isZero()) return new Decimal(0);
-    const baseCurrency = this._config.pair.split("-")[0] ?? "";
-    const quoteCurrency = this._config.pair.split("-")[1] ?? "";
-    if (order.fee_currency === quoteCurrency) return fee;
-    if (order.fee_currency === baseCurrency) {
-      const filledQty = new Decimal(order.filled_quantity);
-      const filledAmount = order.filled_amount
-        ? new Decimal(order.filled_amount)
-        : filledQty.times(fallbackPrice);
-      const price = filledQty.gt(0)
-        ? filledAmount.div(filledQty)
-        : fallbackPrice;
-      return fee.times(price);
-    }
-    return new Decimal(0);
-  }
-
-  private _netBase(order: OrderDetails): Decimal {
-    const filledQty = new Decimal(order.filled_quantity);
-    const fee = order.total_fee ? new Decimal(order.total_fee) : new Decimal(0);
-    const baseCurrency = this._config.pair.split("-")[0] ?? "";
-    if (order.fee_currency === baseCurrency && fee.gt(0)) {
-      return Decimal.max(new Decimal(0), filledQty.minus(fee));
-    }
-    return filledQty;
-  }
-
   private _filledAmount(order: OrderDetails, fallbackPrice: Decimal): Decimal {
-    if (order.filled_amount) return new Decimal(order.filled_amount);
-    return new Decimal(order.filled_quantity).times(fallbackPrice);
+    return filledAmount(order, fallbackPrice);
+  }
+
+  private _buyEconomics(
+    order: OrderDetails,
+    fallbackPrice: Decimal,
+  ): BuyEconomics {
+    return buyEconomics(order, fallbackPrice, this._config.pair);
+  }
+
+  private _sellEconomics(
+    order: OrderDetails,
+    fallbackPrice: Decimal,
+  ): SellEconomics {
+    return sellEconomics(order, fallbackPrice, this._config.pair);
   }
 
   private _addFee(fee: Decimal): void {

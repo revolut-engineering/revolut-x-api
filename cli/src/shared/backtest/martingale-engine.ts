@@ -1,6 +1,9 @@
 import { Decimal } from "decimal.js";
 import type { BacktestCandle } from "./engine.js";
 import { computeBaseOrderPct } from "../../engine/martingale-bot.js";
+import { TAKER_FEE_RATE } from "../../engine/grid-math.js";
+
+const TAKER_FEE = new Decimal(TAKER_FEE_RATE);
 
 export interface MartingaleBacktestParams {
   priceDeviation: Decimal;
@@ -157,6 +160,7 @@ function applyMarketEntryToState(
   const level = state.levels[0];
   const qty = level.quoteSize
     .div(entryPrice)
+    .times(new Decimal(1).minus(TAKER_FEE))
     .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
   level.filled = true;
   state.totalQty = qty;
@@ -359,6 +363,7 @@ export function runMartingaleBacktest(
         const slFillPrice = state.slPrice;
         const revenue = state.totalQty
           .times(slFillPrice)
+          .times(new Decimal(1).minus(TAKER_FEE))
           .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(state.totalCost);
         realizedPnl = realizedPnl.plus(profit);
