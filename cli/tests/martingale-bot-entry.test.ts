@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { Decimal } from "decimal.js";
-import type { CurrencyPair, OrderDetails } from "@revolut/revolut-x-api";
-import { ForegroundMartingaleBot } from "../src/engine/martingale-bot.js";
+import { saveMartingaleState } from "../src/db/martingale-store.js";
 import {
-  saveMartingaleState,
-  type MartingaleState,
-} from "../src/db/martingale-store.js";
+  FULL_FILL,
+  PARTIAL_FILL,
+  REFERENCE_PRICE,
+  limitBuyPrices,
+  makeBot,
+  makeClient,
+  takeProfitOrders,
+} from "./support/martingale-harness.js";
 
 vi.mock("../src/db/martingale-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/db/martingale-store.js")>()),
@@ -17,120 +21,6 @@ vi.mock("../src/db/store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/db/store.js")>()),
   loadConnections: () => [],
 }));
-
-const PAIR_INFO: CurrencyPair = {
-  base: "ETH",
-  quote: "USD",
-  base_step: "0.00000001",
-  quote_step: "0.01",
-  min_order_size: "0.0001",
-  max_order_size: "1000",
-  min_order_size_quote: "1",
-  slippage: 0,
-  status: "active",
-};
-
-const REFERENCE_PRICE = "2520.33";
-
-const FULL_FILL: Partial<OrderDetails> = {
-  status: "filled",
-  filled_quantity: "0.02638955",
-  filled_amount: "66.66",
-  average_fill_price: "2526",
-  total_fee: "0.00002375",
-  fee_currency: "ETH",
-};
-
-const PARTIAL_FILL: Partial<OrderDetails> = {
-  status: "partially_filled",
-  filled_quantity: "0.01",
-  filled_amount: "25.26",
-  average_fill_price: "2526",
-  total_fee: "0.000009",
-  fee_currency: "ETH",
-};
-
-interface PlacedOrder {
-  side: string;
-  market?: { quoteSize: string };
-  limit?: { price: string; quoteSize?: string; baseSize?: string };
-}
-
-function makeClient(
-  entryPolls: Partial<OrderDetails>[],
-  activeOrderIds: string[] = [],
-) {
-  const polls = [...entryPolls];
-  let sequence = 0;
-  const placeOrder = vi.fn(async (params: PlacedOrder) => ({
-    data: {
-      venue_order_id: params.market ? "entry" : `limit-${++sequence}`,
-      state: "new",
-    },
-  }));
-  const getOrder = vi.fn(async (orderId: string) => ({
-    data: {
-      id: orderId,
-      ...(polls.length > 1 ? polls.shift() : polls[0]),
-    } as OrderDetails,
-  }));
-  const getActiveOrders = vi.fn(async () => ({
-    data: activeOrderIds.map((id) => ({ id })),
-    metadata: {},
-  }));
-  const getBalances = vi.fn(async () => [
-    { currency: "USD", available: "100000" },
-  ]);
-  return { placeOrder, getOrder, getActiveOrders, getBalances };
-}
-
-type FakeClient = ReturnType<typeof makeClient>;
-
-interface Internals {
-  _pairInfo: CurrencyPair;
-  _client: FakeClient;
-  _priceSource: { peek: () => Promise<Decimal> };
-  _state: MartingaleState | null;
-  _running: boolean;
-  _lifecycle: string;
-  _initNewCycle: () => Promise<void>;
-  _resetCycle: () => void;
-  _tick: (price: Decimal) => Promise<void>;
-}
-
-function makeBot(client: FakeClient, referencePrice = REFERENCE_PRICE) {
-  const bot = new ForegroundMartingaleBot({
-    pair: "ETH-USD",
-    priceDeviation: "0.01",
-    safetyOrderVolumeScale: "2",
-    maxSafetyOrders: 3,
-    takeProfit: "0.01",
-    stopLoss: "0.08",
-    investment: "1000",
-    intervalSec: 10,
-    dryRun: false,
-    reset: false,
-  });
-  const internals = bot as unknown as Internals;
-  internals._pairInfo = PAIR_INFO;
-  internals._client = client;
-  internals._priceSource = { peek: async () => new Decimal(referencePrice) };
-  internals._running = true;
-  return internals;
-}
-
-function limitBuyPrices(client: FakeClient): string[] {
-  return client.placeOrder.mock.calls
-    .map(([params]) => params)
-    .filter((params) => params.side === "buy" && params.limit)
-    .map((params) => params.limit!.price);
-}
-
-function takeProfitOrders(client: FakeClient): PlacedOrder[] {
-  return client.placeOrder.mock.calls
-    .map(([params]) => params)
-    .filter((params) => params.side === "sell");
-}
 
 describe("martingale market entry", () => {
   it("anchors the safety orders and stop-loss to the average fill price", async () => {
@@ -196,7 +86,7 @@ describe("martingale market entry", () => {
 
   it("keeps waiting while a partially filled entry is still active", async () => {
     // given
-    const client = makeClient([PARTIAL_FILL, FULL_FILL], ["entry"]);
+    const client = makeClient([PARTIAL_FILL, FULL_FILL], ["market-1"]);
     const bot = makeBot(client);
 
     // when

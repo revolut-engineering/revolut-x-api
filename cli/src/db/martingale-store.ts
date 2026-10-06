@@ -56,6 +56,7 @@ export interface MartingaleState {
   lastBuyPrice: string | null;
   tpOrderId: string | null;
   stopLossPrice: string | null;
+  stopLossClientOrderId?: string;
 
   // Precision from exchange pair info
   quotePrecision: string;

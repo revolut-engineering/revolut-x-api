@@ -82,6 +82,8 @@ const FILLED_STATUSES = new Set(["filled"]);
 const DEAD_STATUSES = new Set(["cancelled", "rejected", "replaced"]);
 const PARTIALLY_FILLED_STATUS = "partially_filled";
 const ORDER_DELAY_MS = 200;
+const STOP_LOSS_SELL_ATTEMPTS = 3;
+const STOP_LOSS_RETRY_DELAY_MS = 2000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -368,14 +370,6 @@ export class ForegroundMartingaleBot {
     }
   }
 
-  /**
-   * Called when a critical order (TP or SL sell) has failed the maximum allowed
-   * number of consecutive times. Sends an urgent Telegram notification, saves
-   * state, and stops the bot without starting a new cycle.
-   *
-   * @param type    - "TP" or "SL" — identifies which order type hit the limit.
-   * @param detail  - Additional context shown in the notification (e.g. price).
-   */
   private async _cancelAllOpenOrders(): Promise<void> {
     if (!this._client || this._config.dryRun || !this._state) return;
     const state = this._state;
@@ -423,7 +417,7 @@ export class ForegroundMartingaleBot {
   }
 
   private async _handleOrderFailureLimit(
-    type: "TP" | "SL",
+    type: "TP",
     detail: string,
   ): Promise<void> {
     const pair = this._config.pair;
@@ -651,6 +645,11 @@ export class ForegroundMartingaleBot {
     this._state.config.intervalSec = this._config.intervalSec;
     this._state.quotePrecision = this._getQuoteStep().toString();
     this._state.basePrecision = this._getBaseStep().toString();
+
+    if (this._state.stopLossClientOrderId) {
+      await this._triggerStopLoss(await this._getCurrentPrice());
+      return;
+    }
 
     let buysFilled = 0;
     let sellsFilled = 0;
@@ -900,6 +899,7 @@ export class ForegroundMartingaleBot {
     state.lastBuyPrice = null;
     state.tpOrderId = null;
     state.stopLossPrice = null;
+    state.stopLossClientOrderId = undefined;
     for (const level of state.levels) {
       level.buyOrderIds = [];
       level.filled = false;
@@ -909,11 +909,39 @@ export class ForegroundMartingaleBot {
   // --------------- stop loss ---------------
 
   private async _triggerStopLoss(currentPrice: Decimal): Promise<void> {
+    await this._cancelOrdersForStopLoss();
+
+    const heldBase = this._sellableBase();
+    if (heldBase.gt(0)) {
+      if (this._config.dryRun) {
+        this._simulateStopLossSell(heldBase, currentPrice);
+      } else {
+        const remainingBase = await this._sellForStopLoss(currentPrice);
+        if (remainingBase.gt(0)) {
+          await this._reportIncompleteStopLoss(
+            currentPrice,
+            heldBase,
+            remainingBase,
+          );
+          await this._stopAfterStopLoss(currentPrice);
+          return;
+        }
+      }
+      this._state!.stats.completedCycles++;
+    }
+
+    const cs = this._cs;
+    this._notify(
+      `Martingale Bot ${this._state!.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
+        `Sold ${heldBase} base. Realized P&L: ${cs}${new Decimal(this._state!.stats.realizedPnl).toFixed(2)}`,
+    );
+    this._resetCycle();
+    await this._stopAfterStopLoss(currentPrice);
+  }
+
+  private async _cancelOrdersForStopLoss(): Promise<void> {
     const state = this._state!;
     const client = this._client;
-    const cs = this._cs;
-
-    // Cancel all open orders
     if (!this._config.dryRun && client) {
       const cancels: Promise<void>[] = [];
       for (const level of state.levels) {
@@ -932,100 +960,148 @@ export class ForegroundMartingaleBot {
       }
       await Promise.all(cancels);
     }
-
     for (const level of state.levels) level.buyOrderIds = [];
     state.tpOrderId = null;
+  }
 
-    const baseStep = this._getBaseStep();
-    const totalQty = new Decimal(state.totalQty).toDecimalPlaces(
-      baseStep.decimalPlaces(),
+  private _sellableBase(): Decimal {
+    return new Decimal(this._state!.totalQty).toDecimalPlaces(
+      this._getBaseStep().decimalPlaces(),
       Decimal.ROUND_DOWN,
     );
+  }
 
-    if (totalQty.gt(0)) {
-      if (!this._config.dryRun && client) {
-        let slSellSuccess = false;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            const resp = await client.placeOrder({
-              symbol: this._config.pair,
-              side: "sell",
-              market: { baseSize: totalQty.toString() },
-            });
-            const filled = await this._awaitOrderFill(resp.data.venue_order_id);
-            if (!FILLED_STATUSES.has(filled.status)) {
-              throw new Error(
-                `Stop-loss market sell ${filled.status}: ${filled.id}`,
-              );
-            }
-            const { quoteProceeds: revenue, feeQuote } = this._sellEconomics(
-              filled,
-              currentPrice,
-            );
-            const profit = revenue.minus(new Decimal(state.totalCost));
-            state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
-              .plus(profit)
-              .toString();
-            state.stats.totalSells++;
-            state.stats.completedCycles++;
-            this._addFee(feeQuote);
-            this._logTrade(
-              "sell",
-              currentPrice.toString(),
-              totalQty.toString(),
-              filled.id,
-              "sl",
-              profit.toFixed(2),
-              feeQuote.gt(0) ? feeQuote.toString() : undefined,
-            );
-            slSellSuccess = true;
-            break;
-          } catch (err) {
-            rethrowIfInsecureKey(err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            this._warnings.push(
-              `Stop-loss market sell failed (attempt ${attempt}/3): ${errMsg}`,
-            );
-            if (attempt < 3) await sleep(2000);
-          }
+  private async _sellForStopLoss(currentPrice: Decimal): Promise<Decimal> {
+    const state = this._state!;
+    for (
+      let attempt = 1;
+      attempt <= STOP_LOSS_SELL_ATTEMPTS && this._sellableBase().gt(0);
+      attempt++
+    ) {
+      if (attempt > 1) await sleep(STOP_LOSS_RETRY_DELAY_MS);
+      const requestedBase = this._sellableBase();
+      try {
+        state.stopLossClientOrderId ??= randomUUID();
+        this._saveRunningState();
+        const resp = await this._client!.placeOrder({
+          symbol: this._config.pair,
+          side: "sell",
+          clientOrderId: state.stopLossClientOrderId,
+          market: { baseSize: requestedBase.toString() },
+        });
+        const order = await this._awaitOrderFill(resp.data.venue_order_id);
+        if (new Decimal(order.filled_quantity || 0).gt(0)) {
+          this._bookStopLossFill(order, currentPrice);
         }
-        if (!slSellSuccess) {
-          // All 3 attempts failed — notify and stop without starting a new cycle.
-          // _handleOrderFailureLimit stops the bot; _triggerStopLoss continues to
-          // _resetCycle() and this.stop() below, which is a harmless double-stop.
-          await this._handleOrderFailureLimit("SL", currentPrice.toFixed(2));
+        const remainingBase = this._sellableBase();
+        state.stopLossClientOrderId = remainingBase.isZero()
+          ? undefined
+          : randomUUID();
+        this._saveRunningState();
+        if (remainingBase.gt(0)) {
+          this._warnings.push(
+            `Stop-loss market sell ${order.status}: ${requestedBase.minus(remainingBase)} of ${requestedBase} sold ` +
+              `(attempt ${attempt}/${STOP_LOSS_SELL_ATTEMPTS})`,
+          );
         }
-      } else if (this._config.dryRun) {
-        const grossRevenue = totalQty.times(currentPrice);
-        const feeQuote = grossRevenue.times(TAKER_FEE_RATE);
-        const revenue = grossRevenue
-          .minus(feeQuote)
-          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
-        const profit = revenue.minus(new Decimal(state.totalCost));
-        this._addFee(feeQuote);
-        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
-          .plus(profit)
-          .toString();
-        state.stats.totalSells++;
-        state.stats.completedCycles++;
-        this._logTrade(
-          "sell",
-          currentPrice.toString(),
-          totalQty.toString(),
-          "dry-sl",
-          "sl",
-          profit.toFixed(2),
-          feeQuote.gt(0) ? feeQuote.toFixed(2) : undefined,
+      } catch (err) {
+        rethrowIfInsecureKey(err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this._warnings.push(
+          `Stop-loss market sell failed (attempt ${attempt}/${STOP_LOSS_SELL_ATTEMPTS}): ${errMsg}`,
         );
       }
     }
+    return this._sellableBase();
+  }
 
-    this._notify(
-      `Martingale Bot ${state.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
-        `Sold ${totalQty} base. Realized P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
+  private _bookStopLossFill(order: OrderDetails, currentPrice: Decimal): void {
+    const state = this._state!;
+    const { baseDelivered, quoteProceeds, feeQuote } = this._sellEconomics(
+      order,
+      currentPrice,
     );
+    const soldBase = Decimal.min(baseDelivered, new Decimal(state.totalQty));
+    const profit = quoteProceeds.minus(this._releaseCost(soldBase));
+    state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+      .plus(profit)
+      .toString();
+    state.stats.totalSells++;
+    this._addFee(feeQuote);
+    this._logTrade(
+      "sell",
+      currentPrice.toString(),
+      soldBase.toString(),
+      order.id,
+      "sl",
+      profit.toFixed(2),
+      feeQuote.gt(0) ? feeQuote.toString() : undefined,
+    );
+  }
 
-    this._resetCycle();
+  private _releaseCost(soldBase: Decimal): Decimal {
+    const state = this._state!;
+    const heldQty = new Decimal(state.totalQty);
+    const heldCost = new Decimal(state.totalCost);
+    state.totalQty = Decimal.max(
+      new Decimal(0),
+      heldQty.minus(soldBase),
+    ).toString();
+    const releasedCost = this._sellableBase().isZero()
+      ? heldCost
+      : heldCost.times(soldBase).div(heldQty);
+    state.totalCost = heldCost.minus(releasedCost).toString();
+    return releasedCost;
+  }
+
+  private _simulateStopLossSell(
+    heldBase: Decimal,
+    currentPrice: Decimal,
+  ): void {
+    const state = this._state!;
+    const grossRevenue = heldBase.times(currentPrice);
+    const feeQuote = grossRevenue.times(TAKER_FEE_RATE);
+    const revenue = grossRevenue
+      .minus(feeQuote)
+      .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+    const profit = revenue.minus(new Decimal(state.totalCost));
+    this._addFee(feeQuote);
+    state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+      .plus(profit)
+      .toString();
+    state.stats.totalSells++;
+    this._logTrade(
+      "sell",
+      currentPrice.toString(),
+      heldBase.toString(),
+      "dry-sl",
+      "sl",
+      profit.toFixed(2),
+      feeQuote.gt(0) ? feeQuote.toFixed(2) : undefined,
+    );
+  }
+
+  private async _reportIncompleteStopLoss(
+    currentPrice: Decimal,
+    heldBase: Decimal,
+    remainingBase: Decimal,
+  ): Promise<void> {
+    const pair = this._config.pair;
+    const base = pair.split("-")[0] ?? "";
+    const cs = this._cs;
+    const remainingCost = new Decimal(this._state!.totalCost);
+    const msg =
+      `STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)} but the market sell did not complete. ` +
+      `Sold ${heldBase.minus(remainingBase)} of ${heldBase} ${base}; ` +
+      `still holding ${remainingBase} ${base} (cost ${cs}${remainingCost.toFixed(2)}). ` +
+      `Bot stopped — restart to retry the stop-loss.`;
+    this._warnings.push(msg);
+    console.log(chalk.red(`\n  ✗ ${msg}`));
+    await this._notifyAndWait(`🚨 Martingale ${pair}: ${msg}`);
+  }
+
+  private async _stopAfterStopLoss(currentPrice: Decimal): Promise<void> {
+    const state = this._state!;
     this._lifecycle = "stopped";
     this._currentPrice = currentPrice;
     if (this._statusReporter) {
