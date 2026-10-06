@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import { Decimal } from "decimal.js";
 import type { OrderDetails } from "@revolut/revolut-x-api";
 
-import { buyEconomics, sellEconomics } from "../src/engine/fee-math.js";
+import {
+  averageFillPrice,
+  buyEconomics,
+  sellEconomics,
+} from "../src/engine/fee-math.js";
 
 const PAIR = "BTC-USD";
 const PRICE = new Decimal("78737.18");
@@ -117,6 +121,41 @@ describe("fee math", () => {
     // then
     expect(baseDelivered.toString()).toBe("0.00635596");
     expect(quoteProceeds.toString()).toBe("500");
+  });
+
+  it("reads the average fill price reported by the exchange", () => {
+    // given
+    const filled = order({ average_fill_price: "78740.5", price: "80000" });
+
+    // when
+    const price = averageFillPrice(filled, PRICE);
+
+    // then
+    expect(price.toString()).toBe("78740.5");
+  });
+
+  it("derives the average fill price from the gross fill when it is not reported", () => {
+    // given
+    const filled = order({ price: "80000" });
+
+    // when
+    const price = averageFillPrice(filled, PRICE);
+
+    // then
+    expect(price.toFixed(2)).toBe(
+      new Decimal(QUOTE).div(GROSS_BASE).toFixed(2),
+    );
+  });
+
+  it("falls back to the given price when nothing was filled", () => {
+    // given
+    const filled = order({ filled_quantity: "0", filled_amount: "0" });
+
+    // when
+    const price = averageFillPrice(filled, PRICE);
+
+    // then
+    expect(price.eq(PRICE)).toBe(true);
   });
 
   it("ignores a fee charged in an unrelated currency", () => {

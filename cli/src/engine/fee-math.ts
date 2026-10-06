@@ -36,6 +36,23 @@ export function executionPrice(
   return fallbackPrice;
 }
 
+export function averageFillPrice(
+  order: OrderDetails,
+  fallbackPrice: Decimal,
+): Decimal {
+  if (order.average_fill_price) {
+    try {
+      const price = new Decimal(order.average_fill_price);
+      if (price.isFinite() && price.gt(0)) return price;
+    } catch {}
+  }
+  const filledQty = new Decimal(order.filled_quantity || 0);
+  if (order.filled_amount && filledQty.gt(0)) {
+    return new Decimal(order.filled_amount).div(filledQty);
+  }
+  return fallbackPrice;
+}
+
 export function filledAmount(
   order: OrderDetails,
   fallbackPrice: Decimal,

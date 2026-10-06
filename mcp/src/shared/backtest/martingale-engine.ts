@@ -1,4 +1,7 @@
 import { Decimal } from "decimal.js";
+import { TAKER_FEE_RATE } from "@revolut/revolut-x-api";
+
+const TAKER_FEE = new Decimal(TAKER_FEE_RATE);
 
 export interface MartingaleBacktestParams {
   priceDeviation: Decimal;
@@ -133,6 +136,7 @@ function applyMarketEntryToState(
   const level = state.levels[0];
   const qty = level.quoteSize
     .div(entryPrice)
+    .times(new Decimal(1).minus(TAKER_FEE))
     .toDecimalPlaces(baseDp, Decimal.ROUND_DOWN);
   level.filled = true;
   state.totalQty = qty;
@@ -283,6 +287,7 @@ export function runMartingaleBacktest(
       if (state.slPrice && low.lte(state.slPrice)) {
         const revenue = state.totalQty
           .times(state.slPrice)
+          .times(new Decimal(1).minus(TAKER_FEE))
           .toDecimalPlaces(2, Decimal.ROUND_DOWN);
         const profit = revenue.minus(state.totalCost);
         realizedPnl = realizedPnl.plus(profit);
