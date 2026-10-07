@@ -1,12 +1,13 @@
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Candle } from "@revolut/revolut-x-api";
 import {
   textResult,
   validateSymbol,
   validateResolution,
-  handleApiError,
+  getCurrSymbol,
+  fetchCandles,
+  type ParsedCandle,
 } from "../shared/_helpers.js";
 import {
   createGrid,
@@ -15,20 +16,6 @@ import {
   type BacktestResult,
   type OptimizationResult,
 } from "../shared/backtest/index.js";
-import { RESOLUTIONS_MAP } from "../shared/common.js";
-
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: "$",
-  USDT: "$",
-  USDC: "$",
-  EUR: "\u20AC",
-  GBP: "\u00A3",
-};
-
-function getCurrSymbol(symbol: string): string {
-  const quote = symbol.split("-")[1] ?? "";
-  return CURRENCY_SYMBOLS[quote] ?? "";
-}
 
 function fmtPrice(price: Decimal | string, cs: string): string {
   let d: Decimal;
@@ -69,90 +56,6 @@ function parseDecimal(
   } catch {
     return [null, `${name} must be a valid number, got '${value}'.`];
   }
-}
-
-interface ParsedCandle extends Record<string, Decimal> {
-  open: Decimal;
-  high: Decimal;
-  low: Decimal;
-  close: Decimal;
-}
-
-function parseCandles(candles: Candle[]): ParsedCandle[] {
-  const parsed: Array<{ ts: number; candle: ParsedCandle }> = [];
-  for (const c of candles) {
-    try {
-      parsed.push({
-        ts: c.start,
-        candle: {
-          open: new Decimal(c.open),
-          high: new Decimal(c.high),
-          low: new Decimal(c.low),
-          close: new Decimal(c.close),
-        },
-      });
-    } catch {
-      continue;
-    }
-  }
-  parsed.sort((a, b) => a.ts - b.ts);
-  return parsed.map((p) => p.candle);
-}
-
-async function fetchBacktestCandles(
-  symbol: string,
-  resolution: string,
-  days: number,
-  fetchCandles: (opts: {
-    interval: string;
-    startDate: number;
-  }) => Promise<{ data: Candle[] }>,
-  setupGuide: string,
-): Promise<
-  | { error: ReturnType<typeof textResult> }
-  | { candles: ParsedCandle[]; actualDays: number; llmNotice: string }
-> {
-  const now = Date.now();
-  let startDate = now - days * 24 * 60 * 60 * 1000;
-
-  const intervalMs = RESOLUTIONS_MAP[resolution] || 60 * 60 * 1000;
-  const expectedCandles = Math.ceil((now - startDate) / intervalMs);
-
-  let actualDays = days;
-  let llmNotice =
-    "\n\n*** NOTE TO LLM: This output is a simulation of past data — NOT a prediction or guarantee of future performance. " +
-    "When citing any figure from this output (ROI, P&L, drawdown, recommended parameters), explicitly include that caveat in your reply to the user. " +
-    "This is the complete batch for your request. There is no more data available. ***";
-
-  if (expectedCandles > 50000) {
-    startDate = now - 50000 * intervalMs;
-    actualDays = Number(((now - startDate) / (24 * 60 * 60 * 1000)).toFixed(2));
-    llmNotice =
-      "\n\n*** NOTE TO LLM: This output is a simulation of past data — NOT a prediction or guarantee of future performance. " +
-      "When citing any figure (ROI, P&L, drawdown, recommended parameters), explicitly include that caveat in your reply. " +
-      "The requested range contained more than 50,000 candles; the simulation was run on the most recent 50,000 candles from the current timestamp. This is all the data available. ***";
-  }
-
-  let candleResult;
-  try {
-    candleResult = await fetchCandles({ interval: resolution, startDate });
-  } catch (error) {
-    const handled = await handleApiError(error, setupGuide);
-    if (handled) return { error: handled };
-    throw error;
-  }
-
-  const candles = parseCandles(candleResult.data);
-
-  if (!candles.length) {
-    return {
-      error: textResult(
-        `No candle data found for ${symbol} (${resolution}). Try get more recent data`,
-      ),
-    };
-  }
-
-  return { candles, actualDays, llmNotice };
 }
 
 function formatBacktestResult(
@@ -433,7 +336,7 @@ export function registerBacktestTools(server: McpServer): void {
         return textResult(`days must be between 1 and 365, got ${days}.`);
       }
 
-      const fetchResult = await fetchBacktestCandles(
+      const fetchResult = await fetchCandles(
         symbol,
         resolution,
         days,
@@ -470,7 +373,7 @@ export function registerBacktestTools(server: McpServer): void {
       }
 
       const result = runBacktest(
-        candles,
+        candles as unknown as Array<Record<string, Decimal>>,
         totalLevels,
         rangeDec,
         investDec!,
@@ -638,7 +541,7 @@ export function registerBacktestTools(server: McpServer): void {
 
       top_n = Math.max(1, Math.min(top_n, 50));
 
-      const fetchResult = await fetchBacktestCandles(
+      const fetchResult = await fetchCandles(
         symbol,
         resolution,
         days,
@@ -673,7 +576,7 @@ export function registerBacktestTools(server: McpServer): void {
       }
 
       const results = optimizeGridParams(
-        candles,
+        candles as unknown as Array<Record<string, Decimal>>,
         levelsList,
         rangesList,
         investDec!,
