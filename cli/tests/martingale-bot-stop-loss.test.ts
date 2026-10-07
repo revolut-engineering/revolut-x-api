@@ -76,6 +76,7 @@ describe("martingale stop-loss", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.mocked(saveMartingaleState).mockReset();
   });
 
   it("completes a stop-loss that fills on the first attempt", async () => {
@@ -140,7 +141,6 @@ describe("martingale stop-loss", () => {
     expect(state.stats.realizedPnl).toBe("0");
     expect(state.stats.completedCycles).toBe(0);
     expect(state.stopLossClientOrderId).toBeDefined();
-    expect(saveMartingaleState).toHaveBeenCalledWith(state);
     expect(alerts).toHaveBeenCalledWith(
       expect.stringContaining("Sold 0 of 0.08 ETH; still holding 0.08 ETH"),
     );
@@ -210,6 +210,199 @@ describe("martingale stop-loss", () => {
     expect(alerts).toHaveBeenCalledWith(
       expect.stringContaining(
         "Sold 0.048 of 0.08 ETH; still holding 0.032 ETH",
+      ),
+    );
+  });
+
+  it("saves the pending stop-loss before every sell attempt", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    const client = makeClient(
+      [PARTIAL_SELL],
+      [],
+      [null, connectionLost(), connectionLost()],
+    );
+    bot._client = client;
+    const events: string[] = [];
+    vi.mocked(saveMartingaleState).mockImplementation((saved) => {
+      events.push(`save:${saved.stopLossClientOrderId ?? "none"}`);
+    });
+    const place = client.placeOrder.getMockImplementation()!;
+    client.placeOrder.mockImplementation(async (order) => {
+      events.push(`place:${order.clientOrderId}`);
+      return place(order);
+    });
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    const placements = events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event.startsWith("place:"));
+    expect(placements).toHaveLength(3);
+    for (const { event, index } of placements) {
+      const id = event.slice("place:".length);
+      expect(events[index - 1]).toBe(`save:${id}`);
+    }
+  });
+
+  it("reuses the order id when waiting for the fill times out", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    const client = makeClient([
+      { status: "new", filled_quantity: "0", filled_amount: "0" },
+    ]);
+    bot._client = client;
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    const ids = marketSells(client).map((order) => order.clientOrderId);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1);
+    expect(bot._state!.totalQty).toBe("0.08");
+    expect(bot._state!.stopLossClientOrderId).toBe(ids[0]);
+  });
+
+  it("uses a new order id after a sell is rejected outright", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    const client = makeClient([
+      { status: "rejected", filled_quantity: "0", filled_amount: "0" },
+      FULL_SELL,
+    ]);
+    bot._client = client;
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    const ids = marketSells(client).map((order) => order.clientOrderId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+    expect(bot._state!.inPosition).toBe(false);
+  });
+
+  it("simulates a dry-run stop-loss exactly as before", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    bot._config.dryRun = true;
+    const client = makeClient([]);
+    bot._client = client;
+    const notes = vi.spyOn(bot, "_notify");
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    const state = bot._state!;
+    expect(client.placeOrder).not.toHaveBeenCalled();
+    expect(state.stats.realizedPnl).toBe("-16.17");
+    expect(state.stats.completedCycles).toBe(1);
+    expect(notes).toHaveBeenCalledWith(
+      "Martingale Bot ETH-USD: STOP LOSS triggered at $2300.00. Sold 0.08 base. Realized P&L: $-16.17",
+    );
+  });
+
+  it("books a stop-loss whose fee was taken in coins", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    bot._client = makeClient([
+      {
+        status: "filled",
+        filled_quantity: "0.0799",
+        filled_amount: "183.77",
+        total_fee: "0.0001",
+        fee_currency: "ETH",
+      },
+    ]);
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    const state = bot._state!;
+    expect(state.inPosition).toBe(false);
+    expect(state.stats.realizedPnl).toBe("-16.23");
+    expect(state.stats.completedCycles).toBe(1);
+  });
+
+  it("logs the price the stop-loss actually sold at", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    bot._client = makeClient([{ ...FULL_SELL, filled_amount: "183.2" }]);
+    const notes = vi.spyOn(bot, "_notify");
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    expect(bot._state!.tradeLog.at(-1)).toMatchObject({
+      price: "2290",
+      reason: "sl",
+    });
+    expect(notes).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "STOP LOSS triggered at $2300.00. Sold 0.08 base.",
+      ),
+    );
+  });
+
+  it("books the loss of a position too small to sell at the stop-loss", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    const state = bot._state!;
+    state.totalQty = "0.0004";
+    state.totalCost = "1";
+    const client = makeClient([]);
+    bot._client = client;
+    const notes = vi.spyOn(bot, "_notify");
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    expect(marketSells(client)).toHaveLength(0);
+    expect(state.stats.realizedPnl).toBe("-1");
+    expect(state.stats.completedCycles).toBe(1);
+    expect(state.inPosition).toBe(false);
+    expect(notes).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Sold 0 base. 0.0004 base below the exchange minimum stays in the wallet.",
+      ),
+    );
+  });
+
+  it("completes the stop-loss when what is left is below the exchange minimum", async () => {
+    // given
+    const bot = await botHoldingPosition();
+    const client = makeClient([
+      {
+        status: "partially_filled",
+        filled_quantity: "0.07995",
+        filled_amount: "183.885",
+        total_fee: "0",
+        fee_currency: "USD",
+      },
+    ]);
+    bot._client = client;
+    const notes = vi.spyOn(bot, "_notify");
+
+    // when
+    await settle(bot._tick(STOP_LOSS_TRIGGER));
+
+    // then
+    const state = bot._state!;
+    expect(marketSells(client)).toHaveLength(1);
+    expect(state.inPosition).toBe(false);
+    expect(state.stats.completedCycles).toBe(1);
+    expect(state.stats.realizedPnl).toBe("-16.115");
+    expect(state.stopLossClientOrderId).toBeUndefined();
+    expect(notes).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Sold 0.07995 base. 0.00005 base below the exchange minimum stays in the wallet.",
       ),
     );
   });

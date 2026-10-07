@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   RevolutXClient,
   InsecureKeyPermissionsError,
+  NotFoundError,
 } from "@revolut/revolut-x-api";
 import type { CurrencyPair, OrderDetails } from "@revolut/revolut-x-api";
 import { rethrowIfInsecureKey } from "./key-guard.js";
@@ -76,6 +77,19 @@ export interface MartingaleBotOptions {
   priceSource?: LivePriceSource;
   onTick?: (event: MartingaleBotTickEvent) => void;
   suppressDashboard?: boolean;
+}
+
+interface SafetyOrderBooking {
+  baseReceived: Decimal;
+  feeQuote: Decimal;
+  remainingQuote: Decimal;
+}
+
+interface SaleBooking {
+  soldBase: Decimal;
+  profit: Decimal;
+  feeQuote: Decimal;
+  price: Decimal;
 }
 
 const FILLED_STATUSES = new Set(["filled"]);
@@ -338,6 +352,12 @@ export class ForegroundMartingaleBot {
     return this._pairInfo
       ? new Decimal(this._pairInfo.base_step)
       : new Decimal("0.00001");
+  }
+
+  private _getMinOrderBase(): Decimal {
+    return this._pairInfo
+      ? new Decimal(this._pairInfo.min_order_size)
+      : new Decimal("0");
   }
 
   private _getMinOrderQuote(): Decimal {
@@ -655,6 +675,9 @@ export class ForegroundMartingaleBot {
     let sellsFilled = 0;
     let ordersKept = 0;
     let ordersDead = 0;
+    let activeOrderIds: Set<string> | undefined;
+    const onTheBook = async () =>
+      (activeOrderIds ??= await this._getActiveOrderIds());
 
     // Check buy orders on each level
     for (const level of this._state.levels) {
@@ -664,71 +687,21 @@ export class ForegroundMartingaleBot {
           continue;
         }
         try {
-          const resp = await this._client!.getOrder(buyOrderId);
-          const order = resp.data;
-          if (FILLED_STATUSES.has(order.status)) {
-            buysFilled++;
-            level.buyOrderIds = level.buyOrderIds.filter(
-              (id) => id !== buyOrderId,
-            );
-            if (!level.filled) {
-              level.filled = true;
-              const levelPrice = new Decimal(level.price);
-              const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
-                order,
-                levelPrice,
-              );
-              this._applyBuyFill(
-                level,
-                baseReceived,
-                quoteCost,
-                feeQuote,
-                order.id,
-              );
-            }
-          } else if (DEAD_STATUSES.has(order.status)) {
-            level.buyOrderIds = level.buyOrderIds.filter(
-              (id) => id !== buyOrderId,
-            );
-            ordersDead++;
-            // If the dead order had a partial fill, apply the accounting so
-            // that step 5 (recovery) only re-places the remaining quote.
-            if (
-              !level.filled &&
-              new Decimal(order.filled_quantity ?? "0").gt(0)
-            ) {
-              const levelPrice = new Decimal(level.price);
-              const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
-                order,
-                levelPrice,
-              );
-              const filledAmount = this._filledAmount(order, levelPrice);
-              const state = this._state!;
-              state.totalQty = new Decimal(state.totalQty)
-                .plus(baseReceived)
-                .toString();
-              state.totalCost = new Decimal(state.totalCost)
-                .plus(quoteCost)
-                .toString();
-              state.avgEntryPrice = new Decimal(state.totalCost)
-                .div(new Decimal(state.totalQty))
-                .toString();
-              state.lastBuyPrice = level.price;
-              this._addFee(feeQuote);
-              state.stats.totalBuys++;
-              // Shrink quoteSize so recovery step 5 places only the remainder.
-              const quoteDp = this._getQuoteStep().decimalPlaces();
-              const remaining = Decimal.max(
-                new Decimal(0),
-                new Decimal(level.quoteSize).minus(filledAmount),
-              ).toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-              level.quoteSize = remaining.toString();
-            }
-          } else {
+          const order = (await this._client!.getOrder(buyOrderId)).data;
+          if (!(await this._isFinished(order, onTheBook))) {
             ordersKept++;
+          } else if (this._bookSafetyOrder(level, order)) {
+            buysFilled++;
+          } else {
+            ordersDead++;
           }
         } catch (err) {
           rethrowIfInsecureKey(err);
+          if (!(err instanceof NotFoundError)) {
+            throw new Error(
+              `Unable to reconcile safety order ${buyOrderId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
           level.buyOrderIds = level.buyOrderIds.filter(
             (id) => id !== buyOrderId,
           );
@@ -741,47 +714,38 @@ export class ForegroundMartingaleBot {
     // Check TP sell order
     if (this._state.tpOrderId && !this._state.tpOrderId.startsWith("dry-")) {
       try {
-        const resp = await this._client!.getOrder(this._state.tpOrderId);
-        const order = resp.data;
-        if (FILLED_STATUSES.has(order.status)) {
-          sellsFilled++;
-          const totalQty = new Decimal(this._state.totalQty);
-          // Use rounded tpPrice (matching _placeTpOrder) as the fallback fill price.
-          const tpPrice = this._state.avgEntryPrice
-            ? new Decimal(this._state.avgEntryPrice)
-                .times(new Decimal(1).plus(this._config.takeProfit))
-                .toDecimalPlaces(
-                  this._getQuoteStep().decimalPlaces(),
-                  Decimal.ROUND_UP,
-                )
-            : new Decimal(order.filled_amount || 0).div(
-                totalQty.gt(0) ? totalQty : 1,
-              );
-          const { quoteProceeds, feeQuote } = this._sellEconomics(
-            order,
-            tpPrice,
-          );
-          // Cancel any still-open safety buy orders before resetting the cycle.
-          // TP filled means the current cycle is complete — any pending safety orders
-          // that were placed but not yet filled must be cancelled so they don't
-          // execute spuriously in the next cycle.
-          for (const level of this._state.levels) {
-            for (const buyId of [...level.buyOrderIds]) {
-              if (!buyId.startsWith("dry-")) {
-                await this._client!.cancelOrder(buyId).catch(() => {});
-                await sleep(ORDER_DELAY_MS);
-              }
-            }
-          }
-          this._applyTpFill(quoteProceeds, feeQuote, order.id, tpPrice);
-        } else if (DEAD_STATUSES.has(order.status)) {
-          this._state.tpOrderId = null;
-          ordersDead++;
-        } else {
+        const order = (await this._client!.getOrder(this._state.tpOrderId))
+          .data;
+        if (!(await this._isFinished(order, onTheBook))) {
           ordersKept++;
+        } else {
+          const tpPrice = this._takeProfitPrice();
+          this._state.tpOrderId = null;
+          if (this._hasFill(order)) {
+            sellsFilled++;
+            this._bookSellFill(order, tpPrice, "tp");
+            if (this._sellableBase(tpPrice).isZero()) {
+              for (const level of this._state.levels) {
+                for (const buyId of [...level.buyOrderIds]) {
+                  if (!buyId.startsWith("dry-")) {
+                    await this._client!.cancelOrder(buyId).catch(() => {});
+                    await sleep(ORDER_DELAY_MS);
+                  }
+                }
+              }
+              this._completeTakeProfitCycle();
+            }
+          } else {
+            ordersDead++;
+          }
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
+        if (!(err instanceof NotFoundError)) {
+          throw new Error(
+            `Unable to reconcile take-profit order ${this._state.tpOrderId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         this._state.tpOrderId = null;
         ordersDead++;
       }
@@ -823,6 +787,7 @@ export class ForegroundMartingaleBot {
     quoteCost: Decimal,
     feeQuote: Decimal,
     orderId: string,
+    completesLevel = true,
   ): void {
     const state = this._state!;
     const isInitial = !state.inPosition;
@@ -838,7 +803,7 @@ export class ForegroundMartingaleBot {
     if (isInitial) {
       state.inPosition = true;
       state.initialBuyPrice = level.price;
-    } else {
+    } else if (completesLevel) {
       state.safetyOrdersFilled++;
     }
 
@@ -900,6 +865,7 @@ export class ForegroundMartingaleBot {
     state.tpOrderId = null;
     state.stopLossPrice = null;
     state.stopLossClientOrderId = undefined;
+    state.cycleRealizedPnl = undefined;
     for (const level of state.levels) {
       level.buyOrderIds = [];
       level.filled = false;
@@ -911,32 +877,55 @@ export class ForegroundMartingaleBot {
   private async _triggerStopLoss(currentPrice: Decimal): Promise<void> {
     await this._cancelOrdersForStopLoss();
 
-    const heldBase = this._sellableBase();
-    if (heldBase.gt(0)) {
+    const state = this._state!;
+    const heldQty = new Decimal(state.totalQty);
+    const sellableBase = this._sellableBase(currentPrice);
+    if (sellableBase.gt(0)) {
       if (this._config.dryRun) {
-        this._simulateStopLossSell(heldBase, currentPrice);
+        this._simulateStopLossSell(sellableBase, currentPrice);
       } else {
         const remainingBase = await this._sellForStopLoss(currentPrice);
         if (remainingBase.gt(0)) {
           await this._reportIncompleteStopLoss(
             currentPrice,
-            heldBase,
+            sellableBase,
             remainingBase,
           );
           await this._stopAfterStopLoss(currentPrice);
           return;
         }
       }
-      this._state!.stats.completedCycles++;
+    } else {
+      this._writeOffUnsellablePosition();
     }
+    if (heldQty.gt(0)) state.stats.completedCycles++;
 
+    const soldBase =
+      this._config.dryRun || !sellableBase.gt(0)
+        ? sellableBase
+        : heldQty.minus(state.totalQty);
+    const leftoverBase = heldQty.minus(soldBase);
     const cs = this._cs;
+    const leftover = leftoverBase.gt(0)
+      ? ` ${leftoverBase} base below the exchange minimum stays in the wallet.`
+      : "";
     this._notify(
-      `Martingale Bot ${this._state!.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
-        `Sold ${heldBase} base. Realized P&L: ${cs}${new Decimal(this._state!.stats.realizedPnl).toFixed(2)}`,
+      `Martingale Bot ${state.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
+        `Sold ${soldBase} base.${leftover} Realized P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}`,
     );
     this._resetCycle();
     await this._stopAfterStopLoss(currentPrice);
+  }
+
+  private _writeOffUnsellablePosition(): void {
+    const state = this._state!;
+    const cost = new Decimal(state.totalCost);
+    state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+      .minus(cost)
+      .toString();
+    state.cycleRealizedPnl = new Decimal(state.cycleRealizedPnl ?? 0)
+      .minus(cost)
+      .toString();
   }
 
   private async _cancelOrdersForStopLoss(): Promise<void> {
@@ -964,22 +953,27 @@ export class ForegroundMartingaleBot {
     state.tpOrderId = null;
   }
 
-  private _sellableBase(): Decimal {
-    return new Decimal(this._state!.totalQty).toDecimalPlaces(
+  private _sellableBase(price: Decimal): Decimal {
+    const base = new Decimal(this._state!.totalQty).toDecimalPlaces(
       this._getBaseStep().decimalPlaces(),
       Decimal.ROUND_DOWN,
     );
+    const belowMinimum =
+      base.lt(this._getMinOrderBase()) ||
+      base.times(price).lt(this._getMinOrderQuote());
+    return belowMinimum ? new Decimal(0) : base;
   }
 
   private async _sellForStopLoss(currentPrice: Decimal): Promise<Decimal> {
     const state = this._state!;
     for (
       let attempt = 1;
-      attempt <= STOP_LOSS_SELL_ATTEMPTS && this._sellableBase().gt(0);
+      attempt <= STOP_LOSS_SELL_ATTEMPTS &&
+      this._sellableBase(currentPrice).gt(0);
       attempt++
     ) {
       if (attempt > 1) await sleep(STOP_LOSS_RETRY_DELAY_MS);
-      const requestedBase = this._sellableBase();
+      const requestedBase = this._sellableBase(currentPrice);
       try {
         state.stopLossClientOrderId ??= randomUUID();
         this._saveRunningState();
@@ -990,10 +984,10 @@ export class ForegroundMartingaleBot {
           market: { baseSize: requestedBase.toString() },
         });
         const order = await this._awaitOrderFill(resp.data.venue_order_id);
-        if (new Decimal(order.filled_quantity || 0).gt(0)) {
-          this._bookStopLossFill(order, currentPrice);
+        if (this._hasFill(order)) {
+          this._bookSellFill(order, currentPrice, "sl");
         }
-        const remainingBase = this._sellableBase();
+        const remainingBase = this._sellableBase(currentPrice);
         state.stopLossClientOrderId = remainingBase.isZero()
           ? undefined
           : randomUUID();
@@ -1012,34 +1006,99 @@ export class ForegroundMartingaleBot {
         );
       }
     }
-    return this._sellableBase();
+    return this._sellableBase(currentPrice);
   }
 
-  private _bookStopLossFill(order: OrderDetails, currentPrice: Decimal): void {
+  private _bookSellFill(
+    order: OrderDetails,
+    sellPrice: Decimal,
+    reason: "tp" | "sl",
+  ): SaleBooking {
     const state = this._state!;
     const { baseDelivered, quoteProceeds, feeQuote } = this._sellEconomics(
       order,
-      currentPrice,
+      sellPrice,
     );
+    const price = averageFillPrice(order, sellPrice);
     const soldBase = Decimal.min(baseDelivered, new Decimal(state.totalQty));
-    const profit = quoteProceeds.minus(this._releaseCost(soldBase));
+    const profit = quoteProceeds.minus(this._releaseCost(soldBase, sellPrice));
     state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+      .plus(profit)
+      .toString();
+    state.cycleRealizedPnl = new Decimal(state.cycleRealizedPnl ?? 0)
       .plus(profit)
       .toString();
     state.stats.totalSells++;
     this._addFee(feeQuote);
     this._logTrade(
       "sell",
-      currentPrice.toString(),
+      price.toString(),
       soldBase.toString(),
       order.id,
-      "sl",
+      reason,
       profit.toFixed(2),
       feeQuote.gt(0) ? feeQuote.toString() : undefined,
     );
+    return { soldBase, profit, feeQuote, price };
   }
 
-  private _releaseCost(soldBase: Decimal): Decimal {
+  private _completeTakeProfitCycle(): void {
+    const state = this._state!;
+    state.stats.completedCycles++;
+    if (new Decimal(state.cycleRealizedPnl ?? 0).gt(0)) {
+      state.stats.winningCycles++;
+    }
+    this._resetCycle();
+  }
+
+  private _bookSafetyOrder(
+    level: MartingaleLevelState,
+    order: OrderDetails,
+  ): SafetyOrderBooking | null {
+    level.buyOrderIds = level.buyOrderIds.filter((id) => id !== order.id);
+    if (level.filled || !this._hasFill(order)) {
+      return null;
+    }
+    const levelPrice = new Decimal(level.price);
+    const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
+      order,
+      levelPrice,
+    );
+    const unfilledQuote = Decimal.max(
+      new Decimal(0),
+      new Decimal(level.quoteSize).minus(this._filledAmount(order, levelPrice)),
+    ).toDecimalPlaces(this._getQuoteStep().decimalPlaces(), Decimal.ROUND_DOWN);
+    const completesLevel =
+      FILLED_STATUSES.has(order.status) ||
+      !unfilledQuote.gt(0) ||
+      unfilledQuote.lt(this._getMinOrderQuote());
+    if (completesLevel) {
+      level.filled = true;
+    } else {
+      level.quoteSize = unfilledQuote.toString();
+    }
+    this._applyBuyFill(
+      level,
+      baseReceived,
+      quoteCost,
+      feeQuote,
+      order.id,
+      completesLevel,
+    );
+    return {
+      baseReceived,
+      feeQuote,
+      remainingQuote: completesLevel ? new Decimal(0) : unfilledQuote,
+    };
+  }
+
+  private _takeProfitPrice(): Decimal {
+    return new Decimal(this._state!.avgEntryPrice)
+      .times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
+      .toDecimalPlaces(this._getQuoteStep().decimalPlaces(), Decimal.ROUND_UP);
+  }
+
+  private _releaseCost(soldBase: Decimal, price: Decimal): Decimal {
     const state = this._state!;
     const heldQty = new Decimal(state.totalQty);
     const heldCost = new Decimal(state.totalCost);
@@ -1047,7 +1106,7 @@ export class ForegroundMartingaleBot {
       new Decimal(0),
       heldQty.minus(soldBase),
     ).toString();
-    const releasedCost = this._sellableBase().isZero()
+    const releasedCost = this._sellableBase(price).isZero()
       ? heldCost
       : heldCost.times(soldBase).div(heldQty);
     state.totalCost = heldCost.minus(releasedCost).toString();
@@ -1199,8 +1258,6 @@ export class ForegroundMartingaleBot {
     this._currentPrice = currentPrice;
 
     // 0. If not in position, start a new market-entry cycle.
-    //    This handles the case where a TP was detected during reconciliation:
-    //    _applyTpFill → _resetCycle sets inPosition=false but doesn't start a new cycle.
     if (!state.inPosition && this._lifecycle === "running") {
       if (this._config.dryRun) {
         await this._startCycle(currentPrice);
@@ -1262,100 +1319,32 @@ export class ForegroundMartingaleBot {
       for (const buyOrderId of [...level.buyOrderIds]) {
         if (activeOrderIds.has(buyOrderId)) continue;
         try {
-          const resp = await client.getOrder(buyOrderId);
-          const order = resp.data;
-          if (FILLED_STATUSES.has(order.status)) {
-            level.buyOrderIds = level.buyOrderIds.filter(
-              (id) => id !== buyOrderId,
-            );
-            level.filled = true;
-
-            const levelPrice = new Decimal(level.price);
-            const { baseReceived, quoteCost, feeQuote } = this._buyEconomics(
-              order,
-              levelPrice,
-            );
-            this._applyBuyFill(
-              level,
-              baseReceived,
-              quoteCost,
-              feeQuote,
-              order.id,
-            );
-
-            const base = this._config.pair.split("-")[0] ?? "";
-            const cs = this._cs;
-            const feeStr = feeQuote.gt(0)
-              ? ` | fee ${cs}${feeQuote.toFixed(2)}`
-              : "";
-            this._notify(
-              `Martingale ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${baseReceived} ${base} | ` +
-                `avg entry ${cs}${new Decimal(state.avgEntryPrice).toFixed(2)}${feeStr}`,
-            );
-
-            // Move TP order (qty changed after fill)
+          const order = (await client.getOrder(buyOrderId)).data;
+          if (!(await this._isFinished(order))) continue;
+          const booked = this._bookSafetyOrder(level, order);
+          if (booked) {
+            this._notifySafetyOrderFill(level, order, booked);
             if (state.tpOrderId) {
               try {
                 await client.cancelOrder(state.tpOrderId);
-              } catch {
-                /* ignore */
-              }
+              } catch {}
               state.tpOrderId = null;
             }
             await this._placeTpOrder();
-            // Next SO is already on the exchange (all placed simultaneously at start).
-          } else if (DEAD_STATUSES.has(order.status)) {
-            level.buyOrderIds = level.buyOrderIds.filter(
-              (id) => id !== buyOrderId,
-            );
-            // Re-place if level not yet filled
-            if (!level.filled) {
-              // If the dead order had a partial fill, account for the received
-              // base and re-place only the remaining quote so we don't
-              // over-spend capital that was already used.
-              const hadPartialFill = new Decimal(
-                order.filled_quantity ?? "0",
-              ).gt(0);
-              if (hadPartialFill) {
-                const levelPrice = new Decimal(level.price);
-                const { baseReceived, quoteCost, feeQuote } =
-                  this._buyEconomics(order, levelPrice);
-                const filledAmount = this._filledAmount(order, levelPrice);
-                // Apply partial fill to accounting (do NOT set level.filled or
-                // increment safetyOrdersFilled — the SO is not fully done).
-                state.totalQty = new Decimal(state.totalQty)
-                  .plus(baseReceived)
-                  .toString();
-                state.totalCost = new Decimal(state.totalCost)
-                  .plus(quoteCost)
-                  .toString();
-                state.avgEntryPrice = new Decimal(state.totalCost)
-                  .div(new Decimal(state.totalQty))
-                  .toString();
-                state.lastBuyPrice = level.price;
-                this._addFee(feeQuote);
-                state.stats.totalBuys++;
-                // Reduce the SO quote size to only the remaining unfilled portion.
-                const quoteDp = this._getQuoteStep().decimalPlaces();
-                const remaining = Decimal.max(
-                  new Decimal(0),
-                  new Decimal(level.quoteSize).minus(filledAmount),
-                ).toDecimalPlaces(quoteDp, Decimal.ROUND_DOWN);
-                level.quoteSize = remaining.toString();
-              }
-              const minQuote = this._getMinOrderQuote();
-              if (new Decimal(level.quoteSize).gte(minQuote)) {
-                try {
-                  const orderId = await this._placeBuyOrder(level);
-                  level.buyOrderIds.push(orderId);
-                } catch (err) {
-                  rethrowIfInsecureKey(err);
-                  await this._handleCannotPlaceOrder(
-                    `SO#${level.index + 1} (re-place)`,
-                    err instanceof Error ? err.message : String(err),
-                  );
-                  return;
-                }
+          }
+          if (!level.filled) {
+            const minQuote = this._getMinOrderQuote();
+            if (new Decimal(level.quoteSize).gte(minQuote)) {
+              try {
+                const orderId = await this._placeBuyOrder(level);
+                level.buyOrderIds.push(orderId);
+              } catch (err) {
+                rethrowIfInsecureKey(err);
+                await this._handleCannotPlaceOrder(
+                  `SO#${level.index + 1} (re-place)`,
+                  err instanceof Error ? err.message : String(err),
+                );
+                return;
               }
             }
           }
@@ -1371,58 +1360,37 @@ export class ForegroundMartingaleBot {
     // 4. Check TP sell order
     if (state.tpOrderId && !activeOrderIds.has(state.tpOrderId)) {
       try {
-        const resp = await client.getOrder(state.tpOrderId);
-        const order = resp.data;
-        if (FILLED_STATUSES.has(order.status)) {
-          // Use rounded tpPrice (matching _placeTpOrder) as the fallback fill price.
-          const tpPrice = new Decimal(state.avgEntryPrice)
-            .times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
-            .toDecimalPlaces(
-              this._getQuoteStep().decimalPlaces(),
-              Decimal.ROUND_UP,
-            );
-          const { quoteProceeds, feeQuote } = this._sellEconomics(
-            order,
-            tpPrice,
-          );
-          const profit = quoteProceeds.minus(new Decimal(state.totalCost));
-
-          const cs = this._cs;
-          const feeStr = feeQuote.gt(0)
-            ? ` | fee ${cs}${feeQuote.toFixed(2)}`
-            : "";
-          this._notify(
-            `Martingale ${this._config.pair}: TAKE PROFIT @ ${cs}${tpPrice.toFixed(2)} | ` +
-              `profit ${cs}${profit.toFixed(2)} | ` +
-              `total P&L: ${cs}${new Decimal(state.stats.realizedPnl).plus(profit).toFixed(2)}${feeStr}`,
-          );
-
+        const order = (await client.getOrder(state.tpOrderId)).data;
+        if (await this._isFinished(order)) {
+          const tpPrice = this._takeProfitPrice();
           state.tpOrderId = null;
-          // Cancel any pending safety order before resetting the cycle so it
-          // doesn't linger on the exchange and fill unexpectedly in a new cycle.
-          await Promise.all(
-            state.levels.flatMap((level) =>
-              level.buyOrderIds.map((id) =>
-                client.cancelOrder(id).catch(() => {}),
+          const sold = this._hasFill(order)
+            ? this._bookSellFill(order, tpPrice, "tp")
+            : null;
+          if (sold && this._sellableBase(tpPrice).isZero()) {
+            this._notifyTakeProfit(sold);
+            await Promise.all(
+              state.levels.flatMap((level) =>
+                level.buyOrderIds.map((id) =>
+                  client.cancelOrder(id).catch(() => {}),
+                ),
               ),
-            ),
-          );
-          this._applyTpFill(quoteProceeds, feeQuote, order.id, tpPrice);
-
-          try {
-            if (!(await this._startCycle(currentPrice))) return;
-          } catch (err) {
-            rethrowIfInsecureKey(err);
-            await this._handleCannotPlaceOrder(
-              "ENTRY",
-              err instanceof Error ? err.message : String(err),
             );
-            return;
+            this._completeTakeProfitCycle();
+            try {
+              if (!(await this._startCycle(currentPrice))) return;
+            } catch (err) {
+              rethrowIfInsecureKey(err);
+              await this._handleCannotPlaceOrder(
+                "ENTRY",
+                err instanceof Error ? err.message : String(err),
+              );
+              return;
+            }
+          } else {
+            if (sold) this._notifyPartialTakeProfit(sold);
+            await this._placeTpOrder();
           }
-        } else if (DEAD_STATUSES.has(order.status)) {
-          state.tpOrderId = null;
-          // Re-place TP
-          await this._placeTpOrder();
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
@@ -1609,7 +1577,7 @@ export class ForegroundMartingaleBot {
       market: { quoteSize: level.quoteSize },
     });
     const order = await this._awaitOrderFill(resp.data.venue_order_id);
-    if (!new Decimal(order.filled_quantity || 0).gt(0)) {
+    if (!this._hasFill(order)) {
       throw new Error(
         `Entry market order ${order.status} without a fill: ${order.id}`,
       );
@@ -1723,9 +1691,7 @@ export class ForegroundMartingaleBot {
     const state = this._state!;
     if (!state.inPosition || new Decimal(state.totalQty).lte(0)) return;
 
-    const tpPrice = new Decimal(state.avgEntryPrice)
-      .times(new Decimal(1).plus(new Decimal(this._config.takeProfit)))
-      .toDecimalPlaces(this._getQuoteStep().decimalPlaces(), Decimal.ROUND_UP);
+    const tpPrice = this._takeProfitPrice();
 
     const totalQty = new Decimal(state.totalQty).toDecimalPlaces(
       this._getBaseStep().decimalPlaces(),
@@ -1770,6 +1736,23 @@ export class ForegroundMartingaleBot {
 
   // --------------- awaiting fills ---------------
 
+  private async _isFinished(
+    order: OrderDetails,
+    onTheBook: () => Promise<Set<string>> = () => this._getActiveOrderIds(),
+  ): Promise<boolean> {
+    if (FILLED_STATUSES.has(order.status) || DEAD_STATUSES.has(order.status)) {
+      return true;
+    }
+    return (
+      order.status === PARTIALLY_FILLED_STATUS &&
+      !(await onTheBook()).has(order.id)
+    );
+  }
+
+  private _hasFill(order: OrderDetails): boolean {
+    return new Decimal(order.filled_quantity || 0).gt(0);
+  }
+
   private async _awaitOrderFill(
     orderId: string,
     timeoutMs = 30_000,
@@ -1779,18 +1762,7 @@ export class ForegroundMartingaleBot {
     while (Date.now() - start < timeoutMs) {
       try {
         const order = (await client.getOrder(orderId)).data;
-        if (
-          FILLED_STATUSES.has(order.status) ||
-          DEAD_STATUSES.has(order.status)
-        ) {
-          return order;
-        }
-        if (
-          order.status === PARTIALLY_FILLED_STATUS &&
-          !(await this._getActiveOrderIds()).has(orderId)
-        ) {
-          return order;
-        }
+        if (await this._isFinished(order)) return order;
       } catch (err) {
         rethrowIfInsecureKey(err);
       }
@@ -2008,6 +1980,56 @@ export class ForegroundMartingaleBot {
   }
 
   // --------------- notifications ---------------
+
+  private _notifySafetyOrderFill(
+    level: MartingaleLevelState,
+    order: OrderDetails,
+    booked: SafetyOrderBooking,
+  ): void {
+    const base = this._config.pair.split("-")[0] ?? "";
+    const cs = this._cs;
+    const avg = new Decimal(this._state!.avgEntryPrice).toFixed(2);
+    const feeStr = booked.feeQuote.gt(0)
+      ? ` | fee ${cs}${booked.feeQuote.toFixed(2)}`
+      : "";
+    if (FILLED_STATUSES.has(order.status)) {
+      this._notify(
+        `Martingale ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${booked.baseReceived} ${base} | ` +
+          `avg entry ${cs}${avg}${feeStr}`,
+      );
+      return;
+    }
+    const remainder = booked.remainingQuote.gt(0)
+      ? `remaining ${cs}${booked.remainingQuote} back on the book`
+      : "level complete";
+    this._notify(
+      `Martingale ${this._config.pair}: BUY partly filled @ ${cs}${level.price} | ${booked.baseReceived} ${base} | ` +
+        `avg entry ${cs}${avg}${feeStr} | ${remainder}`,
+    );
+  }
+
+  private _notifyTakeProfit(sale: SaleBooking): void {
+    const state = this._state!;
+    const cs = this._cs;
+    const feeStr = sale.feeQuote.gt(0)
+      ? ` | fee ${cs}${sale.feeQuote.toFixed(2)}`
+      : "";
+    this._notify(
+      `Martingale ${this._config.pair}: TAKE PROFIT @ ${cs}${sale.price.toFixed(2)} | ` +
+        `profit ${cs}${new Decimal(state.cycleRealizedPnl ?? 0).toFixed(2)} | ` +
+        `total P&L: ${cs}${new Decimal(state.stats.realizedPnl).toFixed(2)}${feeStr}`,
+    );
+  }
+
+  private _notifyPartialTakeProfit(sale: SaleBooking): void {
+    const base = this._config.pair.split("-")[0] ?? "";
+    const cs = this._cs;
+    this._notify(
+      `Martingale ${this._config.pair}: TAKE PROFIT partly filled @ ${cs}${sale.price.toFixed(2)} | ` +
+        `sold ${sale.soldBase} ${base} | P&L ${cs}${sale.profit.toFixed(2)} | ` +
+        `still holding ${this._state!.totalQty} ${base}`,
+    );
+  }
 
   private _notify(message: string): void {
     if (this._connections.length === 0) return;
