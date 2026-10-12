@@ -31,6 +31,7 @@ import {
   OrderPlacementResult,
   PlaceOrderParams,
   ReplaceOrderParams,
+  ReplaceTriggerConfig,
 } from "./types/orders.js";
 import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
 import type {
@@ -91,6 +92,16 @@ export interface RevolutXClientOptions {
   generatedBy?: string;
   logger?: LogCallback;
   enforceKeyPermissions?: boolean;
+}
+
+function buildReplaceTriggerConfig(
+  trigger: ReplaceTriggerConfig,
+): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    trigger_price: trigger.triggerPrice,
+  };
+  if (trigger.limitPrice) config.limit_price = trigger.limitPrice;
+  return config;
 }
 
 export class RevolutXClient {
@@ -293,6 +304,38 @@ export class RevolutXClient {
       if (params.market.quoteSize)
         marketConfig.quote_size = params.market.quoteSize;
       body.order_configuration = { market: marketConfig };
+    } else if (params.conditional) {
+      const conditionalConfig: Record<string, unknown> = {
+        trigger_price: params.conditional.triggerPrice,
+      };
+      if (params.conditional.baseSize)
+        conditionalConfig.base_size = params.conditional.baseSize;
+      if (params.conditional.quoteSize)
+        conditionalConfig.quote_size = params.conditional.quoteSize;
+      if (params.conditional.limitPrice)
+        conditionalConfig.limit_price = params.conditional.limitPrice;
+      body.order_configuration = { conditional: conditionalConfig };
+    } else if (params.tpsl) {
+      const tpslConfig: Record<string, unknown> = {
+        base_size: params.tpsl.baseSize,
+      };
+      if (params.tpsl.takeProfit) {
+        const takeProfitConfig: Record<string, unknown> = {
+          trigger_price: params.tpsl.takeProfit.triggerPrice,
+        };
+        if (params.tpsl.takeProfit.limitPrice)
+          takeProfitConfig.limit_price = params.tpsl.takeProfit.limitPrice;
+        tpslConfig.take_profit = takeProfitConfig;
+      }
+      if (params.tpsl.stopLoss) {
+        const stopLossConfig: Record<string, unknown> = {
+          trigger_price: params.tpsl.stopLoss.triggerPrice,
+        };
+        if (params.tpsl.stopLoss.limitPrice)
+          stopLossConfig.limit_price = params.tpsl.stopLoss.limitPrice;
+        tpslConfig.stop_loss = stopLossConfig;
+      }
+      body.order_configuration = { tpsl: tpslConfig };
     }
 
     return this.sendPlacement("POST", "/orders", body);
@@ -424,6 +467,24 @@ export class RevolutXClient {
       body.time_in_force = params.timeInForce;
     if (params.executionInstructions !== undefined) {
       body.execution_instructions = params.executionInstructions;
+    }
+    if (params.conditional !== undefined) {
+      body.conditional =
+        params.conditional === null
+          ? null
+          : buildReplaceTriggerConfig(params.conditional);
+    }
+    if (params.takeProfit !== undefined) {
+      body.take_profit =
+        params.takeProfit === null
+          ? null
+          : buildReplaceTriggerConfig(params.takeProfit);
+    }
+    if (params.stopLoss !== undefined) {
+      body.stop_loss =
+        params.stopLoss === null
+          ? null
+          : buildReplaceTriggerConfig(params.stopLoss);
     }
 
     return this.sendPlacement("PUT", `/orders/${venueOrderId}`, body);

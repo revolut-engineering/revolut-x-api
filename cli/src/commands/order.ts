@@ -146,6 +146,11 @@ function printSectionHeader(title: string, subtitle?: string): void {
   console.log(chalk.dim("─".repeat(50)));
 }
 
+function isNullishFlagValue(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return normalized === "none" || normalized === "null";
+}
+
 function pushTriggerRows(
   rows: [string, string][],
   label: string,
@@ -334,6 +339,8 @@ Examples:
   $ revx order place BTC-USD sell --qty 0.001 --limit 95000      Place limit sell (gtc by default)
   $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
   $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+  $ revx order place BTC-USD sell --qty 0.001 --conditional --trigger-price 100000
+  $ revx order place BTC-USD sell --qty 0.001 --tp 110000 --sl 90000   Take-profit/stop-loss order
   $ revx order open                                              List open/active orders
   $ revx order history --symbols BTC-USD                         Order history for pair
   $ revx order get <order-id>                                    Get order details
@@ -344,6 +351,7 @@ Examples:
   $ revx order replace <order-id> --quote 150                    Replace order quote amount
   $ revx order replace <order-id> --time-in-force ioc            Replace order time in force
   $ revx order replace <order-id> --allow-taker                  Replace order to allow taker
+  $ revx order replace <order-id> --tp 115000                    Replace take-profit trigger (whole trigger)
   $ revx order fills <order-id>                                  Get order fills`,
     );
 
@@ -357,13 +365,26 @@ Examples:
     .addHelpText(
       "after",
       `
-Sizing (exactly one required):
+Sizing (exactly one required; --qty only for take-profit/stop-loss):
   --qty    Size in base currency (e.g. 0.001 BTC)
   --quote  Size in quote currency (e.g. 100 USD)
 
 Order type (exactly one required):
-  --limit  Limit order at the given price
-  --market Market order at the best available price
+  --limit        Limit order at the given price
+  --market       Market order at the best available price
+  --conditional  Conditional (stop) order, triggers at --trigger-price
+  --tp / --sl    Take-profit / stop-loss order (at least one required)
+
+Conditional-only flags:
+  --trigger-price          Price that activates the order
+  --trigger-limit-price    Optional limit price for the order placed on trigger
+                           (market order on trigger when omitted)
+
+Take-profit/stop-loss-only flags (trigger directions are derived from side):
+  --tp <price>     Take-profit trigger price
+  --sl <price>     Stop-loss trigger price
+  --tp-limit       Optional limit price for the take-profit leg
+  --sl-limit       Optional limit price for the stop-loss leg
 
 Limit-only flags (rejected with --market):
   --time-in-force  gtc (default) keeps the order open, ioc fills what it can
@@ -377,6 +398,10 @@ Examples:
   $ revx order place BTC-USD sell --qty 0.001 --limit 95000        Limit sell, gtc
   $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
   $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
+  $ revx order place BTC-USD sell --qty 0.001 --conditional --trigger-price 100000
+  $ revx order place BTC-USD buy --qty 0.001 --conditional --trigger-price 90000 --trigger-limit-price 89900
+  $ revx order place BTC-USD sell --qty 0.001 --tp 110000 --sl 90000
+  $ revx order place BTC-USD sell --qty 0.001 --tp 110000 --tp-limit 109900
   $ revx order place BTC-USD buy --qty 0.001 --market --json       Output as JSON
 
 The client order ID must be a UUID. One is generated unless you pass
@@ -391,6 +416,28 @@ reply is lost.`,
       "Limit order price, a multiple of the pair's price step (required unless --market)",
     )
     .option("--market", "Market order (required unless --limit)")
+    .option(
+      "--conditional",
+      "Conditional (stop) order; requires --trigger-price",
+    )
+    .option(
+      "--trigger-price <price>",
+      "Price that activates a conditional order",
+    )
+    .option(
+      "--trigger-limit-price <price>",
+      "Limit price for the order placed when a conditional order triggers",
+    )
+    .option("--tp <price>", "Take-profit trigger price")
+    .option("--sl <price>", "Stop-loss trigger price")
+    .option(
+      "--tp-limit <price>",
+      "Limit price for the take-profit leg (market on trigger when omitted)",
+    )
+    .option(
+      "--sl-limit <price>",
+      "Limit price for the stop-loss leg (market on trigger when omitted)",
+    )
     .addOption(
       new Option(
         "--time-in-force <value>",
@@ -420,6 +467,13 @@ reply is lost.`,
           quote?: string;
           limit?: string;
           market?: boolean;
+          conditional?: boolean;
+          triggerPrice?: string;
+          triggerLimitPrice?: string;
+          tp?: string;
+          sl?: string;
+          tpLimit?: string;
+          slLimit?: string;
           timeInForce?: string;
           postOnly?: boolean;
           clientOrderId?: string;
@@ -449,9 +503,17 @@ reply is lost.`,
             process.exit(1);
           }
 
-          if (!opts.market && opts.limit === undefined) {
+          const hasTpsl = Boolean(opts.tp || opts.sl);
+          const orderTypes = [
+            opts.market ? "--market" : undefined,
+            opts.limit !== undefined ? "--limit" : undefined,
+            opts.conditional ? "--conditional" : undefined,
+            hasTpsl ? "--tp/--sl" : undefined,
+          ].filter(Boolean);
+
+          if (orderTypes.length === 0) {
             console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --limit <price> or --market.")}`,
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify an order type: --market, --limit <price>, --conditional, or --tp/--sl.")}`,
             );
             process.exit(1);
           }
@@ -463,7 +525,49 @@ reply is lost.`,
             process.exit(1);
           }
 
-          if (opts.market && (opts.timeInForce || opts.postOnly)) {
+          if (orderTypes.length > 1) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white(`Specify only one order type: --market, --limit, --conditional, or --tp/--sl (got ${orderTypes.join(" and ")}).`)}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.conditional) {
+            if (!opts.triggerPrice) {
+              console.error(
+                `${chalk.red.bold("✖ Error:")} ${chalk.white("--conditional requires --trigger-price <price>.")}`,
+              );
+              process.exit(1);
+            }
+          } else if (opts.triggerPrice || opts.triggerLimitPrice) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--trigger-price and --trigger-limit-price are only valid with --conditional.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (hasTpsl && opts.quote) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Take-profit/stop-loss orders require --qty (base currency size).")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.tpLimit && !opts.tp) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--tp-limit is only valid together with --tp <price>.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.slLimit && !opts.sl) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--sl-limit is only valid together with --sl <price>.")}`,
+            );
+            process.exit(1);
+          }
+
+          if ((opts.timeInForce || opts.postOnly) && !opts.limit) {
             const rejected = [
               opts.timeInForce ? "--time-in-force" : undefined,
               opts.postOnly ? "--post-only" : undefined,
@@ -472,8 +576,13 @@ reply is lost.`,
               rejected.length > 1
                 ? `${rejected.join(" and ")} apply`
                 : `${rejected[0]} applies`;
+            const conflicts = [
+              opts.market ? "--market" : undefined,
+              opts.conditional ? "--conditional" : undefined,
+              hasTpsl ? "--tp/--sl" : undefined,
+            ].filter(Boolean);
             console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white(`${subject} to limit orders only and cannot be used with --market.`)}`,
+              `${chalk.red.bold("✖ Error:")} ${chalk.white(`${subject} to limit orders only and cannot be used with ${conflicts.join(" or ")}.`)}`,
             );
             process.exit(1);
           }
@@ -516,7 +625,7 @@ reply is lost.`,
 
           if (opts.market) {
             params.market = sizeField;
-          } else {
+          } else if (opts.limit) {
             params.limit = {
               price: limitPrice!,
               ...sizeField,
@@ -525,6 +634,34 @@ reply is lost.`,
                 : {}),
               ...(opts.postOnly
                 ? { executionInstructions: ["post_only"] }
+                : {}),
+            };
+          } else if (opts.conditional) {
+            params.conditional = {
+              triggerPrice: opts.triggerPrice!,
+              ...(opts.triggerLimitPrice
+                ? { limitPrice: opts.triggerLimitPrice }
+                : {}),
+              ...sizeField,
+            };
+          } else {
+            params.tpsl = {
+              baseSize: opts.qty!,
+              ...(opts.tp
+                ? {
+                    takeProfit: {
+                      triggerPrice: opts.tp,
+                      ...(opts.tpLimit ? { limitPrice: opts.tpLimit } : {}),
+                    },
+                  }
+                : {}),
+              ...(opts.sl
+                ? {
+                    stopLoss: {
+                      triggerPrice: opts.sl,
+                      ...(opts.slLimit ? { limitPrice: opts.slLimit } : {}),
+                    },
+                  }
                 : {}),
             };
           }
@@ -892,7 +1029,7 @@ reply is lost.`,
   order
     .command("replace")
     .description(
-      "Replace (modify) an existing order. Provide at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker.",
+      "Replace (modify) an existing order. Provide at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker, --trigger-price, --tp, --sl.",
     )
     .argument("<order-id>", "Venue order ID of the order to replace")
     .addHelpText(
@@ -905,6 +1042,11 @@ Examples:
   $ revx order replace <order-id> --time-in-force ioc        Fill immediately, cancel the rest
   $ revx order replace <order-id> --post-only                Maker-only execution
   $ revx order replace <order-id> --allow-taker              Allow taking liquidity
+  $ revx order replace <order-id> --trigger-price 100000 --trigger-limit-price 99500
+                                                              Replace a conditional trigger (whole trigger)
+  $ revx order replace <order-id> --tp 115000 --tp-limit 114900
+                                                              Replace the take-profit trigger (whole trigger)
+  $ revx order replace <order-id> --sl none                  Remove the stop-loss leg
 
 Changing only --price keeps a buy's quote amount (its quantity changes) and a
 sell's quantity. To keep a buy's quantity, pass --qty <current qty> too.
@@ -939,6 +1081,30 @@ reply is lost.`,
       "--allow-taker",
       "Set execution_instructions to [allow_taker] explicitly",
     )
+    .option(
+      "--trigger-price <price>",
+      "Replacement trigger price for conditional orders; pass the whole trigger (with --trigger-limit-price for a limit leg); use 'none' to remove the trigger",
+    )
+    .option(
+      "--trigger-limit-price <price>",
+      "Limit price for the replacement conditional trigger (only with --trigger-price)",
+    )
+    .option(
+      "--tp <price>",
+      "Replacement take-profit trigger price (whole trigger is replaced); use 'none' to remove the leg",
+    )
+    .option(
+      "--tp-limit <price>",
+      "Limit price for the replacement take-profit trigger (only with --tp)",
+    )
+    .option(
+      "--sl <price>",
+      "Replacement stop-loss trigger price (whole trigger is replaced); use 'none' to remove the leg",
+    )
+    .option(
+      "--sl-limit <price>",
+      "Limit price for the replacement stop-loss trigger (only with --sl)",
+    )
     .option("--json", "Output as JSON")
     .addOption(
       new Option("--output <format>", "Output format")
@@ -956,6 +1122,12 @@ reply is lost.`,
           timeInForce?: string;
           postOnly?: boolean;
           allowTaker?: boolean;
+          triggerPrice?: string;
+          triggerLimitPrice?: string;
+          tp?: string;
+          tpLimit?: string;
+          sl?: string;
+          slLimit?: string;
           json?: boolean;
           output?: string;
         },
@@ -982,16 +1154,81 @@ reply is lost.`,
             process.exit(1);
           }
 
+          if (opts.triggerLimitPrice && !opts.triggerPrice) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--trigger-limit-price is only valid together with --trigger-price <price>. To change only the limit price, pass the whole trigger again.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.tpLimit && !opts.tp) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--tp-limit is only valid together with --tp <price>. To change only the limit price, pass the whole trigger again.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.slLimit && !opts.sl) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--sl-limit is only valid together with --sl <price>. To change only the limit price, pass the whole trigger again.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (
+            opts.triggerLimitPrice &&
+            isNullishFlagValue(opts.triggerPrice!)
+          ) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--trigger-limit-price cannot be combined with --trigger-price none.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.tpLimit && isNullishFlagValue(opts.tp!)) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--tp-limit cannot be combined with --tp none.")}`,
+            );
+            process.exit(1);
+          }
+
+          if (opts.slLimit && isNullishFlagValue(opts.sl!)) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("--sl-limit cannot be combined with --sl none.")}`,
+            );
+            process.exit(1);
+          }
+
+          const hasTriggerUpdate = Boolean(
+            opts.triggerPrice || opts.tp || opts.sl,
+          );
+          const limitOrderFlags = [
+            opts.price ? "--price" : undefined,
+            opts.timeInForce ? "--time-in-force" : undefined,
+            opts.postOnly ? "--post-only" : undefined,
+            opts.allowTaker ? "--allow-taker" : undefined,
+          ].filter(Boolean);
+
+          if (hasTriggerUpdate && limitOrderFlags.length > 0) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white(`${limitOrderFlags.join(" and ")} apply to limit orders only and cannot be combined with --trigger-price, --tp or --sl.`)}`,
+            );
+            process.exit(1);
+          }
+
           if (
             opts.price === undefined &&
             opts.qty === undefined &&
             opts.quote === undefined &&
             !opts.timeInForce &&
             !opts.postOnly &&
-            !opts.allowTaker
+            !opts.allowTaker &&
+            !opts.triggerPrice &&
+            !opts.tp &&
+            !opts.sl
           ) {
             console.error(
-              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker.")}`,
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify at least one of --price, --qty, --quote, --time-in-force, --post-only, --allow-taker, --trigger-price, --tp, --sl.")}`,
             );
             process.exit(1);
           }
@@ -1043,6 +1280,32 @@ reply is lost.`,
           if (opts.postOnly) params.executionInstructions = ["post_only"];
           else if (opts.allowTaker)
             params.executionInstructions = ["allow_taker"];
+          if (opts.triggerPrice) {
+            params.conditional = isNullishFlagValue(opts.triggerPrice)
+              ? null
+              : {
+                  triggerPrice: opts.triggerPrice,
+                  ...(opts.triggerLimitPrice
+                    ? { limitPrice: opts.triggerLimitPrice }
+                    : {}),
+                };
+          }
+          if (opts.tp) {
+            params.takeProfit = isNullishFlagValue(opts.tp)
+              ? null
+              : {
+                  triggerPrice: opts.tp,
+                  ...(opts.tpLimit ? { limitPrice: opts.tpLimit } : {}),
+                };
+          }
+          if (opts.sl) {
+            params.stopLoss = isNullishFlagValue(opts.sl)
+              ? null
+              : {
+                  triggerPrice: opts.sl,
+                  ...(opts.slLimit ? { limitPrice: opts.slLimit } : {}),
+                };
+          }
 
           let result: Awaited<ReturnType<typeof client.replaceOrder>>;
           try {

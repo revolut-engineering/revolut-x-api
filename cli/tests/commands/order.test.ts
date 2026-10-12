@@ -926,6 +926,315 @@ describe("order place", () => {
     ).rejects.toThrow("process.exit");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it("places a conditional order with market execution on trigger", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "sell",
+      "--qty",
+      "0.001",
+      "--conditional",
+      "--trigger-price",
+      "100000",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
+      symbol: "BTC-USD",
+      side: "sell",
+      conditional: {
+        triggerPrice: "100000",
+        baseSize: "0.001",
+      },
+    });
+  });
+
+  it("places a conditional order with limit execution on trigger", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--quote",
+      "100",
+      "--conditional",
+      "--trigger-price",
+      "90000",
+      "--trigger-limit-price",
+      "89900",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
+      symbol: "BTC-USD",
+      side: "buy",
+      conditional: {
+        triggerPrice: "90000",
+        limitPrice: "89900",
+        quoteSize: "100",
+      },
+    });
+  });
+
+  it("places a take-profit/stop-loss order with both legs", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "sell",
+      "--qty",
+      "0.001",
+      "--tp",
+      "110000",
+      "--sl",
+      "90000",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
+      symbol: "BTC-USD",
+      side: "sell",
+      tpsl: {
+        baseSize: "0.001",
+        takeProfit: { triggerPrice: "110000" },
+        stopLoss: { triggerPrice: "90000" },
+      },
+    });
+  });
+
+  it("places a take-profit/stop-loss order with limit legs", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "sell",
+      "--qty",
+      "0.001",
+      "--tp",
+      "110000",
+      "--tp-limit",
+      "109900",
+      "--sl",
+      "90000",
+      "--sl-limit",
+      "89900",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
+      symbol: "BTC-USD",
+      side: "sell",
+      tpsl: {
+        baseSize: "0.001",
+        takeProfit: { triggerPrice: "110000", limitPrice: "109900" },
+        stopLoss: { triggerPrice: "90000", limitPrice: "89900" },
+      },
+    });
+  });
+
+  it("places a take-profit-only order", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--qty",
+      "0.001",
+      "--tp",
+      "110000",
+    ]);
+    expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
+      symbol: "BTC-USD",
+      side: "buy",
+      tpsl: {
+        baseSize: "0.001",
+        takeProfit: { triggerPrice: "110000" },
+      },
+    });
+  });
+
+  it("rejects --conditional without --trigger-price", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "sell",
+        "--qty",
+        "0.001",
+        "--conditional",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--conditional requires --trigger-price");
+  });
+
+  it("rejects trigger flags without --conditional", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000",
+        "--trigger-price",
+        "100000",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("only valid with --conditional");
+  });
+
+  it("rejects --tp combined with --limit", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000",
+        "--tp",
+        "110000",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Specify only one order type");
+  });
+
+  it("rejects --tp combined with --market", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--market",
+        "--sl",
+        "90000",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Specify only one order type");
+  });
+
+  it("rejects take-profit/stop-loss order sized with --quote", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--quote",
+        "500",
+        "--tp",
+        "110000",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("require --qty (base currency size)");
+  });
+
+  it("rejects --tp-limit without --tp", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--sl",
+        "90000",
+        "--tp-limit",
+        "109900",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--tp-limit is only valid together with --tp");
+  });
+
+  it("rejects --post-only combined with --conditional", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "sell",
+        "--qty",
+        "0.001",
+        "--conditional",
+        "--trigger-price",
+        "100000",
+        "--post-only",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain(
+      "--post-only applies to limit orders only and cannot be used with --conditional",
+    );
+  });
+
+  it("rejects --time-in-force combined with take-profit/stop-loss", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "sell",
+        "--qty",
+        "0.001",
+        "--tp",
+        "110000",
+        "--time-in-force",
+        "gtc",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain(
+      "--time-in-force applies to limit orders only and cannot be used with --tp/--sl",
+    );
+  });
 });
 
 describe("order open", () => {
@@ -1980,6 +2289,183 @@ describe("order replace", () => {
     expect(typeof call[1].clientOrderId).toBe("string");
     expect(call[1].clientOrderId.length).toBeGreaterThan(0);
     expect(call[1].baseSize).toBe("0.002");
+  });
+
+  it("replaces conditional trigger with whole trigger", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--trigger-price",
+      "100000",
+      "--trigger-limit-price",
+      "99500",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      conditional: { triggerPrice: "100000", limitPrice: "99500" },
+    });
+  });
+
+  it("replaces conditional trigger with market execution when limit omitted", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--trigger-price",
+      "100000",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      conditional: { triggerPrice: "100000" },
+    });
+  });
+
+  it("removes conditional trigger with --trigger-price none", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--trigger-price",
+      "none",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      conditional: null,
+    });
+  });
+
+  it("replaces both tpsl trigger legs with whole triggers", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--qty",
+      "0.002",
+      "--tp",
+      "115000",
+      "--tp-limit",
+      "114900",
+      "--sl",
+      "90000",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      baseSize: "0.002",
+      takeProfit: { triggerPrice: "115000", limitPrice: "114900" },
+      stopLoss: { triggerPrice: "90000" },
+    });
+  });
+
+  it("removes stop loss leg with --sl none while updating take profit", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--tp",
+      "115000",
+      "--sl",
+      "null",
+      "--client-order-id",
+      "client-new",
+    ]);
+    expect(mockReplaceOrder).toHaveBeenCalledWith("order-123", {
+      clientOrderId: "client-new",
+      takeProfit: { triggerPrice: "115000" },
+      stopLoss: null,
+    });
+  });
+
+  it("exits when --trigger-limit-price is passed without --trigger-price", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--trigger-limit-price",
+        "99500",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain(
+      "--trigger-limit-price is only valid together with --trigger-price",
+    );
+  });
+
+  it("exits when --tp-limit is passed without --tp", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--tp-limit",
+        "114900",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--tp-limit is only valid together with --tp");
+  });
+
+  it("exits when --tp-limit is combined with --tp none", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--tp",
+        "none",
+        "--tp-limit",
+        "114900",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("--tp-limit cannot be combined with --tp none");
+  });
+
+  it("exits when trigger flags are combined with limit order flags", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-123",
+        "--price",
+        "96000",
+        "--tp",
+        "115000",
+      ]),
+    ).rejects.toThrow("process.exit");
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+    const output = errSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("apply to limit orders only");
   });
 
   it("exits when --post-only is combined with --time-in-force ioc", async () => {
