@@ -271,6 +271,7 @@ describe("trading read-only tools", () => {
       arguments: {},
     });
     expect(getText(result)).toContain("No historical orders found");
+    expect(result.isError).toBeUndefined();
   });
 
   it("get_historical_orders returns setup guide on auth error", async () => {
@@ -284,6 +285,7 @@ describe("trading read-only tools", () => {
       arguments: {},
     });
     expect(getText(result)).toContain("Setup guide text");
+    expect(result.isError).toBe(true);
   });
 
   it("get_historical_orders validates symbol when provided", async () => {
@@ -295,6 +297,7 @@ describe("trading read-only tools", () => {
     const text = getText(result);
     expect(text).toContain("Invalid");
     expect(text).toContain("symbol");
+    expect(result.isError).toBe(true);
   });
 
   it("get_historical_orders validates date formats", async () => {

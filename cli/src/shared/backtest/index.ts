@@ -1,4 +1,7 @@
 export {
+  annualizedReturnPct,
+  candleCoverage,
+  returnOverDrawdown,
   createGrid,
   runBacktest,
   runBacktestBot,
@@ -6,6 +9,7 @@ export {
 } from "./engine.js";
 export type {
   BacktestCandle,
+  CandleCoverage,
   BacktestTickEvent,
   BacktestOnTick,
   BacktestFill,

@@ -27,7 +27,6 @@ vi.mock("../../src/util/parse.js", async (importOriginal) => {
     await importOriginal<typeof import("../../src/util/parse.js")>();
   return {
     ...actual,
-    parseTimestamp: vi.fn(() => 1600000000000),
     parsePositiveInt: actual.parsePositiveInt,
   };
 });

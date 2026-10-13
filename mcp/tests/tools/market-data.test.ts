@@ -94,6 +94,7 @@ describe("market data tools", () => {
       arguments: {},
     });
     const text = getText(result);
+    expect(result.isError).toBeUndefined();
     expect(text).toContain("Symbol: BTC");
     expect(text).toContain("Name: Bitcoin");
     expect(text).toContain("Type: crypto");
@@ -112,6 +113,7 @@ describe("market data tools", () => {
       arguments: {},
     });
     expect(getText(result)).toContain("Setup guide text");
+    expect(result.isError).toBe(true);
   });
 
   it("get_currency_pairs returns all fields", async () => {
@@ -151,6 +153,7 @@ describe("market data tools", () => {
       arguments: { symbol: "invalid" },
     });
     expect(getText(result)).toContain("Invalid symbol format");
+    expect(result.isError).toBe(true);
   });
 
   it("get_order_book returns formatted data", async () => {
@@ -423,6 +426,7 @@ describe("market data tools", () => {
       arguments: { symbol: "invalid" },
     });
     expect(getText(result)).toContain("Invalid symbol format");
+    expect(result.isError).toBe(true);
   });
 
   it("get_public_trades validates date formats", async () => {

@@ -5,7 +5,18 @@ import {
   TYPE_LABELS,
   type MonitorSpec,
 } from "../engine/monitor.js";
-import { loadConnections } from "../db/store.js";
+import { loadConnections, type TelegramConnection } from "../db/store.js";
+import { getClient } from "../util/client.js";
+import { handleError } from "../util/errors.js";
+import {
+  MAX_CHECK_INTERVAL_SEC,
+  MIN_CHECK_INTERVAL_SEC,
+  MONITOR_CANDLES,
+  MonitorOptionError,
+  decimalOption,
+  intervalOption,
+  periodOption,
+} from "../util/monitor-options.js";
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
@@ -25,7 +36,7 @@ const TYPE_DOCS: Array<{
     command: "price",
     alertType: "price",
     description:
-      "Simple price threshold alert — triggers when price crosses above or below a level.",
+      "Simple price threshold alert — triggers when the price is above or below a level, also at start.",
     flags: "--direction (above/below), --threshold (price level, required).",
     example: "revx monitor price BTC-USD --direction above --threshold 100000",
   },
@@ -33,16 +44,16 @@ const TYPE_DOCS: Array<{
     command: "rsi",
     alertType: "rsi",
     description:
-      "Relative Strength Index — triggers when RSI crosses a threshold (overbought/oversold).",
+      "Relative Strength Index — triggers when RSI is above or below a threshold (overbought/oversold).",
     flags:
-      "--direction (above/below), --threshold (0-100 scale, e.g. 70 = overbought; default 70), --period (default 14).",
+      "--direction (above/below), --threshold (0-100 scale, e.g. 70 = overbought, default 70), --period (default 14).",
     example: "revx monitor rsi ETH-USD --direction above --threshold 70",
   },
   {
     command: "ema-cross",
     alertType: "ema_cross",
     description:
-      "EMA Crossover — triggers when fast EMA crosses above (bullish) or below (bearish) slow EMA.",
+      "EMA Crossover — triggers when fast EMA crosses above (bullish) or below (bearish) slow EMA. A trend already in place at start waits for a fresh cross.",
     flags:
       "--direction (bullish/bearish), --fast-period (default 9), --slow-period (default 21).",
     example: "revx monitor ema-cross BTC-USD --direction bullish",
@@ -51,7 +62,7 @@ const TYPE_DOCS: Array<{
     command: "macd",
     alertType: "macd",
     description:
-      "MACD Crossover — triggers when MACD line crosses signal line.",
+      "MACD Crossover — triggers when MACD line crosses signal line. A trend already in place at start waits for a fresh cross.",
     flags:
       "--direction (bullish/bearish), --fast (default 12), --slow (default 26), --signal (default 9).",
     example: "revx monitor macd BTC-USD --direction bullish",
@@ -60,7 +71,7 @@ const TYPE_DOCS: Array<{
     command: "bollinger",
     alertType: "bollinger",
     description:
-      "Bollinger Bands — triggers when price touches or crosses upper/lower band.",
+      "Bollinger Bands — triggers when the price is at or beyond the upper/lower band.",
     flags:
       "--band (upper/lower), --period (default 20), --std-mult (default 2).",
     example: "revx monitor bollinger BTC-USD --band upper",
@@ -77,18 +88,18 @@ const TYPE_DOCS: Array<{
     command: "spread",
     alertType: "spread",
     description:
-      "Bid-Ask Spread — triggers when spread percentage crosses a threshold.",
+      "Bid-Ask Spread — triggers when the spread percentage is above or below a threshold.",
     flags:
-      "--direction (above/below), --threshold (spread in %, e.g. 0.5 = 0.5%; default 0.5).",
+      "--direction (above/below), --threshold (spread in %, e.g. 0.5 = 0.5%, default 0.5).",
     example: "revx monitor spread BTC-USD --direction above --threshold 0.5",
   },
   {
     command: "obi",
     alertType: "obi",
     description:
-      "Order Book Imbalance — triggers when buy/sell volume imbalance crosses a threshold.",
+      "Order Book Imbalance — triggers when the buy/sell volume imbalance is above or below a threshold.",
     flags:
-      "--direction (above/below), --threshold (ratio from -1.0 to 1.0, e.g. 0.3 = 30% buy imbalance; default 0.3).",
+      "--direction (above/below), --threshold (ratio from -1.0 to 1.0, e.g. 0.3 = 30% buy imbalance, default 0.3).",
     example: "revx monitor obi BTC-USD --direction above --threshold 0.3",
   },
   {
@@ -97,7 +108,7 @@ const TYPE_DOCS: Array<{
     description:
       "Price Change % — triggers when price has risen or fallen by at least X% over the last N 1-hour candles.",
     flags:
-      "--direction (rise/fall), --threshold (% change, e.g. 5 = 5%; default 5.0), --lookback (1h candles, default 24).",
+      "--direction (rise/fall), --threshold (% change, e.g. 5 = 5%, default 5.0), --lookback (1h candles, default 24).",
     example:
       "revx monitor price-change BTC-USD --direction rise --threshold 5.0",
   },
@@ -111,10 +122,25 @@ const TYPE_DOCS: Array<{
   },
 ];
 
+async function assertTradedPair(pair: string): Promise<void> {
+  const pairs = await getClient({ requireAuth: true }).getCurrencyPairs();
+  const info = pairs[pair.replace("-", "/")];
+  if (!info) {
+    throw new Error(
+      `${pair} is not a trading pair on Revolut X. See the pairs with: revx market pairs`,
+    );
+  }
+  if (info.status !== "active") {
+    throw new Error(
+      `${pair} is not trading right now (status ${info.status}).`,
+    );
+  }
+}
+
 async function startMonitor(
   pair: string,
   alertType: string,
-  config: Record<string, unknown>,
+  buildConfig: () => Record<string, unknown>,
   interval: string,
 ): Promise<void> {
   pair = pair.trim().toUpperCase();
@@ -125,9 +151,18 @@ async function startMonitor(
     process.exit(1);
   }
 
-  const intervalSec = Math.max(5, parseInt(interval, 10) || 10);
+  let config: Record<string, unknown>;
+  let intervalSec: number;
+  let connections: TelegramConnection[];
+  try {
+    config = buildConfig();
+    intervalSec = intervalOption(interval);
+    connections = loadConnections().filter((c) => c.enabled);
+    await assertTradedPair(pair);
+  } catch (err) {
+    handleError(err);
+  }
 
-  const connections = loadConnections().filter((c) => c.enabled);
   if (connections.length === 0) {
     console.log(
       chalk.yellow.bold("! Warning:") +
@@ -205,7 +240,7 @@ terminal; to also receive notifications, register a connector first:
   monitor
     .command("price")
     .description(
-      "Price threshold — triggers when price crosses above or below a level",
+      "Price threshold — triggers when the price is above or below a level",
     )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
@@ -214,7 +249,7 @@ terminal; to also receive notifications, register a connector first:
         .default("above"),
     )
     .requiredOption("--threshold <value>", "Price level to watch")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -223,10 +258,12 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "price",
-          {
+          () => ({
             direction: opts.direction,
-            threshold: opts.threshold,
-          },
+            threshold: decimalOption("--threshold", opts.threshold, {
+              above: 0,
+            }),
+          }),
           opts.interval,
         );
       },
@@ -235,7 +272,7 @@ terminal; to also receive notifications, register a connector first:
   monitor
     .command("rsi")
     .description(
-      "RSI — triggers when Relative Strength Index crosses a threshold",
+      "RSI — triggers when the Relative Strength Index is above or below a threshold",
     )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
@@ -249,7 +286,7 @@ terminal; to also receive notifications, register a connector first:
       "70",
     )
     .option("--period <n>", "RSI calculation period", "14")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -263,11 +300,14 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "rsi",
-          {
+          () => ({
             direction: opts.direction,
-            threshold: opts.threshold,
-            period: Number(opts.period),
-          },
+            threshold: decimalOption("--threshold", opts.threshold, {
+              above: 0,
+              below: 100,
+            }),
+            period: periodOption("--period", opts.period, 2),
+          }),
           opts.interval,
         );
       },
@@ -276,7 +316,7 @@ terminal; to also receive notifications, register a connector first:
   monitor
     .command("ema-cross")
     .description(
-      "EMA Crossover — triggers when fast EMA crosses above or below slow EMA",
+      "EMA Crossover — triggers when fast EMA crosses above or below slow EMA, after the first check",
     )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
@@ -289,7 +329,7 @@ terminal; to also receive notifications, register a connector first:
     )
     .option("--fast-period <n>", "Fast EMA period", "9")
     .option("--slow-period <n>", "Slow EMA period", "21")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -303,10 +343,19 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "ema_cross",
-          {
-            direction: opts.direction,
-            fast_period: Number(opts.fastPeriod),
-            slow_period: Number(opts.slowPeriod),
+          () => {
+            const fast = periodOption("--fast-period", opts.fastPeriod);
+            const slow = periodOption("--slow-period", opts.slowPeriod);
+            if (fast >= slow) {
+              throw new MonitorOptionError(
+                `--fast-period must be below --slow-period, got ${fast} and ${slow}.`,
+              );
+            }
+            return {
+              direction: opts.direction,
+              fast_period: fast,
+              slow_period: slow,
+            };
           },
           opts.interval,
         );
@@ -315,7 +364,9 @@ terminal; to also receive notifications, register a connector first:
 
   monitor
     .command("macd")
-    .description("MACD Crossover — triggers when MACD line crosses signal line")
+    .description(
+      "MACD Crossover — triggers when MACD line crosses signal line, after the first check",
+    )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
       new Option(
@@ -328,7 +379,7 @@ terminal; to also receive notifications, register a connector first:
     .option("--fast <n>", "Fast EMA period", "12")
     .option("--slow <n>", "Slow EMA period", "26")
     .option("--signal <n>", "Signal line period", "9")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -343,11 +394,21 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "macd",
-          {
-            direction: opts.direction,
-            fast: Number(opts.fast),
-            slow: Number(opts.slow),
-            signal: Number(opts.signal),
+          () => {
+            const fast = periodOption("--fast", opts.fast);
+            const slow = periodOption("--slow", opts.slow);
+            const signal = periodOption("--signal", opts.signal, 2);
+            if (fast >= slow) {
+              throw new MonitorOptionError(
+                `--fast must be below --slow, got ${fast} and ${slow}.`,
+              );
+            }
+            if (slow + signal > MONITOR_CANDLES) {
+              throw new MonitorOptionError(
+                `--slow plus --signal can be at most ${MONITOR_CANDLES}, got ${slow + signal}. The monitor reads the last ${MONITOR_CANDLES} hourly candles.`,
+              );
+            }
+            return { direction: opts.direction, fast, slow, signal };
           },
           opts.interval,
         );
@@ -357,7 +418,7 @@ terminal; to also receive notifications, register a connector first:
   monitor
     .command("bollinger")
     .description(
-      "Bollinger Bands — triggers when price touches or crosses upper/lower band",
+      "Bollinger Bands — triggers when the price is at or beyond the upper/lower band",
     )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
@@ -367,7 +428,7 @@ terminal; to also receive notifications, register a connector first:
     )
     .option("--period <n>", "Bollinger period", "20")
     .option("--std-mult <n>", "Standard deviation multiplier", "2")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -381,11 +442,11 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "bollinger",
-          {
+          () => ({
             band: opts.band,
-            period: Number(opts.period),
-            std_mult: Number(opts.stdMult),
-          },
+            period: periodOption("--period", opts.period, 2),
+            std_mult: decimalOption("--std-mult", opts.stdMult, { above: 0 }),
+          }),
           opts.interval,
         );
       },
@@ -399,7 +460,7 @@ terminal; to also receive notifications, register a connector first:
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .option("--period <n>", "Average volume period", "20")
     .option("--multiplier <n>", "Volume multiplier threshold", "2.0")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -408,10 +469,12 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "volume_spike",
-          {
-            period: Number(opts.period),
-            multiplier: Number(opts.multiplier),
-          },
+          () => ({
+            period: periodOption("--period", opts.period),
+            multiplier: decimalOption("--multiplier", opts.multiplier, {
+              above: 0,
+            }),
+          }),
           opts.interval,
         );
       },
@@ -420,7 +483,7 @@ terminal; to also receive notifications, register a connector first:
   monitor
     .command("spread")
     .description(
-      "Bid-Ask Spread — triggers when spread percentage crosses a threshold",
+      "Bid-Ask Spread — triggers when the spread percentage is above or below a threshold",
     )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
@@ -429,7 +492,7 @@ terminal; to also receive notifications, register a connector first:
         .default("above"),
     )
     .option("--threshold <value>", "Spread threshold in % (0.5 = 0.5%)", "0.5")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -438,10 +501,12 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "spread",
-          {
+          () => ({
             direction: opts.direction,
-            threshold: opts.threshold,
-          },
+            threshold: decimalOption("--threshold", opts.threshold, {
+              min: 0,
+            }),
+          }),
           opts.interval,
         );
       },
@@ -450,7 +515,7 @@ terminal; to also receive notifications, register a connector first:
   monitor
     .command("obi")
     .description(
-      "Order Book Imbalance — triggers when buy/sell imbalance crosses a threshold",
+      "Order Book Imbalance — triggers when the buy/sell imbalance is above or below a threshold",
     )
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .addOption(
@@ -463,7 +528,7 @@ terminal; to also receive notifications, register a connector first:
       "Imbalance ratio from -1.0 to 1.0 (0.3 = 30% buy imbalance)",
       "0.3",
     )
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -472,10 +537,13 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "obi",
-          {
+          () => ({
             direction: opts.direction,
-            threshold: opts.threshold,
-          },
+            threshold: decimalOption("--threshold", opts.threshold, {
+              min: -1,
+              max: 1,
+            }),
+          }),
           opts.interval,
         );
       },
@@ -497,7 +565,7 @@ terminal; to also receive notifications, register a connector first:
     )
     .option("--threshold <value>", "Minimum % change (5 = 5%)", "5.0")
     .option("--lookback <n>", "Lookback in 1-hour candles", "24")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -511,11 +579,13 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "price_change_pct",
-          {
+          () => ({
             direction: opts.direction,
-            threshold: opts.threshold,
-            lookback: Number(opts.lookback),
-          },
+            threshold: decimalOption("--threshold", opts.threshold, {
+              above: 0,
+            }),
+            lookback: periodOption("--lookback", opts.lookback),
+          }),
           opts.interval,
         );
       },
@@ -529,7 +599,7 @@ terminal; to also receive notifications, register a connector first:
     .argument("<pair>", "Trading pair, e.g. BTC-USD")
     .option("--period <n>", "ATR period", "14")
     .option("--multiplier <n>", "ATR multiplier", "1.5")
-    .option("--interval <sec>", "Check interval in seconds (min 5)", "10")
+    .option("--interval <sec>", "Check interval in seconds (5 to 86400)", "10")
     .action(
       async (
         pair: string,
@@ -538,10 +608,12 @@ terminal; to also receive notifications, register a connector first:
         await startMonitor(
           pair,
           "atr_breakout",
-          {
-            period: Number(opts.period),
-            multiplier: Number(opts.multiplier),
-          },
+          () => ({
+            period: periodOption("--period", opts.period),
+            multiplier: decimalOption("--multiplier", opts.multiplier, {
+              above: 0,
+            }),
+          }),
           opts.interval,
         );
       },
@@ -562,6 +634,11 @@ terminal; to also receive notifications, register a connector first:
         console.log(chalk.dim(`      Flags:   ${doc.flags}`));
         console.log(chalk.dim(`      Example: ${doc.example}\n`));
       }
-      console.log(chalk.gray(`  ↳ ${TYPE_DOCS.length} types available\n`));
+      console.log(chalk.gray(`  ↳ ${TYPE_DOCS.length} types available`));
+      console.log(
+        chalk.gray(
+          `  ↳ Periods are whole numbers up to ${MONITOR_CANDLES - 1}, since a monitor reads the last ${MONITOR_CANDLES} hourly candles. --interval is from ${MIN_CHECK_INTERVAL_SEC} to ${MAX_CHECK_INTERVAL_SEC} seconds.\n`,
+        ),
+      );
     });
 }

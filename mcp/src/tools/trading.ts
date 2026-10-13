@@ -12,6 +12,7 @@ import {
   handleApiError,
   parseDateRange,
   textResult,
+  errorResult,
   validateSymbol,
 } from "../shared/_helpers.js";
 
@@ -308,7 +309,7 @@ export function registerTradingTools(server: McpServer): void {
         normalizedSymbols = symbols.map((s) => s.trim().toUpperCase());
         for (const sym of normalizedSymbols) {
           const error = validateSymbol(sym);
-          if (error) return textResult(error);
+          if (error) return errorResult(error);
         }
       }
 

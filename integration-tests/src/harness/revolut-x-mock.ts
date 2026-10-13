@@ -56,12 +56,20 @@ export async function buildRevolutXMockModule(): Promise<
   return {
     ...actual,
     RevolutXClient: vi.fn(() => revolutXMockState),
-    isConfigured: vi.fn(() => true),
-    loadCredentials: vi.fn(() => ({
-      apiKey: "test-key",
-      privateKey: {} as object,
-      privateKeyPath: "/tmp/test-private.pem",
+    inspectCredentials: vi.fn(() => ({
+      status: "ready",
+      credentials: {
+        apiKey: "test-key",
+        privateKey: {} as object,
+        privateKeyPath: "/tmp/test-private.pem",
+      },
     })),
+    inspectPrivateKey: vi.fn(() => ({
+      status: "ready",
+      privateKey: { asymmetricKeyType: "ed25519" },
+    })),
+    resolvePrivateKeyFile: vi.fn(() => "/tmp/test-private.pem"),
+    moveKeypairAside: vi.fn(() => "/tmp/test-private.pem.replaced"),
     ensureConfigDir: vi.fn(),
     getPrivateKeyFile: vi.fn(() => "/tmp/test-private.pem"),
     getPublicKeyFile: vi.fn(() => "/tmp/test-public.pem"),
@@ -71,7 +79,6 @@ export async function buildRevolutXMockModule(): Promise<
     generateKeypair: vi.fn(
       () => "-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n",
     ),
-    loadPrivateKey: vi.fn(() => ({ asymmetricKeyType: "ed25519" })),
     loadConfig: vi.fn(() => ({
       api_key: "test-key",
       private_key_path: "/tmp/test-private.pem",

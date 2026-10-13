@@ -1,7 +1,20 @@
-import { existsSync } from "node:fs";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { textResult } from "../shared/_helpers.js";
+import {
+  credentialsAdvice,
+  handleApiError,
+  textResult,
+  errorResult,
+} from "../shared/_helpers.js";
+
+const NEXT_STEPS =
+  "Next steps — present ALL of these to the user as a numbered list. Do NOT skip or rephrase any step:\n" +
+  "1. Copy the public key above (including the BEGIN/END lines)\n" +
+  "2. Go to Revolut X → Profile → API Keys\n" +
+  "3. Add the public key\n" +
+  "4. Create a new API key — IMPORTANT: tick the 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
+  "5. Copy the resulting API key and paste it back here\n\n" +
+  "Once the user provides the API key, run 'configure_api_key' with it.";
 
 export function registerSetupTools(server: McpServer): void {
   server.registerTool(
@@ -21,51 +34,81 @@ export function registerSetupTools(server: McpServer): void {
       const {
         ensureConfigDir,
         getPrivateKeyFile,
-        getPublicKeyFile,
         generateKeypair,
-        loadPrivateKey,
         getPublicKeyPem,
+        inspectPrivateKey,
+        loadConfig,
+        moveKeypairAside,
+        publicKeyFileFor,
+        redactHome,
+        resolvePrivateKeyFile,
+        InsecureKeyPermissionsError,
       } = await import("@revolut/revolut-x-api");
+      const { SETUP_GUIDE, resetRevolutXClient } = await import("../server.js");
 
-      ensureConfigDir();
+      let privateKeyPath: string;
+      try {
+        ensureConfigDir();
+        privateKeyPath = resolvePrivateKeyFile(loadConfig().private_key_path);
+      } catch (exc) {
+        const handled = await handleApiError(exc, SETUP_GUIDE);
+        if (handled) return handled;
+        return errorResult(
+          `Could not create the keypair: ${exc instanceof Error ? exc.message : String(exc)}`,
+        );
+      }
 
-      const privateKeyPath = getPrivateKeyFile();
-
-      if (existsSync(privateKeyPath)) {
-        try {
-          const existingKey = loadPrivateKey(privateKeyPath);
-          const pubPem = getPublicKeyPem(existingKey);
+      let missing = false;
+      let replace = false;
+      try {
+        const key = inspectPrivateKey(privateKeyPath);
+        if (key.status === "ready") {
           return textResult(
             "IMPORTANT: Display the public key below to the user exactly as-is — they need to copy it.\n\n" +
               "A keypair already exists. Here is your existing public key:\n\n" +
-              `${pubPem}\n` +
-              "If you want to generate a new one, please delete the existing " +
-              `key file.\n\n` +
-              "Next steps — present ALL of these to the user as a numbered list. Do NOT skip or rephrase any step:\n" +
-              "1. Copy the public key above (including the BEGIN/END lines)\n" +
-              "2. Go to Revolut X → Profile → API Keys\n" +
-              "3. Add the public key\n" +
-              "4. Create a new API key — IMPORTANT: tick the 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
-              "5. Copy the resulting API key and paste it back here\n\n" +
-              "Once the user provides the API key, run 'configure_api_key' with it.",
+              `${getPublicKeyPem(key.privateKey)}\n` +
+              `To make a new key pair instead, ask the user to move ${redactHome(privateKeyPath)} aside first.\n\n` +
+              NEXT_STEPS,
           );
-        } catch {}
+        }
+        const { issue } = key;
+        if (issue.fault === "unreadable" || issue.fault === "not_a_file") {
+          return errorResult(await credentialsAdvice(issue, SETUP_GUIDE));
+        }
+        missing = issue.fault === "missing";
+        replace = issue.fault === "malformed";
+      } catch (exc) {
+        if (!(exc instanceof InsecureKeyPermissionsError)) throw exc;
+        replace = true;
       }
 
-      const publicPem = generateKeypair(privateKeyPath, getPublicKeyFile());
+      let moved: string | undefined;
+      let publicPem: string;
+      try {
+        moved = replace
+          ? moveKeypairAside(privateKeyPath, publicKeyFileFor(privateKeyPath))
+          : undefined;
+        const newKeyPath = missing ? getPrivateKeyFile() : privateKeyPath;
+        publicPem = generateKeypair(newKeyPath, publicKeyFileFor(newKeyPath));
+      } catch (exc) {
+        return errorResult(
+          (moved
+            ? `The old private key was moved to ${redactHome(moved)}. `
+            : "") +
+            `Could not create the keypair: ${exc instanceof Error ? exc.message : String(exc)}`,
+        );
+      }
+      resetRevolutXClient();
 
       return textResult(
         "IMPORTANT: Display the public key below to the user exactly as-is — they need to copy it.\n\n" +
+          (moved
+            ? `The old private key was moved to ${redactHome(moved)}. It is no longer used.\n\n`
+            : "") +
           "Ed25519 keypair generated successfully!\n\n" +
           "Here is your PUBLIC key (copy this):\n\n" +
           `${publicPem}\n` +
-          "Next steps — present ALL of these to the user as a numbered list. Do NOT skip or rephrase any step:\n" +
-          "1. Copy the public key above (including the BEGIN/END lines)\n" +
-          "2. Go to Revolut X → Profile → API Keys\n" +
-          "3. Add the public key\n" +
-          "4. Create a new API key — IMPORTANT: tick the 'Allow usage via Revolut X MCP and CLI' checkbox\n" +
-          "5. Copy the resulting API key and paste it back here\n\n" +
-          "Once the user provides the API key, run 'configure_api_key' with it.",
+          NEXT_STEPS,
       );
     },
   );
@@ -89,32 +132,54 @@ export function registerSetupTools(server: McpServer): void {
       },
     },
     async ({ api_key }) => {
-      const { getPrivateKeyFile, loadConfig, saveConfig } =
-        await import("@revolut/revolut-x-api");
+      const {
+        inspectCredentials,
+        inspectPrivateKey,
+        loadConfig,
+        resolvePrivateKeyFile,
+        saveConfig,
+      } = await import("@revolut/revolut-x-api");
+      const { SETUP_GUIDE, resetRevolutXClient } = await import("../server.js");
 
       const cleaned = api_key.trim();
       if (!/^[A-Za-z0-9]{64}$/.test(cleaned)) {
-        return textResult(
+        return errorResult(
           "Invalid API key format. The API key should be exactly " +
             "64 alphanumeric characters. Please check and try again.",
         );
       }
 
-      if (!existsSync(getPrivateKeyFile())) {
-        return textResult(
-          "No private key found. Please run 'generate_keypair' first " +
-            "to create your authentication keys.",
-        );
+      try {
+        const check = inspectCredentials();
+        if (
+          check.status === "invalid" &&
+          check.issue.file === "config" &&
+          check.issue.fault !== "malformed"
+        ) {
+          return errorResult(await credentialsAdvice(check.issue, SETUP_GUIDE));
+        }
+        const config = loadConfig();
+        const privateKeyPath = resolvePrivateKeyFile(config.private_key_path);
+        const key = inspectPrivateKey(privateKeyPath);
+        if (key.status === "invalid") {
+          return errorResult(
+            key.issue.fault === "missing"
+              ? "No private key found. Please run 'generate_keypair' first to create your authentication keys."
+              : await credentialsAdvice(key.issue, SETUP_GUIDE),
+          );
+        }
+        saveConfig({
+          ...config,
+          api_key: cleaned,
+          private_key_path: privateKeyPath,
+        });
+      } catch (exc) {
+        const handled = await handleApiError(exc, SETUP_GUIDE);
+        if (handled) return handled;
+        throw exc;
       }
 
-      const config = loadConfig();
-      config.api_key = cleaned;
-      config.private_key_path = getPrivateKeyFile();
-      saveConfig(config);
-
-      const { resetRevolutXClient } = await import("../server.js");
       resetRevolutXClient();
-
       return textResult(
         "API key saved successfully!\n\n" +
           "Run 'check_auth_status' to verify your configuration works.",
@@ -159,35 +224,57 @@ export function registerSetupTools(server: McpServer): void {
       },
     },
     async () => {
-      const { isConfigured, loadCredentials } =
-        await import("@revolut/revolut-x-api");
-      const { SETUP_GUIDE } = await import("../server.js");
+      const {
+        inspectCredentials,
+        AuthenticationError,
+        ForbiddenError,
+        NetworkError,
+      } = await import("@revolut/revolut-x-api");
+      const { SETUP_GUIDE, getRevolutXClient, resetRevolutXClient } =
+        await import("../server.js");
 
-      if (!isConfigured()) {
+      let check: ReturnType<typeof inspectCredentials>;
+      try {
+        check = inspectCredentials();
+      } catch (exc) {
+        const handled = await handleApiError(exc, SETUP_GUIDE);
+        if (handled) return textResult(handled.content[0].text);
+        throw exc;
+      }
+      if (check.status === "missing") {
         return textResult(`Not configured.\n\n${SETUP_GUIDE}`);
       }
-
-      const creds = loadCredentials();
-      if (creds === null) {
-        return textResult(
-          `Configuration incomplete or corrupted.\n\n${SETUP_GUIDE}`,
-        );
+      if (check.status === "invalid") {
+        return textResult(await credentialsAdvice(check.issue, SETUP_GUIDE));
       }
 
+      resetRevolutXClient();
       try {
-        const { getRevolutXClient } = await import("../server.js");
-        const client = getRevolutXClient();
-        await client.getCurrencies();
+        await getRevolutXClient().getCurrencies();
         return textResult(
           "Authentication is configured and the connection is working. " +
             "You can now use the data tools.",
         );
       } catch (exc) {
+        if (
+          exc instanceof AuthenticationError ||
+          exc instanceof ForbiddenError
+        ) {
+          return textResult(
+            `Authentication is configured but the exchange refused it:\n${exc.message}\n\n` +
+              "Please verify your API key is correct and that the public key " +
+              "is registered in your Revolut X account.",
+          );
+        }
+        if (exc instanceof NetworkError) {
+          return textResult(
+            `Authentication is configured but the exchange could not be reached:\n${exc.message}`,
+          );
+        }
+        const handled = await handleApiError(exc, SETUP_GUIDE);
+        if (handled) return textResult(handled.content[0].text);
         return textResult(
-          `Authentication is configured but the connection test failed:\n` +
-            `${exc}\n\n` +
-            "Please verify your API key is correct and that the public key " +
-            "is registered in your Revolut X account.",
+          `Authentication is configured but the connection test failed:\n${exc instanceof Error ? exc.message : String(exc)}`,
         );
       }
     },

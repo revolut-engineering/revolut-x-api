@@ -11,5 +11,9 @@ export {
   ServerError,
   NetworkError,
   AuthNotConfiguredError,
+  InvalidCredentialsError,
+  ConfigurationError,
   InsecureKeyPermissionsError,
+  isDuplicateClientOrderIdError,
+  type CredentialsIssue,
 } from "./errors.js";

@@ -57,7 +57,7 @@ Requires Node.js 20+.
 ## Quick Start
 
 ```typescript
-import { RevolutXClient } from "revolutx-api";
+import { RevolutXClient } from "@revolut/revolut-x-api";
 
 const client = new RevolutXClient({
   apiKey: "your-api-key",
@@ -79,7 +79,7 @@ console.log(balances);
 | `apiKey` | `string` | — | Revolut X API key |
 | `privateKey` | `KeyObject` | — | Ed25519 private key object |
 | `privateKeyPath` | `string` | — | Path to PEM-encoded private key file |
-| `baseUrl` | `string` | `https://revx.revolut.com` | API base URL |
+| `baseUrl` | `string` | `https://revx.revolut.com` | API base URL. It must use `https://` (plain `http://` only for localhost, 127.x.x.x or [::1]) and must not end with `/api`, since the client adds `/api/1.0` |
 | `timeout` | `number` | `30000` | Request timeout in milliseconds |
 | `maxRetries` | `number` | `3` | Max retry attempts for failed requests |
 | `autoLoadCredentials` | `boolean` | `true` | Auto-load credentials from config directory |
@@ -176,6 +176,7 @@ const result = await client.placeOrder({
   clientOrderId: "my-order-1", // optional, auto-generated if omitted
 });
 // → { data: { venue_order_id, client_order_id, state } }
+// Pass your own clientOrderId to find the order after a lost reply.
 
 // Place market sell
 await client.placeOrder({
@@ -277,9 +278,12 @@ Revolut X uses Ed25519 request signing. Each request includes three headers:
 ### Generating a Keypair
 
 ```typescript
-import { generateKeypair } from "revolutx-api";
+import { generateKeypair } from "@revolut/revolut-x-api";
 
-const { publicKeyPem } = generateKeypair("/path/to/output/dir");
+const publicKeyPem = generateKeypair(
+  "/path/to/private.pem",
+  "/path/to/public.pem",
+);
 console.log("Register this public key with Revolut X:");
 console.log(publicKeyPem);
 ```
@@ -293,7 +297,7 @@ import {
   loadPrivateKey,
   getPublicKeyPem,
   createTimestamp,
-} from "revolutx-api";
+} from "@revolut/revolut-x-api";
 
 const key = loadPrivateKey("/path/to/private.pem");
 const headers = buildAuthHeaders("api-key", key, "GET", "/api/1.0/balances");
@@ -312,7 +316,7 @@ const ts = createTimestamp();
 Pass a `logger` callback to receive structured log entries from the client (requests, retries, errors, etc.):
 
 ```typescript
-import { LogCallback, LogLevel } from "revolutx-api";
+import { LogCallback, LogLevel } from "@revolut/revolut-x-api";
 
 const client = new RevolutXClient({
   apiKey: "your-api-key",
@@ -340,18 +344,20 @@ All errors extend `RevolutXError`:
 | Error | HTTP Status | When |
 |-------|-------------|------|
 | `AuthNotConfiguredError` | — | No API key or private key configured |
+| `InvalidCredentialsError` | — | The saved credentials can't be used, for example a damaged config file or a missing or damaged key. `issue` says which file, what is wrong (`missing`, `unreadable`, `not_a_file` or `malformed`) and where. A subclass of `AuthNotConfiguredError` |
+| `ConfigurationError` | — | A client setting is wrong, such as the base URL |
 | `AuthenticationError` | 401 | Invalid API key or signature |
 | `ForbiddenError` | 403 | Access denied |
 | `RateLimitError` | 429 | Rate limit exceeded — check `retryAfter` (ms) |
 | `ValidationError` | 400 | Request failed schema validation |
-| `OrderError` | 400 | Invalid order parameters |
+| `BadRequestError` | 400 | The exchange refused the request, for example invalid order parameters or a client order id that was already used |
 | `NotFoundError` | 404 | Resource not found |
 | `ConflictError` | 409 | Conflicting request (e.g. timestamp skew) |
-| `ServerError` | 5xx | Server-side error — check `statusCode` |
-| `NetworkError` | — | Connection or timeout failure |
+| `ServerError` | 5xx | Server-side error — check `statusCode`. A POST, PUT or DELETE that got a 5xx and then an error answer on the automatic retry also throws it, with that answer as `cause`, since the first attempt may have taken effect. A duplicate client order id on that retry stays a `BadRequestError`, with the `ServerError` as `cause`. A retry that gets no answer throws `NetworkError` |
+| `NetworkError` | — | Connection, timeout, unreadable reply, or an order reply without the order's details. `mayHaveReachedServer` is `false` only when the request surely never left, so an order may exist when it is `true` |
 
 ```typescript
-import { RateLimitError, OrderError } from "revolutx-api";
+import { RateLimitError, BadRequestError } from "@revolut/revolut-x-api";
 
 try {
   await client.placeOrder({ ... });
@@ -359,7 +365,7 @@ try {
   if (err instanceof RateLimitError) {
     const waitMs = err.retryAfter ?? 1000;
     console.log(`Rate limited. Retry after ${waitMs}ms`);
-  } else if (err instanceof OrderError) {
+  } else if (err instanceof BadRequestError) {
     console.error("Order rejected:", err.message);
   }
 }

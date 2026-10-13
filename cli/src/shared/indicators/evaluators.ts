@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import type { OrderBook, OrderBookLevel } from "@revolut/revolut-x-api";
 
 import {
   computeAtr,
@@ -17,16 +18,22 @@ export interface MarketSnapshot {
   bid?: Decimal;
   ask?: Decimal;
   candles?: Array<Record<string, unknown>>;
-  orderBook?: {
-    bids: Array<Record<string, unknown>>;
-    asks: Array<Record<string, unknown>>;
-  };
+  orderBook?: OrderBook<OrderBookLevel>;
 }
 
 export interface EvalResult {
   conditionMet: boolean;
   detail: string;
-  current?: { label: string; value: string };
+  current?: { label: string; value: string; amount?: Decimal };
+  error?: string;
+}
+
+function notEnoughCandles(needed: number, available: number): EvalResult {
+  return {
+    conditionMet: false,
+    detail: "",
+    error: `needs ${needed} hourly candles, has ${available}`,
+  };
 }
 
 export const CANDLE_ALERT_TYPES = new Set([
@@ -49,6 +56,26 @@ function parseConfig(alert: Record<string, unknown>): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function plain(value: Decimal): string {
+  return value.toFixed();
+}
+
+function shown(value: Decimal): string {
+  return value.abs().gte(1000)
+    ? value.toFixed(2)
+    : value.toSignificantDigits(6).toFixed();
+}
+
+function measured(
+  value: Decimal,
+  threshold: Decimal,
+  places: number,
+): { value: Decimal; text: string } {
+  const precision = Math.max(places, threshold.decimalPlaces());
+  const rounded = value.toDecimalPlaces(precision, Decimal.ROUND_HALF_UP);
+  return { value: rounded, text: rounded.toFixed(precision) };
 }
 
 function dec(value: unknown, defaultVal: number = 0): Decimal {
@@ -78,8 +105,8 @@ function evalPrice(
 
   return {
     conditionMet: met,
-    detail: `${direction === "above" ? "\u2B06\uFE0F" : "\u2B07\uFE0F"} ${direction.toUpperCase()} ${threshold}\n\uD83D\uDCB0 Current price: ${snap.price}`,
-    current: { label: "Price", value: String(snap.price) },
+    detail: `${direction === "above" ? "\u2B06\uFE0F" : "\u2B07\uFE0F"} ${direction.toUpperCase()} ${plain(threshold)}\n\uD83D\uDCB0 Current price: ${plain(snap.price)}`,
+    current: { label: "Price", value: plain(snap.price), amount: snap.price },
   };
 }
 
@@ -95,8 +122,9 @@ function evalRsi(
   const threshold = dec(config.threshold ?? "70");
 
   const closes = snap.candles.map((c) => dec(c.close));
-  const rsi = computeRsi(closes, period);
-  if (rsi == null) return { conditionMet: false, detail: "" };
+  const exactRsi = computeRsi(closes, period);
+  if (exactRsi == null) return notEnoughCandles(period + 1, closes.length);
+  const { value: rsi, text: rsiText } = measured(exactRsi, threshold, 2);
 
   const met = direction === "above" ? rsi.gte(threshold) : rsi.lte(threshold);
 
@@ -107,8 +135,8 @@ function evalRsi(
       : "\uD83D\uDFE1";
   return {
     conditionMet: met,
-    detail: `${emoji} RSI(${period}) ${direction} ${threshold} | Current RSI: ${rsi}`,
-    current: { label: `RSI(${period})`, value: rsi.toFixed(2) },
+    detail: `${emoji} RSI(${period}) ${direction} ${plain(threshold)} | Current RSI: ${rsiText}`,
+    current: { label: `RSI(${period})`, value: rsiText, amount: rsi },
   };
 }
 
@@ -128,7 +156,7 @@ function evalEmaCross(
   const slowEma = computeEma(closes, slowPeriod);
 
   if (fastEma == null || slowEma == null) {
-    return { conditionMet: false, detail: "" };
+    return notEnoughCandles(Math.max(fastPeriod, slowPeriod), closes.length);
   }
 
   const met =
@@ -139,10 +167,10 @@ function evalEmaCross(
     conditionMet: met,
     detail:
       `${emoji} EMA(${fastPeriod}/${slowPeriod}) ${direction} crossover\n` +
-      `Fast EMA: ${fastEma.toFixed(2)} | Slow EMA: ${slowEma.toFixed(2)}`,
+      `Fast EMA: ${shown(fastEma)} | Slow EMA: ${shown(slowEma)}`,
     current: {
       label: `EMA ${fastPeriod}/${slowPeriod}`,
-      value: `${fastEma.toFixed(2)} / ${slowEma.toFixed(2)}`,
+      value: `${shown(fastEma)} / ${shown(slowEma)}`,
     },
   };
 }
@@ -161,7 +189,9 @@ function evalMacd(
 
   const closes = snap.candles.map((c) => dec(c.close));
   const result = computeMacd(closes, fast, slow, signalPeriod);
-  if (result == null) return { conditionMet: false, detail: "" };
+  if (result == null) {
+    return notEnoughCandles(slow + signalPeriod, closes.length);
+  }
 
   const { macd: macdLine, signal: signalLine, histogram } = result;
 
@@ -173,8 +203,8 @@ function evalMacd(
     conditionMet: met,
     detail:
       `${emoji} MACD(${fast},${slow},${signalPeriod}) ${direction} crossover\n` +
-      `MACD: ${macdLine} | Signal: ${signalLine} | Histogram: ${histogram}`,
-    current: { label: "MACD", value: macdLine.toFixed(4) },
+      `MACD: ${shown(macdLine)} | Signal: ${shown(signalLine)} | Histogram: ${shown(histogram)}`,
+    current: { label: "MACD", value: shown(macdLine) },
   };
 }
 
@@ -193,7 +223,7 @@ function evalBollinger(
 
   const closes = snap.candles.map((c) => dec(c.close));
   const result = computeBollinger(closes, period, stdMult);
-  if (result == null) return { conditionMet: false, detail: "" };
+  if (result == null) return notEnoughCandles(period, closes.length);
 
   const { upper, middle, lower } = result;
 
@@ -201,16 +231,20 @@ function evalBollinger(
   let detail: string;
   if (band === "upper") {
     met = snap.price.gte(upper);
-    detail = `\uD83D\uDCC8 Price above upper Bollinger Band\nPrice: ${snap.price} | Upper: ${upper} | Middle: ${middle}`;
+    detail = `\uD83D\uDCC8 Price above upper Bollinger Band\nPrice: ${plain(snap.price)} | Upper: ${shown(upper)} | Middle: ${shown(middle)}`;
   } else {
     met = snap.price.lte(lower);
-    detail = `\uD83D\uDCC9 Price below lower Bollinger Band\nPrice: ${snap.price} | Lower: ${lower} | Middle: ${middle}`;
+    detail = `\uD83D\uDCC9 Price below lower Bollinger Band\nPrice: ${plain(snap.price)} | Lower: ${shown(lower)} | Middle: ${shown(middle)}`;
   }
 
+  const watched = band === "upper" ? upper : lower;
   return {
     conditionMet: met,
     detail,
-    current: { label: `BB(${period})`, value: String(snap.price) },
+    current: {
+      label: `Price / BB(${period}) ${band}`,
+      value: `${plain(snap.price)} / ${watched.toSignificantDigits(10).toFixed()}`,
+    },
   };
 }
 
@@ -225,14 +259,28 @@ function evalVolumeSpike(
   const multiplier = dec(config.multiplier ?? "2");
 
   const volumes = snap.candles.map((c) => dec(c.volume ?? 0));
-  const ratio = computeVolumeRatio(volumes, period);
-  if (ratio == null) return { conditionMet: false, detail: "" };
+  const exactRatio = computeVolumeRatio(volumes, period);
+  if (volumes.length < period + 1) {
+    return notEnoughCandles(period + 1, volumes.length);
+  }
+  if (exactRatio == null) {
+    return {
+      conditionMet: false,
+      detail: `No trading volume in the last ${period} hourly candles`,
+      current: { label: "Vol ratio", value: "no volume" },
+    };
+  }
 
+  const { value: ratio, text: ratioText } = measured(exactRatio, multiplier, 2);
   const met = ratio.gte(multiplier);
   return {
     conditionMet: met,
-    detail: `\uD83D\uDCCA Volume spike: ${ratio}x average (${period} periods) | Threshold: ${multiplier}x`,
-    current: { label: "Vol ratio", value: `${ratio.toFixed(2)}\u00D7` },
+    detail: `\uD83D\uDCCA Volume spike: ${ratioText}x average (${period} periods) | Threshold: ${plain(multiplier)}x`,
+    current: {
+      label: "Vol ratio",
+      value: `${ratioText}\u00D7`,
+      amount: ratio,
+    },
   };
 }
 
@@ -255,8 +303,12 @@ function evalSpread(
 
   return {
     conditionMet: met,
-    detail: `\uD83D\uDCCF Spread ${direction} ${threshold}% | Current: ${spread}% | Bid: ${snap.bid} | Ask: ${snap.ask}`,
-    current: { label: "Spread", value: `${spread.toFixed(4)}%` },
+    detail: `\uD83D\uDCCF Spread ${direction} ${plain(threshold)}% | Current: ${shown(spread)}% | Bid: ${plain(snap.bid)} | Ask: ${plain(snap.ask)}`,
+    current: {
+      label: "Spread",
+      value: `${shown(spread)}%`,
+      amount: spread,
+    },
   };
 }
 
@@ -270,19 +322,27 @@ function evalObi(
   const direction = String(config.direction ?? "above");
   const threshold = dec(config.threshold ?? "0.3");
 
-  const bids = snap.orderBook.bids ?? [];
-  const asks = snap.orderBook.asks ?? [];
-  const obi = computeObi(bids, asks);
+  const exactObi = computeObi(snap.orderBook.bids, snap.orderBook.asks);
+  if (exactObi === null) {
+    return {
+      conditionMet: false,
+      detail: "Order book is empty",
+      current: { label: "OBI", value: "empty book" },
+    };
+  }
 
+  const { value: obi, text: obiText } = measured(exactObi, threshold, 4);
   const met = direction === "above" ? obi.gte(threshold) : obi.lte(threshold);
 
-  const buyPressure = obi.gt(0)
+  const pressure = obi.gt(0)
     ? "\uD83D\uDFE2 Buy pressure"
-    : "\uD83D\uDD34 Sell pressure";
+    : obi.lt(0)
+      ? "\uD83D\uDD34 Sell pressure"
+      : "\u26AA Balanced";
   return {
     conditionMet: met,
-    detail: `${buyPressure} | OBI: ${obi} (${direction} ${threshold})`,
-    current: { label: "OBI", value: obi.toFixed(4) },
+    detail: `${pressure} | OBI: ${obiText} (${direction} ${plain(threshold)})`,
+    current: { label: "OBI", value: obiText, amount: obi },
   };
 }
 
@@ -299,12 +359,18 @@ function evalPriceChangePct(
   const direction = String(config.direction ?? "above");
   const threshold = dec(config.threshold ?? "5");
 
-  if (snap.candles.length < lookback) {
-    return { conditionMet: false, detail: "" };
+  if (snap.candles.length < lookback + 1) {
+    return notEnoughCandles(lookback + 1, snap.candles.length);
   }
 
-  const previousPrice = dec(snap.candles[snap.candles.length - lookback].close);
-  const changePct = computePriceChangePct(snap.price, previousPrice);
+  const previousPrice = dec(
+    snap.candles[snap.candles.length - 1 - lookback].close,
+  );
+  const { value: changePct, text: changeText } = measured(
+    computePriceChangePct(snap.price, previousPrice),
+    threshold,
+    2,
+  );
 
   let met: boolean;
   let directionLabel: string;
@@ -320,11 +386,12 @@ function evalPriceChangePct(
   return {
     conditionMet: met,
     detail:
-      `${emoji} Price ${directionLabel}: ${changePct}% over ${lookback} candles\n` +
-      `From: ${previousPrice} \u2192 To: ${snap.price}`,
+      `${emoji} Price ${directionLabel}: ${changeText}% over ${lookback} candles\n` +
+      `From: ${plain(previousPrice)} \u2192 To: ${plain(snap.price)}`,
     current: {
       label: `Change ${lookback}h`,
-      value: `${changePct.isNegative() ? "" : "+"}${changePct.toFixed(2)}%`,
+      value: `${changePct.isNegative() ? "" : "+"}${changeText}%`,
+      amount: changePct,
     },
   };
 }
@@ -346,10 +413,9 @@ function evalAtrBreakout(
   const closes = snap.candles.map((c) => dec(c.close));
 
   const atr = computeAtr(highs, lows, closes, period);
-  if (atr == null) return { conditionMet: false, detail: "" };
+  if (atr == null) return notEnoughCandles(period + 1, closes.length);
 
-  const prevClose =
-    closes.length >= 2 ? closes[closes.length - 2] : closes[closes.length - 1];
+  const prevClose = closes[closes.length - 2];
   const move = snap.price.minus(prevClose).abs();
   const breakoutThreshold = atr.times(multiplier);
   const met = move.gte(breakoutThreshold);
@@ -358,11 +424,11 @@ function evalAtrBreakout(
   return {
     conditionMet: met,
     detail:
-      `${emoji} ATR(${period}) breakout | Move: ${move.toFixed(2)} vs Threshold: ${breakoutThreshold.toFixed(2)}\n` +
-      `ATR: ${atr} | Multiplier: ${multiplier}x | Price: ${snap.price}`,
+      `${emoji} ATR(${period}) breakout | Move: ${shown(move)} vs Threshold: ${shown(breakoutThreshold)}\n` +
+      `ATR: ${shown(atr)} | Multiplier: ${plain(multiplier)}x | Price: ${plain(snap.price)}`,
     current: {
       label: `ATR(${period})`,
-      value: `${move.toFixed(2)}/${breakoutThreshold.toFixed(2)}`,
+      value: `${shown(move)}/${shown(breakoutThreshold)}`,
     },
   };
 }
@@ -400,7 +466,11 @@ export function evaluateAlert(
 
   try {
     return evaluator(alert, config, snapshot);
-  } catch {
-    return { conditionMet: false, detail: "" };
+  } catch (err) {
+    return {
+      conditionMet: false,
+      detail: "",
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

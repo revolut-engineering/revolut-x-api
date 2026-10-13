@@ -54,12 +54,16 @@ export interface TrailingGridRebuildPlan {
 
 export function parseLevelsPerSide(value: string): number {
   if (!/^\d+$/.test(value)) {
-    throw new Error("--levels must be between 1 and 100 (per side).");
+    throw new Error(
+      `--levels must be a whole number between 1 and ${MAX_LEVELS_PER_SIDE} (per side), got "${value}".`,
+    );
   }
 
   const levels = Number(value);
   if (levels < 1 || levels > MAX_LEVELS_PER_SIDE) {
-    throw new Error("--levels must be between 1 and 100 (per side).");
+    throw new Error(
+      `--levels must be a whole number between 1 and ${MAX_LEVELS_PER_SIDE} (per side), got "${value}".`,
+    );
   }
   return levels;
 }
@@ -72,6 +76,33 @@ export function constraintsFromPair(pair: CurrencyPair): GridOrderConstraints {
     maxBase: new Decimal(pair.max_order_size),
     minQuote: new Decimal(pair.min_order_size_quote),
   };
+}
+
+export interface QuotePerLevelInput {
+  investment: Decimal;
+  buyLevels: number;
+  sellLevels: number;
+  split: boolean;
+  constraints: GridOrderConstraints;
+}
+
+export function quotePerLevelFor(input: QuotePerLevelInput): Decimal {
+  const capitalLevelCount =
+    input.buyLevels + (input.split ? input.sellLevels : 0);
+  if (capitalLevelCount === 0) {
+    throw new Error("Grid does not contain any capital-bearing levels.");
+  }
+  const quotePerLevel = floorToStep(
+    input.investment.div(capitalLevelCount),
+    input.constraints.quoteStep,
+  );
+  if (quotePerLevel.lt(input.constraints.minQuote)) {
+    throw new Error(
+      `Quote per level ${quotePerLevel} is below the minimum quote order size ${input.constraints.minQuote}. ` +
+        `With ${input.buyLevels} levels per side, invest at least ${input.constraints.minQuote.times(capitalLevelCount)} or use fewer levels.`,
+    );
+  }
+  return quotePerLevel;
 }
 
 export function createGridPlan(input: GridPlanInput): GridPlan {
@@ -99,21 +130,13 @@ export function createGridPlan(input: GridPlanInput): GridPlan {
   const sellLevelIndices = levels
     .slice(levelsPerSide)
     .map((level) => level.index);
-  const capitalLevelCount =
-    buyLevelIndices.length + (split ? sellLevelIndices.length : 0);
-  if (capitalLevelCount === 0) {
-    throw new Error("Grid does not contain any capital-bearing levels.");
-  }
-
-  const quotePerLevel = floorToStep(
-    investment.div(capitalLevelCount),
-    constraints.quoteStep,
-  );
-  if (quotePerLevel.lt(constraints.minQuote)) {
-    throw new Error(
-      `Quote per level ${quotePerLevel} is below the minimum quote order size ${constraints.minQuote}.`,
-    );
-  }
+  const quotePerLevel = quotePerLevelFor({
+    investment,
+    buyLevels: buyLevelIndices.length,
+    sellLevels: sellLevelIndices.length,
+    split,
+    constraints,
+  });
 
   const buyBaseAmounts = buyLevelIndices.map((buyLevelIndex) =>
     normalizeBaseOrderSize(
@@ -390,6 +413,13 @@ export function floorToStep(value: Decimal, step: Decimal): Decimal {
   return value.div(step).floor().times(step);
 }
 
+export function ceilToStep(value: Decimal, step: Decimal): Decimal {
+  if (!step.gt(0)) {
+    throw new Error(`Order step must be greater than zero, received ${step}.`);
+  }
+  return value.div(step).ceil().times(step);
+}
+
 export function roundToStep(value: Decimal, step: Decimal): Decimal {
   if (!step.gt(0)) {
     throw new Error(`Order step must be greater than zero, received ${step}.`);
@@ -407,6 +437,11 @@ export function normalizeBaseOrderSize(
   if (price && alignedBaseAmount.times(price).lt(constraints.minQuote)) {
     throw new Error(
       `Order quote value ${alignedBaseAmount.times(price)} is below the minimum quote order size ${constraints.minQuote}.`,
+    );
+  }
+  if (!alignedBaseAmount.gt(0)) {
+    throw new Error(
+      `Order size rounds down to nothing at the size step ${constraints.baseStep}.`,
     );
   }
   return alignedBaseAmount;

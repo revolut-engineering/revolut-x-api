@@ -3,12 +3,17 @@ import { randomUUID } from "node:crypto";
 import {
   RevolutXClient,
   InsecureKeyPermissionsError,
+  isDuplicateClientOrderIdError,
   NotFoundError,
+  paginateWithDynamicWindows,
+  HISTORICAL_ORDERS_API_LIMIT,
 } from "@revolut/revolut-x-api";
 import type {
   CurrencyPair,
+  Order,
   OrderDetails,
   OrderPlacementResult,
+  PlaceOrderParams,
 } from "@revolut/revolut-x-api";
 import { rethrowIfInsecureKey } from "./key-guard.js";
 import chalk from "chalk";
@@ -19,16 +24,44 @@ import {
   withCachedPeek,
 } from "../shared/price-source/index.js";
 import {
+  GridStateDamagedError,
   saveGridState,
   loadGridState,
   deleteGridState,
+  setAsideGridState,
   type GridState,
   type GridLevelState,
   type GridLevelPosition,
   type GridTradeEntry,
+  type GridHaltReason,
 } from "../db/grid-store.js";
+import {
+  awaitTerminal,
+  awaitTerminalOrNull,
+  cancelUntilClosed,
+  DEAD_STATUSES,
+  FILLED_STATUSES,
+  outsideChange,
+  type CancelOutcome,
+  type OrderGateway,
+} from "./order-gateway.js";
+import { PlacementHealth } from "./placement-health.js";
+import {
+  OutageWatch,
+  exchangeFault,
+  refusalOf,
+  type OutageAlert,
+} from "./outage-watch.js";
+import {
+  noDataMessage,
+  recoveryMessage,
+  refusedKeyMessage,
+  refusedKeyNotice,
+  savedKeyLabel,
+} from "./exchange-alerts.js";
+import { placementDoubt, retryFailure } from "../util/order-outcome.js";
 import { loadConnections, type TelegramConnection } from "../db/store.js";
-import { sendWithRetries } from "./notify.js";
+import { sendWithRetries, type TelegramResult } from "./notify.js";
 import { LiveStatusReporter } from "./live-status.js";
 import {
   renderDashboard,
@@ -42,6 +75,8 @@ import {
   renderOrderLadder,
   renderRiskLine,
   renderStartedMessage,
+  untrackedReplacementsNote,
+  type ClosedPendingOrder,
   type DashboardData,
 } from "./grid-renderer.js";
 import {
@@ -51,6 +86,7 @@ import {
 } from "./grid-math.js";
 import {
   allocateBaseOrderSizes,
+  ceilToStep,
   constraintsFromPair,
   createGridPlan,
   createTrailingGridRebuildPlan,
@@ -85,7 +121,10 @@ export interface GridBotTickEvent {
 }
 
 export interface GridExchangeRateLimiter {
-  place<T>(operation: () => Promise<T>): Promise<T>;
+  place<T>(
+    operation: () => Promise<T>,
+    refuse?: () => Error | null,
+  ): Promise<T>;
   cancel<T>(operation: () => Promise<T>): Promise<T>;
   query<T>(operation: () => Promise<T>): Promise<T>;
 }
@@ -101,48 +140,217 @@ export interface GridBotOptions {
   trailingUpConfirmationTicks?: number;
 }
 
+interface TrackedOrder {
+  level: GridLevelState;
+  orderId: string;
+  position?: GridLevelPosition;
+}
+
+type CloseOut =
+  | { outcome: "complete" | "failed" }
+  | { outcome: "waiting"; reason: string };
+type SaleOutcome =
+  | { outcome: "sold"; filled: Decimal }
+  | Exclude<CloseOut, { outcome: "complete" }>;
+
+const STOPPED_BEFORE_SALE = "Stopped by Ctrl+C before the next sale.";
+
+interface ResumedPlacement {
+  orderId: string;
+  closedAs: ClosedPendingOrder | null;
+}
+
+function placedAgain(
+  orderId: string | null,
+  closedAs: ClosedPendingOrder | null,
+): ResumedPlacement | null {
+  return orderId ? { orderId, closedAs } : null;
+}
+
+interface GridOrdersClosed {
+  cancelled: number;
+  problems: string[];
+  unlisted: string[];
+}
+
+type UnlistedPlan =
+  | { action: "wait" }
+  | { action: "resend"; clientOrderId: string }
+  | { action: "replace" };
+
 interface PositionSettlement {
   quantity: Decimal;
   feeQuote: Decimal;
   profit: Decimal;
   costBasis: Decimal;
   remainingBase: Decimal;
+  rebuyQuote: Decimal;
 }
 
-const FILLED_STATUSES = new Set(["filled"]);
-const DEAD_STATUSES = new Set(["cancelled", "rejected", "replaced"]);
+const RESTING_STATUSES = new Set(["new", "partially_filled"]);
 const PARTIALLY_FILLED_STATUS = "partially_filled";
+const CANCELLED_STATUSES = new Set(["cancelled", PARTIALLY_FILLED_STATUS]);
 const LADDER_MAX_ROWS = 80;
-const POST_ONLY_IMMEDIATE_MATCH = "POST_ONLY_IMMEDIATE_MATCH";
+const MAX_REJECTIONS = 3;
+const MAX_EMPTY_SALES = 3;
+const REJECTION_SETTLE_MS = 5_000;
+const UNREAD_REJECTION_MS = 60_000;
+const UNCONFIRMED_GRACE_MS = 5 * 60_000;
+const SELL_OFF_RETRY_MS = 30_000;
+const SELL_OFF_WAIT_LIMIT_MS = UNCONFIRMED_GRACE_MS + 60_000;
+const AWAITING_LOOKUP = "not confirmed yet, looked up once a minute";
+const NOT_LISTED_YET = "not listed by the exchange yet";
+const NOT_PLACED_YET = "not placed yet";
+const UNLISTED_WITHOUT_ID =
+  "not listed by the exchange, client order ID unknown, not sent again";
+const UNLISTED_NOTICE_MS = 60_000;
+const UNIDENTIFIED_HOLD_MS = 24 * 60 * 60 * 1000;
+const HISTORY_RETRY_MS = 60_000;
+const REFUSED_RECHECK_MS = 60_000;
+const ORDER_LOOKUP_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const ORDER_LOOKUP_FALLBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const TRAILING_UP_CONFIRMATION_TICKS = 3;
 
-class PostOnlyImmediateMatchError extends Error {
+interface SellOffSummary {
+  soldBase: Decimal;
+  soldQuote: Decimal;
+  unpricedFill: boolean;
+  writtenOff: Decimal;
+  cancelled: number;
+}
+
+class OrderRejectedError extends Error {
   constructor(
     readonly side: "buy" | "sell",
     readonly price: string,
-    readonly order: OrderDetails | null = null,
+    readonly reason: string,
   ) {
-    super(`Post-only ${side} order at ${price} would match immediately.`);
-    this.name = "PostOnlyImmediateMatchError";
+    super(`${side === "buy" ? "Buy" : "Sell"} order at ${price} ${reason}.`);
+    this.name = "OrderRejectedError";
   }
 }
 
-function isPostOnlyImmediateMatchReason(value: unknown): boolean {
-  return (
-    typeof value === "string" &&
-    value.trim().toUpperCase() === POST_ONLY_IMMEDIATE_MATCH
-  );
+class OrderNotSentError extends Error {
+  constructor() {
+    super("The order was not sent because the grid is stopping.");
+    this.name = "OrderNotSentError";
+  }
 }
 
-function hasPostOnlyImmediateMatchReason(value: unknown): boolean {
-  const message = value instanceof Error ? value.message : String(value);
-  return /(?:^|[^A-Z0-9_])POST_ONLY_IMMEDIATE_MATCH(?:$|[^A-Z0-9_])/i.test(
-    message,
-  );
+function unlistedCancelProblem(orderId: string): string {
+  return `Order ${orderId} isn't listed by the exchange yet, so its cancel can't be confirmed. Start again in a few minutes.`;
+}
+
+function describeProblems(problems: string[]): string {
+  const others = problems.length - 1;
+  return others === 0
+    ? problems[0]
+    : `${problems[0]} ${others} more order${others === 1 ? "" : "s"} didn't either.`;
+}
+
+type SavedOrderKind = "limit" | "split buy" | "sell-off sale";
+
+interface SavedOrder {
+  readonly kind: SavedOrderKind;
+  readonly orderId?: string;
+  readonly clientOrderId?: string;
+  readonly tracked?: TrackedOrder;
+}
+
+interface TradedOrder {
+  readonly target: TrackedOrder;
+  readonly order: OrderDetails;
+}
+
+interface SavedOrdersClosed {
+  readonly traded: TradedOrder[];
+  readonly cancelled: number;
+  readonly replaced: number;
+  readonly stillOpen: string[];
+  readonly mayHoldCoins: boolean;
+  readonly unlisted: string[];
+  readonly unlistedMarket: string[];
+}
+
+const NOTHING_CLOSED: SavedOrdersClosed = {
+  traded: [],
+  cancelled: 0,
+  replaced: 0,
+  stillOpen: [],
+  mayHoldCoins: false,
+  unlisted: [],
+  unlistedMarket: [],
+};
+
+export type GridStop = "end" | "pause";
+
+function savedOrders(tracked: TrackedOrder[], state: GridState): SavedOrder[] {
+  const orders: SavedOrder[] = tracked.map((target) => ({
+    kind: "limit",
+    orderId: target.orderId,
+    tracked: target,
+  }));
+  for (const level of state.levels) {
+    for (const clientOrderId of level.pendingBuyClientOrderIds ?? []) {
+      orders.push({ kind: "limit", clientOrderId });
+    }
+    for (const position of level.positions) {
+      if (position.sellClientOrderId && !position.sellOrderId) {
+        orders.push({
+          kind: "limit",
+          clientOrderId: position.sellClientOrderId,
+        });
+      }
+    }
+  }
+  if (state.splitOrderId || state.splitClientOrderId) {
+    orders.push({
+      kind: "split buy",
+      orderId: state.splitOrderId,
+      clientOrderId: state.splitClientOrderId,
+    });
+  }
+  if (state.halt?.orderId || state.halt?.clientOrderId) {
+    orders.push({
+      kind: "sell-off sale",
+      orderId: state.halt.orderId,
+      clientOrderId: state.halt.clientOrderId,
+    });
+  }
+  return orders;
+}
+
+function savedOrderLabel(order: SavedOrder): string {
+  const id = order.orderId ?? `client order ID ${order.clientOrderId}`;
+  return order.kind === "limit" ? id : `${order.kind} ${id}`;
+}
+
+function countOf(count: number, noun: string): string {
+  return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
+}
+
+function closeProblems(result: GridOrdersClosed): string[] {
+  return [...result.problems, ...result.unlisted.map(unlistedCancelProblem)];
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 }
 
 function mdV2CodeEscape(text: string): string {
@@ -155,6 +363,16 @@ function fmtLocalDateTime(d = new Date()): string {
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   );
+}
+
+function savedPrice(text: string | undefined): Decimal | null {
+  if (!text) return null;
+  try {
+    const price = new Decimal(text);
+    return price.isFinite() && price.gt(0) ? price : null;
+  } catch {
+    return null;
+  }
 }
 
 export class ForegroundGridBot {
@@ -170,9 +388,11 @@ export class ForegroundGridBot {
   private _warnings: string[] = [];
   private _pairInfo: CurrencyPair | null = null;
   private _connections: TelegramConnection[] = [];
-  private _boundaryAlerted = false;
+  private _alertedSide: "below" | "above" | null = null;
   private _shouldRebuildUp = false;
-  private _lastNotifyOk = 0;
+  private readonly _telegramProblems = new Map<string, string>();
+  private _keyLabel: string | null = null;
+  private _keyRefusal: Error | null = null;
   private _cs: string;
   private _priceSource: LivePriceSource | null = null;
   private _onTick: ((event: GridBotTickEvent) => void) | null = null;
@@ -180,6 +400,38 @@ export class ForegroundGridBot {
   private _suppressDashboard = false;
   private _statusReporter: LiveStatusReporter | null = null;
   private _lifecycle: "running" | "finished" | "stopped" = "running";
+  private _haltReason: GridHaltReason | null = null;
+  private _liquidation: Promise<void> | null = null;
+  private _shutdown: Promise<void> | null = null;
+  private readonly _stopRequest = new AbortController();
+  private _startup: Promise<void> | null = null;
+  private _tickInFlight: Promise<void> | null = null;
+  private _sellOffMessage: string | null = null;
+  private _sellOffError: string | null = null;
+  private readonly _refusedRecheckAt = new Map<string, number>();
+  private _pendingSweepAt = 0;
+  private readonly _pendingMissedOnce = new Set<string>();
+  private readonly _placementHealth = new PlacementHealth();
+  private readonly _unansweredSince = new Map<string, number>();
+  private readonly _unreadRejections = new Map<string, number>();
+  private readonly _outage = new OutageWatch();
+  private _changedOutside: {
+    cancelled: number;
+    replaced: number;
+    lastAt: number;
+  } | null = null;
+  private _untrackedReplacements = 0;
+  private readonly _selfCancelled = new Set<string>();
+  private readonly _unidentified = new Set<string>();
+  private readonly _historyRetryAt = new Map<string, number>();
+  private _tickHistory: Promise<Map<string, Order>> | null = null;
+  private _openBuyFills = new Decimal(0);
+  private _ordersUnreachable = false;
+  private _cashShortfall: {
+    buys: number;
+    free: Decimal;
+    needed: Decimal;
+  } | null = null;
   private readonly _rateLimiter: GridExchangeRateLimiter;
   private readonly _persistState: boolean;
   private readonly _orderConstraints: GridOrderConstraints | null;
@@ -225,155 +477,477 @@ export class ForegroundGridBot {
     this._humanOutput.write(`${message}\n`);
   }
 
-  private async _cancelOrderWithoutFill(orderId: string): Promise<void> {
-    await this._rateLimiter.cancel(() => this._client!.cancelOrder(orderId));
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      let order: OrderDetails;
-      try {
-        const response = await this._rateLimiter.query(() =>
-          this._client!.getOrder(orderId),
-        );
-        order = response.data;
-      } catch (err) {
-        rethrowIfInsecureKey(err);
-        if (err instanceof NotFoundError) return;
-        throw err;
-      }
-      if (this._hasFilledQuantity(order)) {
-        throw new Error(
-          `Order ${orderId} executed ${order.filled_quantity} before cancellation and must be reconciled.`,
-        );
-      }
-      if (DEAD_STATUSES.has(order.status)) return;
-      await sleep(100);
-    }
-    throw new Error(`Order ${orderId} did not reach a cancelled state.`);
+  private _orderGateway(): OrderGateway {
+    return {
+      cancel: (orderId) =>
+        this._rateLimiter.cancel(() => this._client!.cancelOrder(orderId)),
+      getOrder: async (orderId) =>
+        (await this._rateLimiter.query(() => this._client!.getOrder(orderId)))
+          .data,
+      isActive: (orderId) => this._isOrderActive(orderId),
+      sleep,
+      now: () => Date.now(),
+    };
   }
 
-  private async _cancelTrackedOrdersForReset(
-    savedState: GridState,
-  ): Promise<void> {
-    if (!savedState.config.dryRun && this._hasTrackedInventory(savedState)) {
-      throw new Error(
-        "Cannot reset grid while it owns acquired base. Resume the grid and close its positions before retrying --reset.",
-      );
-    }
-    const hasUnresolvedPlacement =
-      (!!savedState.splitClientOrderId && !savedState.splitOrderId) ||
-      !!savedState.stopLossClientOrderId ||
-      savedState.levels.some(
-        (level) =>
-          (level.pendingBuyClientOrderIds?.length ?? 0) > 0 ||
-          level.positions.some(
-            (position) => !!position.sellClientOrderId && !position.sellOrderId,
-          ),
-      );
-    if (hasUnresolvedPlacement) {
-      throw new Error(
-        "Cannot reset grid while an idempotent order placement is unresolved. Resume the grid first, then retry --reset.",
-      );
-    }
+  private _cancelUntilClosed(orderId: string): Promise<CancelOutcome> {
+    this._selfCancelled.add(orderId);
+    return cancelUntilClosed(this._orderGateway(), orderId);
+  }
 
-    const cancellationErrors: string[] = [];
-    const cancellations: Promise<void>[] = [];
-    const cancelAndConfirm = async (
-      orderId: string,
-      clearOrder: () => void,
-    ): Promise<void> => {
-      try {
-        await this._cancelOrderWithoutFill(orderId);
-        clearOrder();
-      } catch (err) {
-        rethrowIfInsecureKey(err);
-        cancellationErrors.push(
-          err instanceof Error ? err.message : String(err),
+  private _awaitTerminal(
+    orderId: string,
+    timeoutMs?: number,
+  ): Promise<OrderDetails> {
+    return awaitTerminal(this._orderGateway(), orderId, timeoutMs);
+  }
+
+  private _awaitRejection(orderId: string): Promise<OrderDetails | null> {
+    return awaitTerminalOrNull(
+      this._orderGateway(),
+      orderId,
+      REJECTION_SETTLE_MS,
+    );
+  }
+
+  private async _closeGridOrders(
+    state: GridState,
+    policy: "settle" | "keepTraded",
+  ): Promise<GridOrdersClosed> {
+    const targets = this._trackedOrders(state);
+    if (state.config.dryRun) {
+      for (const target of targets) this._forgetOrder(target);
+      return { cancelled: targets.length, problems: [], unlisted: [] };
+    }
+    const outcomes = await Promise.all(
+      targets.map((target) => this._cancelUntilClosed(target.orderId)),
+    );
+    let cancelled = 0;
+    const problems: string[] = [];
+    const unlisted: string[] = [];
+    for (const [index, target] of targets.entries()) {
+      if (!this._isStillTracked(target)) continue;
+      const outcome = outcomes[index];
+      if (!outcome.closed) {
+        problems.push(
+          `Order ${target.orderId} did not reach a cancelled state.`,
         );
+        continue;
       }
-    };
-
-    for (const level of savedState.levels) {
-      for (const buyOrderId of [...level.buyOrderIds]) {
-        if (savedState.config.dryRun) {
-          this._removeBuyOrder(level, buyOrderId);
+      const order = outcome.order;
+      if (
+        !order &&
+        !this._unreadRejections.has(target.orderId) &&
+        this._recordMissing(target.orderId, state) === "waiting"
+      ) {
+        unlisted.push(target.orderId);
+        continue;
+      }
+      if (order && this._hasFilledQuantity(order)) {
+        if (policy === "keepTraded") {
+          problems.push(
+            `Order ${target.orderId} executed ${order.filled_quantity} before cancellation and must be reconciled.`,
+          );
           continue;
         }
-        cancellations.push(
-          cancelAndConfirm(buyOrderId, () =>
-            this._removeBuyOrder(level, buyOrderId),
-          ),
-        );
+        await this._settleClosedOrder(state, target, order);
+      } else {
+        this._forgetOrder(target);
+      }
+      if (order && outsideChange(order) === "replaced") {
+        this._untrackedReplacements++;
+      } else if (
+        order?.status === "cancelled" ||
+        order?.status === "partially_filled"
+      ) {
+        cancelled++;
+      }
+    }
+    return { cancelled, problems, unlisted };
+  }
+
+  private _trackedOrders(state: GridState): TrackedOrder[] {
+    const targets: TrackedOrder[] = [];
+    for (const level of state.levels) {
+      for (const orderId of level.buyOrderIds) {
+        targets.push({ level, orderId });
       }
       for (const position of level.positions) {
-        const sellOrderId = position.sellOrderId;
-        if (!sellOrderId) continue;
-        if (savedState.config.dryRun) {
-          position.sellOrderId = null;
-          position.sellBaseSize = undefined;
-          position.sellClientOrderId = undefined;
-          continue;
+        if (position.sellOrderId) {
+          targets.push({ level, orderId: position.sellOrderId, position });
         }
-        cancellations.push(
-          cancelAndConfirm(sellOrderId, () => {
-            position.sellOrderId = null;
-            position.sellBaseSize = undefined;
-            position.sellClientOrderId = undefined;
-          }),
+      }
+    }
+    return targets;
+  }
+
+  private _isStillTracked(target: TrackedOrder): boolean {
+    if (!target.position) {
+      return target.level.buyOrderIds.includes(target.orderId);
+    }
+    return (
+      target.level.positions.includes(target.position) &&
+      target.position.sellOrderId === target.orderId
+    );
+  }
+
+  private _forgetOrder(target: TrackedOrder): void {
+    if (!target.position) {
+      this._dropBuyOrder(target.level, target.orderId);
+      return;
+    }
+    this._clearSellOrder(target.position);
+  }
+
+  private _clearSellOrder(position: GridLevelPosition): void {
+    position.sellOrderId = null;
+    position.sellBaseSize = undefined;
+    position.sellClientOrderId = undefined;
+  }
+
+  private async _settleClosedOrder(
+    state: GridState,
+    target: TrackedOrder,
+    order: OrderDetails,
+  ): Promise<void> {
+    if (!target.position) {
+      await this._processTerminalBuy(target.level, order, false, false);
+      return;
+    }
+    const sellLevel = state.levels[target.level.index + 1] ?? target.level;
+    await this._processTerminalSell(
+      target.level,
+      sellLevel,
+      target.position,
+      order,
+      false,
+      false,
+    );
+  }
+
+  private async _discardSavedGrid(saved: GridState): Promise<void> {
+    if (!saved.config.dryRun) {
+      this._log(
+        chalk.dim(
+          this._config.reset
+            ? "  --reset flag: cancelling saved grid orders..."
+            : "  Previous grid was stopped. Cancelling its leftover orders...",
+        ),
+      );
+    }
+    saved.stopped = true;
+    this._saveGridState(saved);
+    const closed = saved.config.dryRun
+      ? NOTHING_CLOSED
+      : await this._closeSavedGridOrders(saved);
+    const { stillOpen } = closed;
+    if (stillOpen.length > 0) {
+      throw new Error(
+        `The cancel of ${countOf(stillOpen.length, "order")} of the old grid isn't confirmed: ${stillOpen.join(", ")}. The next start cancels ${stillOpen.length === 1 ? "it" : "them"} again before it begins a new grid. If a grid order stays open, cancel it with revx order cancel <id> first.`,
+      );
+    }
+    this._deleteGridState(this._config.pair);
+    const notes = this._leftoverNotes(saved, closed);
+    for (const note of notes) this._log(chalk.yellow(`  ${note}`));
+    if (notes.length > 0) {
+      void this._notify(
+        [
+          `Grid Bot ${this._config.reset ? "reset" : "previous run cleaned up"}: ${this._config.pair}`,
+          ...notes,
+        ].join("\n"),
+      );
+    }
+  }
+
+  private async _endGrid(state: GridState): Promise<string[]> {
+    state.stopped = true;
+    this._saveGridState(state);
+    const notes: string[] = [];
+    let closed = state.config.dryRun
+      ? { ...NOTHING_CLOSED, cancelled: this._trackedOrders(state).length }
+      : NOTHING_CLOSED;
+    try {
+      if (!state.config.dryRun) {
+        closed = await this._closeSavedGridOrders(state);
+        for (const { target, order } of closed.traded) {
+          if (this._isStillTracked(target)) {
+            await this._settleClosedOrder(state, target, order);
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof InsecureKeyPermissionsError) {
+        notes.push(
+          "\u26A0 Credential file permissions are unsafe, so open exchange orders may not be cancelled. Fix the key permissions, then cancel them with revx order cancel --all.",
+          err.message,
+        );
+      } else {
+        notes.push(
+          `\u26A0 The grid's orders couldn't all be checked: ${err instanceof Error ? err.message : String(err)}.`,
         );
       }
     }
-    if (savedState.splitOrderId) {
-      cancellations.push(
-        cancelAndConfirm(savedState.splitOrderId, () => {
-          savedState.splitOrderId = undefined;
-          savedState.splitClientOrderId = undefined;
-        }),
+    this._untrackedReplacements += closed.replaced;
+    if (closed.cancelled > 0) {
+      this._log(chalk.dim(`  Cancelled ${countOf(closed.cancelled, "order")}`));
+    }
+    const { stillOpen } = closed;
+    const unlisted = [...closed.unlisted, ...closed.unlistedMarket];
+    if (stillOpen.length > 0) {
+      notes.push(
+        `\u26A0 The cancel of ${countOf(stillOpen.length, "order")} isn't confirmed: ${stillOpen.join(", ")}.`,
       );
     }
-    await Promise.all(cancellations);
-    this._saveGridState(savedState);
-    if (cancellationErrors.length > 0) {
-      throw new Error(
-        `Cannot reset grid because ${cancellationErrors.length} order cancellation${cancellationErrors.length === 1 ? "" : "s"} failed: ${cancellationErrors[0]}`,
+    if (unlisted.length > 0) {
+      notes.push(
+        `\u26A0 The exchange doesn't list ${countOf(unlisted.length, "order")} of the grid yet: ${unlisted.join(", ")}.`,
       );
     }
+    if (notes.length > 0) {
+      notes.push(
+        "The save is kept, so the next start checks these orders first, then begins a new grid.",
+      );
+    } else {
+      this._deleteGridState(state.pair);
+    }
+    if (this._untrackedReplacements > 0) {
+      notes.push(
+        `\u26A0 ${untrackedReplacementsNote(this._untrackedReplacements)}`,
+      );
+    }
+    if (
+      !state.config.dryRun &&
+      (closed.mayHoldCoins || this._hasTrackedInventory(state))
+    ) {
+      const base = this._config.pair.split("-")[0] ?? "";
+      notes.push(
+        `Any ${base} the grid bought and didn't sell stays in the wallet. The next start begins a new grid.`,
+      );
+    }
+    return notes;
+  }
+
+  private async _pauseGrid(state: GridState): Promise<string[]> {
+    let cancelled = 0;
+    let remaining =
+      (state.splitClientOrderId || state.splitOrderId ? 1 : 0) +
+      state.levels.reduce(
+        (count, level) =>
+          count +
+          (level.pendingBuyClientOrderIds?.length ?? 0) +
+          level.positions.filter(
+            (position) => !!position.sellClientOrderId && !position.sellOrderId,
+          ).length,
+        0,
+      );
+    try {
+      const result = await this._closeGridOrders(state, "keepTraded");
+      cancelled = result.cancelled;
+      remaining += closeProblems(result).length;
+    } catch {
+      remaining += state.levels.reduce(
+        (count, level) =>
+          count +
+          level.buyOrderIds.length +
+          level.positions.filter((position) => !!position.sellOrderId).length,
+        0,
+      );
+    }
+    const hasTrackedInventory =
+      !state.config.dryRun && this._hasTrackedInventory(state);
+    if (remaining === 0 && !hasTrackedInventory) {
+      this._deleteGridState(state.pair);
+    } else {
+      this._saveGridState(state);
+    }
+    if (cancelled > 0) {
+      this._log(chalk.dim(`  Cancelled ${countOf(cancelled, "order")}`));
+    }
+    const notes: string[] = [];
+    if (remaining > 0) {
+      notes.push(
+        `\u26A0 ${countOf(remaining, "order")} could not be cancelled. State saved for next startup.`,
+      );
+    } else if (hasTrackedInventory) {
+      const base = this._config.pair.split("-")[0] ?? "";
+      notes.push(
+        `\u26A0 Acquired ${base} remains. State saved for the next startup.`,
+      );
+    }
+    if (this._untrackedReplacements > 0) {
+      notes.push(
+        `\u26A0 ${untrackedReplacementsNote(this._untrackedReplacements)}`,
+      );
+    }
+    return notes;
+  }
+
+  private async _closeSavedGridOrders(
+    saved: GridState,
+  ): Promise<SavedOrdersClosed> {
+    const orders = await this._withOrderIds(
+      saved,
+      savedOrders(this._trackedOrders(saved), saved),
+    );
+    const byOrderId = new Map<string, SavedOrder>();
+    for (const order of orders) {
+      if (order.orderId) byOrderId.set(order.orderId, order);
+    }
+    const targets = [...byOrderId];
+    const outcomes = await Promise.all(
+      targets.map(([orderId]) => this._cancelUntilClosed(orderId)),
+    );
+    const unlisted = orders.filter((order) => !order.orderId);
+    const traded: TradedOrder[] = [];
+    const stillOpen: string[] = [];
+    let cancelled = 0;
+    let replaced = 0;
+    let bought = false;
+    for (const [index, outcome] of outcomes.entries()) {
+      const [orderId, target] = targets[index];
+      if (!outcome.closed) {
+        stillOpen.push(savedOrderLabel(target));
+        continue;
+      }
+      if (!outcome.order) {
+        if (!this._unreadRejections.has(orderId)) unlisted.push(target);
+        continue;
+      }
+      if (target.tracked && this._hasFilledQuantity(outcome.order)) {
+        traded.push({ target: target.tracked, order: outcome.order });
+      }
+      if (outsideChange(outcome.order) === "replaced") {
+        replaced++;
+      } else {
+        if (CANCELLED_STATUSES.has(outcome.order.status)) cancelled++;
+        if (outcome.order.side === "buy") {
+          bought ||= this._hasFilledQuantity(outcome.order);
+        }
+      }
+    }
+    return {
+      traded,
+      cancelled,
+      replaced,
+      stillOpen,
+      mayHoldCoins:
+        bought || unlisted.some((order) => order.kind === "split buy"),
+      unlisted: unlisted
+        .filter((order) => order.kind === "limit")
+        .map(savedOrderLabel),
+      unlistedMarket: unlisted
+        .filter((order) => order.kind !== "limit")
+        .map(savedOrderLabel),
+    };
+  }
+
+  private async _withOrderIds(
+    saved: GridState,
+    orders: SavedOrder[],
+  ): Promise<SavedOrder[]> {
+    if (orders.every((order) => order.orderId)) return orders;
+    const sent = await this._ordersByClientOrderId(
+      this._gridHistoryStart(saved),
+    );
+    return orders.map((order) =>
+      order.orderId || !order.clientOrderId
+        ? order
+        : { ...order, orderId: sent.get(order.clientOrderId)?.id },
+    );
+  }
+
+  private _leftoverNotes(
+    saved: GridState,
+    closed: SavedOrdersClosed,
+  ): string[] {
+    const notes: string[] = [];
+    const { unlisted, unlistedMarket } = closed;
+    if (unlisted.length > 0) {
+      notes.push(
+        `\u26A0 The exchange doesn't list ${countOf(unlisted.length, "order")} of the old grid: ${unlisted.join(", ")}. If revx order open --json shows ${unlisted.length === 1 ? "it" : "one"} in the next few minutes, cancel it with revx order cancel <id>.`,
+      );
+    }
+    if (unlistedMarket.length > 0) {
+      notes.push(
+        `\u26A0 The exchange doesn't list ${countOf(unlistedMarket.length, "market order")} of the old grid: ${unlistedMarket.join(", ")}. ${unlistedMarket.length === 1 ? "It" : "They"} may still trade in the next few minutes. Check with revx order history.`,
+      );
+    }
+    if (closed.replaced > 0) {
+      notes.push(`\u26A0 ${untrackedReplacementsNote(closed.replaced)}`);
+    }
+    if (saved.halt) notes.push("The old grid's pending sell-off is dropped.");
+    if (
+      !saved.config.dryRun &&
+      (closed.mayHoldCoins || this._hasTrackedInventory(saved))
+    ) {
+      const base = this._config.pair.split("-")[0] ?? "";
+      notes.push(
+        `Any ${base} the old grid bought and didn't sell stays in the wallet. The new grid doesn't manage it.`,
+      );
+    }
+    return notes;
   }
 
   async run(): Promise<void> {
     try {
       await this._run();
+      this._printSellOff();
     } catch (err) {
-      if (err instanceof PostOnlyImmediateMatchError) {
+      if (err instanceof OrderNotSentError) return;
+      if (err instanceof OrderRejectedError) {
         this.stop();
         this._log(
           chalk.red(
-            `\n  Halting grid bot: post-only ${err.side} order at ${err.price} would match immediately.`,
+            `\n  Halting grid bot: ${err.side} order at ${err.price} ${err.reason}. Selling all held coins.`,
           ),
         );
-        const notification = this._notifyAndWait(
-          `Grid Bot ${this._config.pair} stopped: post-only ${err.side} order at ${err.price} would match immediately.`,
-        );
-        await this.shutdown();
-        await notification;
+        try {
+          if (this._state && this._client) {
+            await this._liquidate("rejected-orders");
+          }
+        } finally {
+          await this.shutdown();
+        }
       }
+      this._printSellOff();
       throw err;
     }
   }
 
   private async _run(): Promise<void> {
+    this._startup = this._startUp();
+    await this._startup;
+    if (!this._running || this._isStopping()) return;
+    void this._notify(
+      renderStartedMessage(this._state!.pair, this._state!.config),
+    );
+    if (this._connections.length > 0) {
+      this._statusReporter = new LiveStatusReporter({
+        connections: this._connections,
+        refs: this._state!.statusMessages,
+        minIntervalMs: Math.max(5000, this._config.intervalSec * 1000),
+        parseMode: "MarkdownV2",
+        onResult: (connectionId, result) =>
+          this._noteTelegram(connectionId, result),
+      });
+      await this._statusReporter.flush(this._renderStatusCard());
+      this._state!.statusMessages = this._statusReporter.snapshot();
+      this._saveGridState(this._state!);
+    }
+    await this._loop();
+  }
+
+  private async _startUp(): Promise<void> {
     this._running = true;
     this._startTime = Date.now();
     this._client = new RevolutXClient({
       generatedBy: "CLI",
       enforceKeyPermissions: true,
     });
+    this._keyLabel = savedKeyLabel();
     this._connections = loadConnections().filter((c) => c.enabled);
 
-    if (!this._client.isAuthenticated) {
-      throw new Error(
-        "API credentials not configured. Run 'revx configure' first.",
-      );
-    }
+    this._client.assertAuthenticated();
 
     if (this._priceSource) {
       this._priceSource = withCachedPeek(this._priceSource);
@@ -386,164 +960,162 @@ export class ForegroundGridBot {
     }
 
     await this._fetchPairInfo();
-    const existingState = loadGridState(this._config.pair);
-
-    if (existingState && this._config.reset) {
-      this._log(chalk.dim("  --reset flag: cancelling saved grid orders..."));
-      await this._cancelTrackedOrdersForReset(existingState);
-      this._deleteGridState(this._config.pair);
-      await this._initNewGrid();
-    } else if (existingState) {
-      const savedLevels = existingState.config.levels;
-      const savedRange = existingState.config.rangePct;
-      const newLevels = this._config.levels;
-      const newRange = this._config.rangePct;
-
-      if (savedLevels !== newLevels || savedRange !== newRange) {
-        const savedRangePct = new Decimal(savedRange).times(100).toFixed(1);
-        const newRangePct = new Decimal(newRange).times(100).toFixed(1);
-        throw new Error(
-          `Saved grid has ${levelsPerSide(savedLevels)} levels/side with ${savedRangePct}% range ` +
-            `but you requested ${levelsPerSide(newLevels)} levels/side with ${newRangePct}% range. ` +
-            `Use --reset to discard saved state and start fresh.`,
-        );
-      }
-
-      const savedSplit = existingState.config.splitInvestment;
-      if (savedSplit !== this._config.splitInvestment) {
-        throw new Error(
-          `Saved grid was started ${savedSplit ? "with" : "without"} --split ` +
-            `but you requested ${this._config.splitInvestment ? "with" : "without"} --split. ` +
-            `Use --reset to discard saved state and start fresh.`,
-        );
-      }
-
-      if (
-        !new Decimal(existingState.config.investment).eq(
-          this._config.investment,
-        )
-      ) {
-        throw new Error(
-          `Saved grid was started with investment ${existingState.config.investment} ` +
-            `but you requested ${this._config.investment}. ` +
-            `Use --reset to discard saved state and start fresh.`,
-        );
-      }
-
-      if (existingState.config.dryRun !== this._config.dryRun) {
-        throw new Error(
-          `Saved grid was started in ${existingState.config.dryRun ? "dry-run" : "live"} mode ` +
-            `but you requested ${this._config.dryRun ? "dry-run" : "live"} mode. ` +
-            `Use --reset to discard saved state and start fresh.`,
-        );
-      }
-
-      if (
-        Boolean(existingState.config.trailingUp) !== this._config.trailingUp
-      ) {
-        throw new Error(
-          `Saved grid was started ${existingState.config.trailingUp ? "with" : "without"} --trailing-up ` +
-            `but you requested ${this._config.trailingUp ? "with" : "without"} --trailing-up. ` +
-            `Use --reset to discard saved state and start fresh.`,
-        );
-      }
-
-      const savedStopLoss = existingState.config.stopLoss;
-      const newStopLoss = this._config.stopLoss;
-      const stopLossMismatch =
-        (savedStopLoss == null) !== (newStopLoss == null) ||
-        (savedStopLoss != null &&
-          newStopLoss != null &&
-          !new Decimal(savedStopLoss).eq(newStopLoss));
-      if (stopLossMismatch) {
-        throw new Error(
-          `Saved grid was started with stop-loss ${savedStopLoss ?? "(none)"} ` +
-            `but you requested ${newStopLoss ?? "(none)"}. ` +
-            `Use --reset to discard saved state and start fresh.`,
-        );
-      }
-
-      await this._reconcileAndInit(existingState);
-      if (!this._running) return;
-    } else {
-      await this._initNewGrid();
-    }
-    this._notify(renderStartedMessage(this._state!.pair, this._state!.config));
-    if (this._connections.length > 0) {
-      this._statusReporter = new LiveStatusReporter({
-        connections: this._connections,
-        refs: this._state!.statusMessages,
-        minIntervalMs: Math.max(5000, this._config.intervalSec * 1000),
-        parseMode: "MarkdownV2",
-      });
-      await this._statusReporter.flush(this._renderStatusCard());
-      this._state!.statusMessages = this._statusReporter.snapshot();
-      this._saveGridState(this._state!);
-    }
-    await this._loop();
+    await this._startFromSave();
   }
 
-  async shutdown(): Promise<void> {
+  private async _startFromSave(): Promise<void> {
+    const existingState = this._loadSavedGrid();
+
+    if (existingState && (this._config.reset || existingState.stopped)) {
+      await this._discardSavedGrid(existingState);
+      await this._initNewGrid();
+    } else if (existingState) {
+      if (existingState.halt) {
+        this._assertHaltedModeMatches(existingState);
+      } else {
+        this._assertSavedConfigMatches(existingState);
+      }
+      await this._reconcileAndInit(existingState);
+    } else {
+      await this._initNewGrid();
+    }
+  }
+
+  private _printSellOff(): void {
+    if (this._sellOffMessage && this._persistState) {
+      this._log(chalk.red(`\n  ${this._sellOffMessage}`));
+    }
+    this._sellOffMessage = null;
+  }
+
+  private _assertSavedConfigMatches(existingState: GridState): void {
+    const savedLevels = existingState.config.levels;
+    const savedRange = existingState.config.rangePct;
+    const newLevels = this._config.levels;
+    const newRange = this._config.rangePct;
+
+    if (savedLevels !== newLevels || savedRange !== newRange) {
+      const savedRangePct = new Decimal(savedRange).times(100).toFixed(1);
+      const newRangePct = new Decimal(newRange).times(100).toFixed(1);
+      throw new Error(
+        `Saved grid has ${levelsPerSide(savedLevels)} levels/side with ${savedRangePct}% range ` +
+          `but you requested ${levelsPerSide(newLevels)} levels/side with ${newRangePct}% range. ` +
+          `Use --reset to discard saved state and start fresh.`,
+      );
+    }
+
+    const savedSplit = existingState.config.splitInvestment;
+    if (savedSplit !== this._config.splitInvestment) {
+      throw new Error(
+        `Saved grid was started ${savedSplit ? "with" : "without"} --split ` +
+          `but you requested ${this._config.splitInvestment ? "with" : "without"} --split. ` +
+          `Use --reset to discard saved state and start fresh.`,
+      );
+    }
+
+    if (
+      !new Decimal(existingState.config.investment).eq(this._config.investment)
+    ) {
+      throw new Error(
+        `Saved grid was started with investment ${existingState.config.investment} ` +
+          `but you requested ${this._config.investment}. ` +
+          `Use --reset to discard saved state and start fresh.`,
+      );
+    }
+
+    if (existingState.config.dryRun !== this._config.dryRun) {
+      throw new Error(
+        `Saved grid was started in ${existingState.config.dryRun ? "dry-run" : "live"} mode ` +
+          `but you requested ${this._config.dryRun ? "dry-run" : "live"} mode. ` +
+          `Use --reset to discard saved state and start fresh.`,
+      );
+    }
+
+    if (Boolean(existingState.config.trailingUp) !== this._config.trailingUp) {
+      throw new Error(
+        `Saved grid was started ${existingState.config.trailingUp ? "with" : "without"} --trailing-up ` +
+          `but you requested ${this._config.trailingUp ? "with" : "without"} --trailing-up. ` +
+          `Use --reset to discard saved state and start fresh.`,
+      );
+    }
+
+    const savedStopLoss = existingState.config.stopLoss;
+    const newStopLoss = this._config.stopLoss;
+    const stopLossMismatch =
+      (savedStopLoss == null) !== (newStopLoss == null) ||
+      (savedStopLoss != null &&
+        newStopLoss != null &&
+        !new Decimal(savedStopLoss).eq(newStopLoss));
+    if (stopLossMismatch) {
+      throw new Error(
+        `Saved grid was started with stop-loss ${savedStopLoss ?? "(none)"} ` +
+          `but you requested ${newStopLoss ?? "(none)"}. ` +
+          `Use --reset to discard saved state and start fresh.`,
+      );
+    }
+  }
+
+  private _loadSavedGrid(): GridState | null {
+    try {
+      return loadGridState(this._config.pair);
+    } catch (err) {
+      if (!(err instanceof GridStateDamagedError)) throw err;
+      if (!this._config.reset) {
+        throw new Error(
+          `${err.message}. Nothing was started, so the old grid's orders and coins are untouched. ` +
+            `A new grid can't take them over, so first cancel the old grid's open orders in the Revolut X app and decide what to do with its coins. ` +
+            `Then run again with --reset to set the damaged file aside and start a new grid.`,
+        );
+      }
+      if (this._persistState) {
+        const keptAt = setAsideGridState(this._config.pair);
+        this._log(
+          chalk.yellow(
+            `  Damaged saved grid set aside as ${keptAt}. Its old orders are not tracked by the new grid.`,
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  private _assertHaltedModeMatches(existingState: GridState): void {
+    if (existingState.config.dryRun === this._config.dryRun) return;
+    const savedMode = existingState.config.dryRun ? "dry-run" : "live";
+    throw new Error(
+      `A sell-off of the saved ${savedMode} grid is still pending. Run it in ${savedMode} mode to finish it.`,
+    );
+  }
+
+  async shutdown(stop: GridStop = "end"): Promise<void> {
+    this._stopRequest.abort();
+    this._shutdown ??= this._shutdownOnce(stop);
+    return this._shutdown;
+  }
+
+  private _isStopping(): boolean {
+    return this._stopRequest.signal.aborted;
+  }
+
+  private _refuseWhenStopping(): Error | null {
+    return this._isStopping() ? new OrderNotSentError() : null;
+  }
+
+  private async _shutdownOnce(stop: GridStop): Promise<void> {
+    if (this._startup) await this._startup.catch(() => undefined);
     if (!this._state || !this._client) return;
+    if (this._tickInFlight) await this._tickInFlight.catch(() => undefined);
+    if (this._liquidation) await this._liquidation.catch(() => undefined);
+    if (this._lifecycle === "stopped") {
+      this._printSellOff();
+      return;
+    }
 
     this._log(chalk.dim("\n  Cancelling open orders..."));
-    let cancelled = 0;
-    let remaining =
-      (this._state.splitClientOrderId || this._state.splitOrderId ? 1 : 0) +
-      (this._state.stopLossClientOrderId ? 1 : 0) +
-      this._state.levels.reduce(
-        (count, level) =>
-          count +
-          (level.pendingBuyClientOrderIds?.length ?? 0) +
-          level.positions.filter(
-            (position) => !!position.sellClientOrderId && !position.sellOrderId,
-          ).length,
-        0,
-      );
-    for (const level of this._state.levels) {
-      for (const buyOrderId of [...level.buyOrderIds]) {
-        try {
-          if (!this._config.dryRun) {
-            await this._cancelOrderWithoutFill(buyOrderId);
-          }
-          this._removeBuyOrder(level, buyOrderId);
-          cancelled++;
-        } catch {
-          remaining++;
-        }
-      }
-      for (const pos of level.positions) {
-        if (pos.sellOrderId) {
-          try {
-            if (!this._config.dryRun) {
-              await this._cancelOrderWithoutFill(pos.sellOrderId!);
-            }
-            pos.sellOrderId = null;
-            pos.sellBaseSize = undefined;
-            pos.sellClientOrderId = undefined;
-            cancelled++;
-          } catch {
-            remaining++;
-          }
-        }
-      }
-    }
-
-    const hasTrackedInventory =
-      !this._state.config.dryRun && this._hasTrackedInventory(this._state);
-    if (remaining === 0 && !hasTrackedInventory) {
-      this._deleteGridState(this._state.pair);
-    } else {
-      this._saveGridState(this._state);
-    }
-
-    if (cancelled > 0) {
-      this._log(
-        chalk.dim(
-          `  Cancelled ${cancelled} order${cancelled !== 1 ? "s" : ""}`,
-        ),
-      );
-    }
+    const notes =
+      stop === "end"
+        ? await this._endGrid(this._state)
+        : await this._pauseGrid(this._state);
 
     let currentPrice: Decimal;
     try {
@@ -552,14 +1124,7 @@ export class ForegroundGridBot {
       currentPrice = new Decimal(this._state.gridPrice);
     }
 
-    this._log(
-      renderShutdownSummary(
-        this._state,
-        currentPrice,
-        remaining,
-        hasTrackedInventory,
-      ),
-    );
+    this._log(renderShutdownSummary(this._state, currentPrice, notes));
 
     const s = this._state.stats;
     this._currentPrice = currentPrice;
@@ -568,13 +1133,16 @@ export class ForegroundGridBot {
 
     const cs = this._cs;
 
-    await this._notifyAndWait(
+    await this._notify(
       `Grid Bot stopped: ${this._state.pair}\n` +
         `${s.totalBuys} buys, ${s.totalSells} sells\n` +
         `Realized P&L: ${fmtSignedPnl(realizedPnl, cs)}\n` +
         `Unrealized: ${fmtSignedPnl(unrealized, cs)}\n` +
         `Total P&L: ${fmtSignedPnl(totalPnl, cs)}\n` +
-        `Net Value: ${fmtMoney(netValue, cs)}`,
+        `Net Value: ${fmtMoney(netValue, cs)}` +
+        (this._untrackedReplacements > 0
+          ? `\n${untrackedReplacementsNote(this._untrackedReplacements)}`
+          : ""),
     );
 
     if (this._lifecycle === "running") this._lifecycle = "finished";
@@ -593,8 +1161,8 @@ export class ForegroundGridBot {
     }
   }
 
-  private async _getActiveOrderIds(): Promise<Set<string>> {
-    const activeOrderIds = new Set<string>();
+  private async _getActiveOrders(): Promise<Map<string, Order>> {
+    const activeOrders = new Map<string, Order>();
     let cursor: string | undefined;
     do {
       const response = await this._rateLimiter.query(() =>
@@ -605,11 +1173,15 @@ export class ForegroundGridBot {
         }),
       );
       for (const order of response.data) {
-        activeOrderIds.add(order.id);
+        activeOrders.set(order.id, order);
       }
       cursor = response.metadata?.next_cursor as string | undefined;
     } while (cursor);
-    return activeOrderIds;
+    return activeOrders;
+  }
+
+  private async _isOrderActive(orderId: string): Promise<boolean> {
+    return (await this._getActiveOrders()).has(orderId);
   }
 
   private _getOrderConstraints(): GridOrderConstraints {
@@ -762,7 +1334,6 @@ export class ForegroundGridBot {
         )
       ) {
         this._shouldRebuildUp = true;
-        this._boundaryAlerted = false;
         return;
       }
     }
@@ -774,19 +1345,66 @@ export class ForegroundGridBot {
       this._warnings.push(
         `Price ${direction} grid range (${fmtPrice(boundary, cs)})`,
       );
-      if (!this._boundaryAlerted) {
-        this._boundaryAlerted = true;
+      if (this._alertedSide !== direction) {
+        this._alertedSide = direction;
         const risk = below
-          ? "Buy orders may keep filling without matching sells — accumulating inventory."
-          : "Price is above all grid levels — bot is idle with no active orders.";
-        this._notify(
+          ? "All grid levels are above the price, so the grid holds coins and waits for the price to come back to its sells."
+          : "All grid levels are below the price, so the grid waits for the price to come back to its buys.";
+        void this._notify(
           `Grid Bot ${state.pair}: Price exited grid range (${direction} ${fmtPrice(boundary, cs)}). ` +
             `Current: ${fmtPrice(currentPrice, cs)}. ${risk}`,
         );
       }
-    } else {
-      this._boundaryAlerted = false;
+    } else if (this._backInGrid(currentPrice, levels)) {
+      this._alertedSide = null;
     }
+  }
+
+  private _backInGrid(price: Decimal, levels: GridLevelState[]): boolean {
+    if (this._alertedSide === "below") return price.gte(levels[1].price);
+    if (this._alertedSide === "above") {
+      return price.lte(levels[levels.length - 2].price);
+    }
+    return false;
+  }
+
+  private _buyQuoteOnLevel(level: GridLevelState): Decimal {
+    const quotePerLevel = new Decimal(this._state!.quotePerLevel);
+    const placed = level.buyOrderIds.map(
+      (orderId) => level.buyOrderQuoteSizes?.[orderId] ?? quotePerLevel,
+    );
+    const pending = (level.pendingBuyClientOrderIds ?? []).map(
+      (clientOrderId) =>
+        level.pendingBuyQuoteSizes?.[clientOrderId] ?? quotePerLevel,
+    );
+    return [...placed, ...pending].reduce<Decimal>(
+      (sum, quote) => sum.plus(quote),
+      new Decimal(0),
+    );
+  }
+
+  private _fullBuyCount(level: GridLevelState): number {
+    return this._buyQuoteOnLevel(level)
+      .div(this._state!.quotePerLevel)
+      .toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+      .toNumber();
+  }
+
+  private _missingBuyQuotes(level: GridLevelState): Decimal[] {
+    const quotePerLevel = new Decimal(this._state!.quotePerLevel);
+    let missing = quotePerLevel
+      .times(level.expectedBuys ?? 1)
+      .minus(this._buyQuoteOnLevel(level));
+    const quotes: Decimal[] = [];
+    while (missing.gte(quotePerLevel)) {
+      quotes.push(quotePerLevel);
+      missing = missing.minus(quotePerLevel);
+    }
+    const remainder = floorToStep(missing, this._getQuoteStep());
+    if (remainder.gt(0) && this._isPlaceableBuy(level, remainder)) {
+      quotes.push(remainder);
+    }
+    return quotes;
   }
 
   private async _rebuildGridUp(currentPrice: Decimal): Promise<void> {
@@ -801,8 +1419,7 @@ export class ForegroundGridBot {
     }
     const N = state.levels.length;
 
-    // Save per-level buy order counts before clearing (used for split mode)
-    const savedCounts = state.levels.map((l) => l.buyOrderIds.length);
+    const savedCounts = state.levels.map((level) => this._fullBuyCount(level));
 
     const quoteStep = this._getQuoteStep();
     const rebuildPlan = createTrailingGridRebuildPlan({
@@ -840,48 +1457,13 @@ export class ForegroundGridBot {
     }
 
     if (!this._config.dryRun && client) {
-      const cancelErrors: string[] = [];
-      const cancels: Promise<void>[] = [];
-      for (const level of state.levels) {
-        for (const buyOrderId of [...level.buyOrderIds]) {
-          cancels.push(
-            this._cancelOrderWithoutFill(buyOrderId)
-              .then(() => {
-                this._removeBuyOrder(level, buyOrderId);
-              })
-              .catch((err) => {
-                rethrowIfInsecureKey(err);
-                cancelErrors.push(
-                  err instanceof Error ? err.message : String(err),
-                );
-              }),
-          );
-        }
-        for (const pos of level.positions) {
-          const sellOrderId = pos.sellOrderId;
-          if (sellOrderId) {
-            cancels.push(
-              this._cancelOrderWithoutFill(sellOrderId)
-                .then(() => {
-                  pos.sellOrderId = null;
-                  pos.sellBaseSize = undefined;
-                  pos.sellClientOrderId = undefined;
-                })
-                .catch((err) => {
-                  rethrowIfInsecureKey(err);
-                  cancelErrors.push(
-                    err instanceof Error ? err.message : String(err),
-                  );
-                }),
-            );
-          }
-        }
-      }
-      await Promise.all(cancels);
-      if (cancelErrors.length > 0) {
+      const problems = closeProblems(
+        await this._closeGridOrders(state, "keepTraded"),
+      );
+      if (problems.length > 0) {
         this._saveGridState(state);
         throw new Error(
-          `Unable to rebuild grid because ${cancelErrors.length} order cancellation${cancelErrors.length === 1 ? "" : "s"} failed: ${cancelErrors[0]}`,
+          `Unable to rebuild grid because ${problems.length} order cancellation${problems.length === 1 ? "" : "s"} failed: ${problems[0]}`,
         );
       }
     }
@@ -889,8 +1471,12 @@ export class ForegroundGridBot {
     for (const level of state.levels) {
       level.buyOrderIds = [];
       level.buyOrderQuoteSizes = {};
+      level.buyClientOrderIds = {};
       level.positions = [];
     }
+    this._placementHealth.reset();
+    this._unreadRejections.clear();
+    this._cashShortfall = null;
 
     for (let i = 0; i < N; i++) {
       state.levels[i].price = candidatePrices[i].toString();
@@ -898,254 +1484,659 @@ export class ForegroundGridBot {
 
     state.gridPrice = currentPrice.toString();
 
-    const rebuilds: Promise<unknown>[] = [];
+    const rebuilds: Array<{
+      level: GridLevelState;
+      placement: Promise<unknown>;
+    }> = [];
     for (let i = 0; i < N; i++) {
       const level = state.levels[i];
       const count = rebuildPlan.buyCounts[i];
-      if (count === 0) continue;
       level.expectedBuys = count;
+      if (count === 0) continue;
 
       for (let j = 0; j < count; j++) {
-        rebuilds.push(this._placeBuyOrder(level, quotePerLevel));
+        rebuilds.push({
+          level,
+          placement: this._placeBuyOrder(level, quotePerLevel),
+        });
       }
     }
-    const rebuildResults = await Promise.allSettled(rebuilds);
+    const rebuildResults = await Promise.allSettled(
+      rebuilds.map((rebuild) => rebuild.placement),
+    );
     const fatalRebuild = rebuildResults.find(
       (result) =>
         result.status === "rejected" &&
-        result.reason instanceof PostOnlyImmediateMatchError,
+        result.reason instanceof OrderRejectedError,
     );
     if (fatalRebuild?.status === "rejected") {
       throw fatalRebuild.reason;
     }
-    for (const result of rebuildResults) {
-      if (result.status === "rejected") {
-        rethrowIfInsecureKey(result.reason);
-        this._warnings.push(
-          `Rebuild buy: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
-        );
-      }
-    }
+    rebuildResults.forEach((result, index) => {
+      if (result.status !== "rejected") return;
+      rethrowIfInsecureKey(result.reason);
+      this._alertBuyFailure(
+        rebuilds[index].level,
+        quotePerLevel,
+        result.reason,
+      );
+    });
 
     state.shiftCount = (state.shiftCount ?? 0) + 1;
     this._saveGridState(state);
     this._trailingUpPriceTracker.reset();
+    this._alertedSide = null;
+    if (this._isStopping()) return;
 
-    this._notify(
+    void this._notify(
       `Grid Bot ${state.pair}: trailing up — grid rebuilt around ${fmtPrice(currentPrice, cs)} ` +
         `(shift #${state.shiftCount})`,
     );
   }
 
-  private async _triggerStopLoss(currentPrice: Decimal): Promise<void> {
-    const state = this._state!;
-    const client = this._client;
-    const cs = this._cs;
-
-    // 1. Cancel all open orders to free reserved funds
-    let cancellationsSucceeded = true;
-    if (!this._config.dryRun && client) {
-      const cancels: Promise<void>[] = [];
-      for (const level of state.levels) {
-        for (const buyOrderId of [...level.buyOrderIds]) {
-          cancels.push(
-            this._cancelOrderWithoutFill(buyOrderId)
-              .then(() => {
-                this._removeBuyOrder(level, buyOrderId);
-              })
-              .catch((err) => {
-                rethrowIfInsecureKey(err);
-                cancellationsSucceeded = false;
-                this._warnings.push(
-                  `Stop-loss cancellation failed: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }),
-          );
-        }
-        for (const pos of level.positions) {
-          const sellOrderId = pos.sellOrderId;
-          if (sellOrderId) {
-            cancels.push(
-              this._cancelOrderWithoutFill(sellOrderId)
-                .then(() => {
-                  pos.sellOrderId = null;
-                  pos.sellBaseSize = undefined;
-                  pos.sellClientOrderId = undefined;
-                })
-                .catch((err) => {
-                  rethrowIfInsecureKey(err);
-                  cancellationsSucceeded = false;
-                  this._warnings.push(
-                    `Stop-loss cancellation failed: ${err instanceof Error ? err.message : String(err)}`,
-                  );
-                }),
-            );
-          }
-        }
-      }
-      await Promise.all(cancels);
-    } else if (this._config.dryRun) {
-      for (const level of state.levels) {
-        level.buyOrderIds = [];
-        level.buyOrderQuoteSizes = {};
-        for (const pos of level.positions) {
-          pos.sellOrderId = null;
-          pos.sellBaseSize = undefined;
-          pos.sellClientOrderId = undefined;
-        }
-      }
-    }
-
-    // 2. Sell all accumulated base asset via market order
-    const baseStep = this._getBaseStep();
-    const allPositions = state.levels.flatMap((l) => l.positions);
-    const rawTotalBase = allPositions
-      .filter((p) => new Decimal(p.baseHeld).gt(0))
-      .reduce((sum, p) => sum.plus(p.baseHeld), new Decimal(0));
-    let totalBase = floorToStep(rawTotalBase, baseStep);
-    let liquidationOrderIsValid = true;
-    if (cancellationsSucceeded && rawTotalBase.gt(0)) {
-      try {
-        totalBase = normalizeBaseOrderSize(
-          totalBase,
-          this._getOrderConstraints(),
-          currentPrice,
-        );
-      } catch (err) {
-        liquidationOrderIsValid = false;
-        this._warnings.push(
-          `Stop-loss position cannot be liquidated automatically: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-    let liquidationSucceeded = cancellationsSucceeded && rawTotalBase.isZero();
-
-    if (cancellationsSucceeded && liquidationOrderIsValid && totalBase.gt(0)) {
-      if (!this._config.dryRun && client) {
-        try {
-          state.stopLossClientOrderId ??= randomUUID();
-          this._saveGridState(state);
-          const resp = await this._rateLimiter.place(() =>
-            client.placeOrder({
-              symbol: this._config.pair,
-              side: "sell",
-              clientOrderId: state.stopLossClientOrderId,
-              market: { baseSize: totalBase.toString() },
-            }),
-          );
-          const filled = await this._awaitOrderFill(resp.data.venue_order_id);
-          if (this._hasFilledQuantity(filled)) {
-            const {
-              baseDelivered,
-              quoteProceeds: revenue,
-              feeQuote,
-            } = this._sellEconomics(filled, currentPrice);
-            const filledBase = Decimal.min(baseDelivered, totalBase);
-            const costBasis = this._consumeHeldBase(filledBase);
-            const pnl = revenue.minus(costBasis);
-            this._addFee(feeQuote);
-            state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
-              .plus(pnl)
-              .toString();
-            state.stats.totalSells++;
-            this._logTrade(
-              "sell",
-              currentPrice.toString(),
-              filledBase.toString(),
-              "stop-loss",
-              pnl.toFixed(2),
-              feeQuote.toString(),
-            );
-            liquidationSucceeded = filledBase.eq(totalBase);
-          }
-          state.stopLossClientOrderId = liquidationSucceeded
-            ? undefined
-            : randomUUID();
-          this._saveGridState(state);
-        } catch (err) {
-          rethrowIfInsecureKey(err);
-          this._warnings.push(
-            `Stop-loss market sell failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      } else if (this._config.dryRun) {
-        // Simulate the market sell in dry-run mode
-        const costBasis = this._consumeHeldBase(totalBase);
-        const grossRevenue = totalBase.times(currentPrice);
-        const feeQuote = grossRevenue.times(TAKER_FEE_RATE);
-        const revenue = grossRevenue
-          .minus(feeQuote)
-          .toDecimalPlaces(2, Decimal.ROUND_DOWN);
-        const pnl = revenue.minus(costBasis);
-        this._addFee(feeQuote);
-        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
-          .plus(pnl)
-          .toString();
-        state.stats.totalSells++;
-        this._logTrade(
-          "sell",
-          currentPrice.toString(),
-          totalBase.toString(),
-          "stop-loss",
-          pnl.toFixed(2),
-        );
-        liquidationSucceeded = true;
-      }
-    }
-
-    this._notify(
-      `Grid Bot ${state.pair}: STOP LOSS triggered at ${cs}${currentPrice.toFixed(2)}. ` +
-        `${liquidationSucceeded ? `Sold ${totalBase} base` : `Failed to sell ${totalBase} base`}. ` +
-        `Realized P&L: ${fmtSignedPnl(new Decimal(state.stats.realizedPnl), cs)}`,
-    );
-
-    this._lifecycle = "stopped";
-    this._currentPrice = currentPrice;
-    if (this._statusReporter) {
-      await this._statusReporter.flush(this._renderStatusCard());
-      state.statusMessages = this._statusReporter.snapshot();
-    }
-    this._saveGridState(state);
-    this.stop();
+  private _liquidate(
+    reason: GridHaltReason,
+    referencePrice?: Decimal,
+  ): Promise<void> {
+    this._liquidation ??= this._sellEverything(reason, referencePrice);
+    return this._liquidation;
   }
 
-  private async _awaitOrderFill(
-    orderId: string,
-    timeoutMs = 30_000,
-  ): Promise<OrderDetails> {
-    const client = this._client!;
-    const start = Date.now();
-    const pollIntervalMs = 500;
+  private async _sellEverything(
+    reason: GridHaltReason,
+    referencePrice?: Decimal,
+  ): Promise<void> {
+    const state = this._state!;
+    const resumed = state.halt !== undefined;
+    state.halt ??= {
+      reason,
+      triggerPrice: (referencePrice ?? this._currentPrice)?.toFixed(),
+    };
+    this._haltReason = state.halt.reason;
+    this._lifecycle = "stopped";
+    this._saveGridState(state);
+    const marketPrice =
+      referencePrice ??
+      (await this._getCurrentPrice().catch((err) => {
+        rethrowIfInsecureKey(err);
+        return null;
+      })) ??
+      this._currentPrice;
+    const price = marketPrice ?? new Decimal(state.gridPrice);
+    if (!resumed && marketPrice) {
+      state.halt.triggerPrice ??= marketPrice.toFixed();
+    }
+    const triggerPrice = savedPrice(state.halt.triggerPrice);
+    const summary: SellOffSummary = {
+      soldBase: new Decimal(0),
+      soldQuote: new Decimal(0),
+      unpricedFill: false,
+      writtenOff: new Decimal(0),
+      cancelled: 0,
+    };
+    let complete = false;
+    let latestPrice: Decimal | null = null;
+    try {
+      ({ complete, latestPrice } = await this._closeOutUntilDone(
+        state,
+        price,
+        summary,
+      ));
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      this._recordSellOffError(
+        `Sell-off: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (complete) state.halt = undefined;
+    this._saveGridState(state);
+    this.stop();
+    if (complete) this._deleteGridState(state.pair);
+    this._currentPrice = latestPrice ?? price;
+    await this._reportSellOff(
+      state,
+      {
+        marketPrice,
+        priceNow: latestPrice ?? marketPrice,
+        triggerPrice,
+        resumed,
+      },
+      summary,
+      complete,
+    );
+  }
 
-    while (Date.now() - start < timeoutMs) {
+  private async _closeOutUntilDone(
+    state: GridState,
+    price: Decimal,
+    summary: SellOffSummary,
+  ): Promise<{ complete: boolean; latestPrice: Decimal | null }> {
+    let latestPrice: Decimal | null = null;
+    let result = await this._closeOutGrid(state, price, summary);
+    if (result.outcome === "waiting") {
+      this._announceSellOffWait(state);
+      const waitUntil = performance.now() + SELL_OFF_WAIT_LIMIT_MS;
+      while (
+        result.outcome === "waiting" &&
+        !this._isStopping() &&
+        performance.now() < waitUntil
+      ) {
+        await pause(SELL_OFF_RETRY_MS, this._stopRequest.signal);
+        if (this._isStopping()) break;
+        latestPrice = (await this._priceOrNull()) ?? latestPrice;
+        result = await this._closeOutGrid(state, latestPrice ?? price, summary);
+      }
+    }
+    if (result.outcome === "waiting") this._recordSellOffError(result.reason);
+    return { complete: result.outcome === "complete", latestPrice };
+  }
+
+  private async _priceOrNull(): Promise<Decimal | null> {
+    try {
+      return await this._getCurrentPrice();
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      return null;
+    }
+  }
+
+  private _announceSellOffWait(state: GridState): void {
+    const message =
+      `The sell-off waits for orders the exchange doesn't confirm yet. ` +
+      `It checks again every ${SELL_OFF_RETRY_MS / 1000} seconds for up to ${SELL_OFF_WAIT_LIMIT_MS / 60_000} minutes. ` +
+      `Ctrl+C stops the wait and keeps the sale for the next start.`;
+    this._log(chalk.yellow(`  ${message}`));
+    void this._notify(`Grid Bot ${state.pair}: ${message}`);
+  }
+
+  private async _closeOutGrid(
+    state: GridState,
+    price: Decimal,
+    summary: SellOffSummary,
+  ): Promise<CloseOut> {
+    let lookupError: string | null = null;
+    let splitSettled = true;
+    if (!state.config.dryRun) {
       try {
-        const resp = await this._rateLimiter.query(() =>
-          client.getOrder(orderId),
-        );
-        const order = resp.data;
-
-        if (
-          FILLED_STATUSES.has(order.status) ||
-          DEAD_STATUSES.has(order.status)
-        ) {
-          return order;
-        }
-        if (
-          order.status === PARTIALLY_FILLED_STATUS &&
-          !(await this._getActiveOrderIds()).has(orderId)
-        ) {
-          return order;
-        }
+        await this._finishPendingSale(state, price, summary);
+        await this._resumePendingPlacements(false);
+        splitSettled = await this._settleSplitInFlight();
       } catch (err) {
         rethrowIfInsecureKey(err);
+        lookupError = `Sell-off: ${err instanceof Error ? err.message : String(err)}`;
       }
-
-      await sleep(pollIntervalMs);
     }
-
-    throw new Error(
-      `Market buy order did not fill within ${timeoutMs / 1000}s: ${orderId}`,
+    if (!lookupError && splitSettled) this._materialiseSplitBase(state);
+    const { cancelled, problems, unlisted } = await this._closeGridOrders(
+      state,
+      "settle",
     );
+    summary.cancelled += cancelled;
+    if (lookupError) return { outcome: "waiting", reason: lookupError };
+    const sale = await this._sellHeldCoins(state, price, summary);
+    if (sale.outcome !== "complete") return sale;
+    const blocking = [...problems, ...unlisted.map(unlistedCancelProblem)];
+    if (blocking.length > 0) {
+      return { outcome: "waiting", reason: describeProblems(blocking) };
+    }
+    const unconfirmed = this._unconfirmedPlacements(state);
+    if (unconfirmed > 0) {
+      return {
+        outcome: "waiting",
+        reason:
+          `${unconfirmed} order${unconfirmed === 1 ? "" : "s"} sent before the sell-off ${unconfirmed === 1 ? "isn't" : "aren't"} confirmed yet. ` +
+          `The next start looks again and gives up on any still missing after 5 minutes.`,
+      };
+    }
+    if (this._hasPendingPlacements(state)) {
+      this._recordSellOffError(
+        "Some grid orders are not confirmed closed yet.",
+      );
+      return { outcome: "failed" };
+    }
+    this._writeOffUnsellable(state, summary);
+    return { outcome: "complete" };
+  }
+
+  private _unconfirmedPlacements(state: GridState): number {
+    let count = state.splitClientOrderId && !state.splitOrderId ? 1 : 0;
+    for (const level of state.levels) {
+      count += level.pendingBuyClientOrderIds?.length ?? 0;
+      count += level.positions.filter(
+        (position) => !!position.sellClientOrderId && !position.sellOrderId,
+      ).length;
+    }
+    return count;
+  }
+
+  private _isFreeToSell(position: GridLevelPosition): boolean {
+    return !position.sellOrderId && !position.sellClientOrderId;
+  }
+
+  private _noteMissing(orderId: string, state = this._state!): number {
+    const misses = (state.missingSince ??= {});
+    const firstMiss = Date.parse(misses[orderId] ?? "");
+    if (Number.isFinite(firstMiss)) return Date.now() - firstMiss;
+    misses[orderId] = new Date().toISOString();
+    this._saveGridState(state);
+    return 0;
+  }
+
+  private _recordMissing(
+    orderId: string,
+    state = this._state!,
+  ): "waiting" | "gone" {
+    if (this._noteMissing(orderId, state) < UNCONFIRMED_GRACE_MS) {
+      return "waiting";
+    }
+    this._forgetMissing(orderId, state);
+    return "gone";
+  }
+
+  private _noLongerMissing(orderId: string): void {
+    this._forgetMissing(orderId, this._state!);
+  }
+
+  private _forgetMissing(orderId: string, state: GridState): void {
+    delete state.missingSince?.[orderId];
+    this._unidentified.delete(orderId);
+    this._historyRetryAt.delete(orderId);
+  }
+
+  private _pruneMissing(state: GridState): void {
+    const misses = state.missingSince;
+    if (!misses) return;
+    const tracked = new Set<string>();
+    for (const level of state.levels) {
+      level.buyOrderIds.forEach((id) => tracked.add(id));
+      (level.pendingBuyClientOrderIds ?? []).forEach((id) => tracked.add(id));
+      for (const position of level.positions) {
+        if (position.sellOrderId) tracked.add(position.sellOrderId);
+        if (position.sellClientOrderId) tracked.add(position.sellClientOrderId);
+      }
+    }
+    if (state.splitOrderId) tracked.add(state.splitOrderId);
+    if (state.splitClientOrderId) tracked.add(state.splitClientOrderId);
+    for (const id of Object.keys(misses)) {
+      if (!tracked.has(id)) this._forgetMissing(id, state);
+    }
+  }
+
+  private async _finishPendingSale(
+    state: GridState,
+    price: Decimal,
+    summary: SellOffSummary,
+  ): Promise<void> {
+    const halt = state.halt!;
+    let orderId = halt.orderId;
+    if (!orderId && halt.clientOrderId) {
+      orderId = (await this._ordersByClientOrderId()).get(
+        halt.clientOrderId,
+      )?.id;
+    }
+    if (!orderId) return;
+    const order = await this._awaitTerminal(orderId);
+    const sellable = new Set(
+      state.levels
+        .flatMap((level) => level.positions)
+        .filter((position) => this._isFreeToSell(position)),
+    );
+    this._bookSale(state, order, price, summary, sellable);
+  }
+
+  private async _sellHeldCoins(
+    state: GridState,
+    price: Decimal,
+    summary: SellOffSummary,
+  ): Promise<CloseOut> {
+    const constraints = this._getOrderConstraints();
+    let emptyAttempts = 0;
+    for (;;) {
+      const sellable = new Set(
+        state.levels
+          .flatMap((level) => level.positions)
+          .filter(
+            (position) =>
+              this._isFreeToSell(position) &&
+              new Decimal(position.baseHeld).gt(0),
+          ),
+      );
+      const held = [...sellable].reduce(
+        (sum, position) => sum.plus(position.baseHeld),
+        new Decimal(0),
+      );
+      let amount = Decimal.min(
+        floorToStep(held, constraints.baseStep),
+        constraints.maxBase,
+      );
+      if (!amount.gt(0)) return { outcome: "complete" };
+      try {
+        amount = normalizeBaseOrderSize(amount, constraints, price);
+      } catch {
+        return { outcome: "complete" };
+      }
+      if (this._isStopping()) {
+        this._recordSellOffError(STOPPED_BEFORE_SALE);
+        return { outcome: "failed" };
+      }
+      if (state.config.dryRun) {
+        this._bookSimulatedSale(state, amount, price, sellable, summary);
+        continue;
+      }
+      const sale = await this._placeSellOffOrder(
+        state,
+        amount,
+        price,
+        sellable,
+        summary,
+      );
+      if (sale.outcome !== "sold") return sale;
+      if (!sale.filled.gt(0)) {
+        emptyAttempts++;
+        if (emptyAttempts >= MAX_EMPTY_SALES) {
+          this._recordSellOffError(
+            `The last ${MAX_EMPTY_SALES} sales filled nothing.`,
+          );
+          return { outcome: "failed" };
+        }
+      }
+    }
+  }
+
+  private async _placeSellOffOrder(
+    state: GridState,
+    amount: Decimal,
+    price: Decimal,
+    sellable: Set<GridLevelPosition>,
+    summary: SellOffSummary,
+  ): Promise<SaleOutcome> {
+    const halt = state.halt!;
+    const minted = halt.clientOrderId === undefined;
+    halt.clientOrderId ??= randomUUID();
+    halt.orderId = undefined;
+    this._saveGridState(state);
+    let orderId: string;
+    try {
+      const response = await this._rateLimiter.place(
+        () =>
+          this._client!.placeOrder({
+            symbol: this._config.pair,
+            side: "sell",
+            clientOrderId: halt.clientOrderId,
+            market: { baseSize: amount.toString() },
+          }),
+        () => this._refuseWhenStopping(),
+      );
+      orderId = response.data.venue_order_id;
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      if (err instanceof OrderNotSentError) {
+        if (minted) halt.clientOrderId = undefined;
+        this._saveGridState(state);
+        this._recordSellOffError(STOPPED_BEFORE_SALE);
+        return { outcome: "failed" };
+      }
+      this._recordSellOffError(
+        `Sell-off order: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { outcome: "failed" };
+    }
+    halt.orderId = orderId;
+    this._saveGridState(state);
+    let order: OrderDetails;
+    try {
+      order = await this._awaitTerminal(orderId);
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      return {
+        outcome: "waiting",
+        reason: `Sell-off order: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    return {
+      outcome: "sold",
+      filled: this._bookSale(state, order, price, summary, sellable),
+    };
+  }
+
+  private _bookSale(
+    state: GridState,
+    order: OrderDetails,
+    price: Decimal,
+    summary: SellOffSummary,
+    sellable: Set<GridLevelPosition>,
+  ): Decimal {
+    const { baseDelivered, quoteProceeds, feeQuote } = this._sellEconomics(
+      order,
+      price,
+    );
+    const held = state.levels
+      .flatMap((level) => level.positions)
+      .filter((position) => sellable.has(position))
+      .reduce((sum, position) => sum.plus(position.baseHeld), new Decimal(0));
+    const filledBase = Decimal.min(baseDelivered, held);
+    if (filledBase.gt(0)) {
+      const share = filledBase.div(baseDelivered);
+      const proceeds = quoteProceeds.times(share);
+      const fee = feeQuote.times(share);
+      const cost = this._consumeHeldBase(filledBase, sellable);
+      const pnl = proceeds.minus(cost);
+      this._addFee(fee);
+      state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+        .plus(pnl)
+        .toString();
+      state.stats.totalSells++;
+      this._logTrade(
+        "sell",
+        this._executionPrice(order, price).toString(),
+        filledBase.toString(),
+        this._sellOffTag(state),
+        pnl.toFixed(2),
+        fee.toString(),
+      );
+      summary.soldBase = summary.soldBase.plus(filledBase);
+      summary.soldQuote = summary.soldQuote.plus(
+        this._filledAmount(order, price).times(share),
+      );
+      if (!order.filled_amount && !order.average_fill_price) {
+        summary.unpricedFill = true;
+      }
+    }
+    state.halt!.orderId = undefined;
+    state.halt!.clientOrderId = undefined;
+    this._saveGridState(state);
+    return filledBase;
+  }
+
+  private _bookSimulatedSale(
+    state: GridState,
+    amount: Decimal,
+    price: Decimal,
+    sellable: Set<GridLevelPosition>,
+    summary: SellOffSummary,
+  ): void {
+    const cost = this._consumeHeldBase(amount, sellable);
+    const gross = amount.times(price);
+    const fee = gross.times(TAKER_FEE_RATE);
+    const proceeds = gross.minus(fee).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+    const pnl = proceeds.minus(cost);
+    this._addFee(fee);
+    state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+      .plus(pnl)
+      .toString();
+    state.stats.totalSells++;
+    this._logTrade(
+      "sell",
+      price.toString(),
+      amount.toString(),
+      this._sellOffTag(state),
+      pnl.toFixed(2),
+      fee.toString(),
+    );
+    summary.soldBase = summary.soldBase.plus(amount);
+    summary.soldQuote = summary.soldQuote.plus(gross);
+    this._saveGridState(state);
+  }
+
+  private _recordSellOffError(message: string): void {
+    this._sellOffError = message;
+    this._warnings.push(message);
+  }
+
+  private _sellOffTag(state: GridState): string {
+    return state.halt?.reason === "rejected-orders" ? "close-all" : "stop-loss";
+  }
+
+  private _writeOffUnsellable(state: GridState, summary: SellOffSummary): void {
+    for (const level of state.levels) {
+      for (const position of [...level.positions]) {
+        if (!this._isFreeToSell(position)) continue;
+        const cost =
+          position.fillCost && position.fillCost !== "0"
+            ? new Decimal(position.fillCost)
+            : new Decimal(state.quotePerLevel);
+        state.stats.realizedPnl = new Decimal(state.stats.realizedPnl)
+          .minus(cost)
+          .toString();
+        summary.writtenOff = summary.writtenOff.plus(position.baseHeld);
+        level.positions = level.positions.filter(
+          (candidate) => candidate !== position,
+        );
+      }
+    }
+    this._saveGridState(state);
+  }
+
+  private _hasPendingPlacements(state: GridState): boolean {
+    return (
+      !!state.splitClientOrderId ||
+      !!state.splitOrderId ||
+      state.levels.some(
+        (level) =>
+          level.buyOrderIds.length > 0 ||
+          (level.pendingBuyClientOrderIds?.length ?? 0) > 0 ||
+          level.positions.some(
+            (position) =>
+              !!position.sellOrderId || !!position.sellClientOrderId,
+          ),
+      )
+    );
+  }
+
+  private async _settleSplitInFlight(): Promise<boolean> {
+    const state = this._state!;
+    if (!state.splitOrderId && state.splitClientOrderId) {
+      const clientOrderId = state.splitClientOrderId;
+      const found = (await this._ordersByClientOrderId()).get(clientOrderId);
+      if (!found) {
+        if (this._recordMissing(clientOrderId) === "waiting") return false;
+        state.splitClientOrderId = undefined;
+        state.splitOrderQuoteSize = undefined;
+        this._saveGridState(state);
+        return true;
+      }
+      this._noLongerMissing(clientOrderId);
+      state.splitOrderId = found.id;
+      this._saveGridState(state);
+    }
+    if (!state.splitOrderId) return true;
+    const order = await this._awaitTerminal(state.splitOrderId);
+    if (this._hasFilledQuantity(order)) {
+      this._recordSplitFill(order);
+      return true;
+    }
+    state.splitOrderId = undefined;
+    state.splitClientOrderId = undefined;
+    state.splitOrderQuoteSize = undefined;
+    this._saveGridState(state);
+    return true;
+  }
+
+  private _materialiseSplitBase(state: GridState): void {
+    if (state.splitAccumulatedBase === undefined) return;
+    const base = new Decimal(state.splitAccumulatedBase);
+    if (base.gt(0)) {
+      if (!state.splitAccountingApplied) {
+        this._addFee(new Decimal(state.splitAccumulatedFee ?? 0));
+      }
+      state.levels[0].positions.push({
+        id: "unplaced-split",
+        baseHeld: base.toString(),
+        fillCost: new Decimal(state.splitAccumulatedAmount ?? 0).toString(),
+        slotQuote: state.quotePerLevel,
+        sellOrderId: null,
+      });
+    }
+    this._clearSplitExecutionState();
+    this._saveGridState(state);
+  }
+
+  private async _reportSellOff(
+    state: GridState,
+    prices: {
+      marketPrice: Decimal | null;
+      priceNow: Decimal | null;
+      triggerPrice: Decimal | null;
+      resumed: boolean;
+    },
+    summary: SellOffSummary,
+    complete: boolean,
+  ): Promise<void> {
+    const cs = this._cs;
+    const base = state.pair.split("-")[0] ?? "";
+    const trigger =
+      prices.triggerPrice ?? (prices.resumed ? null : prices.marketPrice);
+    const cause =
+      this._haltReason === "rejected-orders"
+        ? `EMERGENCY STOP after ${MAX_REJECTIONS} rejected orders`
+        : "STOP LOSS triggered";
+    const headline =
+      (trigger ? `${cause} at ${fmtPrice(trigger, cs)}` : cause) +
+      (prices.resumed
+        ? complete
+          ? ", sale finished after a restart"
+          : prices.priceNow
+            ? `, price now ${fmtPrice(prices.priceNow, cs)}`
+            : ""
+        : "");
+    const held = state.levels
+      .flatMap((level) => level.positions)
+      .reduce((sum, position) => sum.plus(position.baseHeld), new Decimal(0));
+    const sold =
+      `Sold ${summary.soldBase} ${base}` +
+      (summary.soldBase.gt(0) && !summary.unpricedFill
+        ? ` at avg ${fmtPrice(summary.soldQuote.div(summary.soldBase), cs)}`
+        : "");
+    const outcome = complete
+      ? `${sold}.` +
+        (summary.writtenOff.gt(0)
+          ? ` ${summary.writtenOff} ${base} was too small to sell and stays in the wallet.`
+          : "")
+      : `${sold}, still holding ${held} ${base}.${state.halt?.orderId ? " The last sale sent isn't confirmed yet." : ""} The sale will finish on the next start.`;
+    const reason = complete ? "" : (this._sellOffError ?? "");
+    const replacements =
+      this._untrackedReplacements > 0
+        ? `\n${untrackedReplacementsNote(this._untrackedReplacements)}`
+        : "";
+    const cancelled =
+      summary.cancelled > 0
+        ? `Cancelled ${summary.cancelled} grid order${summary.cancelled === 1 ? "" : "s"}. `
+        : "";
+    this._sellOffMessage =
+      `Grid Bot ${state.pair}: ${headline}. ${cancelled}${outcome} ` +
+      `Realized P&L: ${fmtSignedPnl(new Decimal(state.stats.realizedPnl), cs)}` +
+      replacements +
+      (reason ? `\nLast error: ${reason}` : "");
+    try {
+      await this._notify(this._sellOffMessage);
+      if (this._statusReporter) {
+        await this._statusReporter.flush(this._renderStatusCard());
+        state.statusMessages = this._statusReporter.snapshot();
+        if (!complete) this._saveGridState(state);
+      }
+    } catch (err) {
+      this._lastError = `Reporting failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 
   // --------------- fees ---------------
@@ -1256,30 +2247,263 @@ export class ForegroundGridBot {
     return new Decimal(order.filled_quantity).gt(0);
   }
 
-  private _postOnlyMatchErrorFromOrder(
-    order: OrderDetails,
-    side: "buy" | "sell",
-    price: string,
-  ): PostOnlyImmediateMatchError | null {
-    if (
-      order.status !== "rejected" ||
-      !isPostOnlyImmediateMatchReason(order.reject_reason)
-    ) {
-      return null;
+  private async _placeGridOrder(
+    params: PlaceOrderParams,
+  ): Promise<OrderPlacementResult> {
+    const clientOrderId = params.clientOrderId;
+    const firstSend =
+      !!clientOrderId && !this._unansweredSince.has(clientOrderId);
+    if (firstSend) this._unansweredSince.set(clientOrderId, Date.now());
+    let response: Awaited<ReturnType<RevolutXClient["placeOrder"]>>;
+    try {
+      response = await this._rateLimiter.place(
+        () => this._client!.placeOrder(params),
+        () => this._refuseWhenStopping(),
+      );
+    } catch (err) {
+      if (firstSend && err instanceof OrderNotSentError) {
+        this._unansweredSince.delete(clientOrderId);
+      }
+      throw err;
     }
-    return new PostOnlyImmediateMatchError(side, price, order);
+    if (clientOrderId) this._unansweredSince.delete(clientOrderId);
+    return response.data;
   }
 
-  private async _postOnlyMatchErrorFromPlacement(
-    placement: OrderPlacementResult,
+  private _buySlot(level: GridLevelState): string {
+    return `buy:${level.index}`;
+  }
+
+  private _sellSlot(position: GridLevelPosition): string {
+    return `sell:${position.id}`;
+  }
+
+  private _slotOf(target: TrackedOrder): string {
+    return target.position
+      ? this._sellSlot(target.position)
+      : this._buySlot(target.level);
+  }
+
+  private _targetPrice(target: TrackedOrder): string {
+    if (!target.position) return target.level.price;
+    return (this._state!.levels[target.level.index + 1] ?? target.level).price;
+  }
+
+  private _addOpenBuyFill(order: Pick<Order, "filled_quantity">): void {
+    this._openBuyFills = this._openBuyFills.plus(order.filled_quantity || 0);
+  }
+
+  private _rememberClientOrderId(
+    target: TrackedOrder,
+    clientOrderId: string,
+  ): void {
+    if (!clientOrderId) return;
+    if (target.position) {
+      target.position.sellClientOrderId ??= clientOrderId;
+      return;
+    }
+    (target.level.buyClientOrderIds ??= {})[target.orderId] ??= clientOrderId;
+  }
+
+  private _recordReadOrder(
+    target: TrackedOrder,
+    order: Pick<Order, "id" | "status" | "client_order_id" | "filled_quantity">,
+  ): void {
+    this._rememberClientOrderId(target, order.client_order_id);
+    this._recordFoundOrder(
+      this._slotOf(target),
+      order,
+      target.position ? "sell" : "buy",
+      this._targetPrice(target),
+    );
+  }
+
+  private _recordFoundOrder(
+    slot: string,
+    order: Pick<Order, "id" | "status" | "client_order_id" | "filled_quantity">,
     side: "buy" | "sell",
     price: string,
-  ): Promise<PostOnlyImmediateMatchError | null> {
-    if (placement.state !== "rejected") return null;
-    const response = await this._rateLimiter.query(() =>
-      this._client!.getOrder(placement.venue_order_id),
+  ): void {
+    this._unreadRejections.delete(order.id);
+    this._noLongerMissing(order.id);
+    this._noLongerMissing(order.client_order_id);
+    if (order.status === "rejected") {
+      this._countRejection(slot, order.client_order_id, side, price);
+    } else if (
+      RESTING_STATUSES.has(order.status) ||
+      new Decimal(order.filled_quantity || 0).gt(0)
+    ) {
+      this._placementHealth.confirmed(slot, order.id);
+    }
+  }
+
+  private _recordListedOrder(
+    target: TrackedOrder,
+    order: Pick<Order, "id" | "status" | "client_order_id">,
+  ): void {
+    this._rememberClientOrderId(target, order.client_order_id);
+    this._unreadRejections.delete(order.id);
+    this._noLongerMissing(order.id);
+    if (RESTING_STATUSES.has(order.status)) {
+      this._placementHealth.confirmed(this._slotOf(target), order.id);
+    }
+  }
+
+  private _countRejection(
+    slot: string,
+    clientOrderId: string,
+    side: "buy" | "sell",
+    price: string,
+  ): void {
+    if (this._state!.halt) return;
+    const rejections = this._placementHealth.rejected(slot, clientOrderId);
+    if (rejections === null) return;
+    if (rejections >= MAX_REJECTIONS) {
+      throw new OrderRejectedError(
+        side,
+        price,
+        `was rejected ${MAX_REJECTIONS} times`,
+      );
+    }
+    this._warnings.push(
+      `${side === "buy" ? "Buy" : "Sell"} @${price} rejected, retrying (${rejections + 1}/${MAX_REJECTIONS})`,
     );
-    return this._postOnlyMatchErrorFromOrder(response.data, side, price);
+  }
+
+  private _isLostRejection(orderId: string, err: unknown): boolean {
+    const deadline = this._unreadRejections.get(orderId);
+    if (!(err instanceof NotFoundError) || deadline === undefined) return false;
+    if (Date.now() < deadline) return false;
+    this._unreadRejections.delete(orderId);
+    this._warnings.push(
+      `Order ${orderId} was rejected and never showed up, placing it again`,
+    );
+    return true;
+  }
+
+  private async _replaceBuy(
+    level: GridLevelState,
+    orderId: string,
+    clientOrderId?: string,
+  ): Promise<void> {
+    const quote = level.buyOrderQuoteSizes?.[orderId];
+    this._removeBuyOrder(level, orderId);
+    await this._placeBuyOrAlert(
+      level,
+      quote ? new Decimal(quote) : undefined,
+      clientOrderId,
+    );
+  }
+
+  private async _handleUnlistedBuy(target: TrackedOrder): Promise<void> {
+    const { level, orderId } = target;
+    const plan = await this._planUnlisted(
+      target,
+      level.buyClientOrderIds?.[orderId],
+    );
+    if (plan.action === "wait") return;
+    this._noLongerMissing(orderId);
+    if (plan.action === "replace") {
+      this._noteUnlistedReplaced(target);
+      await this._replaceBuy(level, orderId);
+      return;
+    }
+    this._warnings.push(
+      `Buy @${level.price} not listed by the exchange for 5 minutes, sending it again under its own client order ID`,
+    );
+    this._lookUpFromGridStart(plan.clientOrderId);
+    await this._replaceBuy(level, orderId, plan.clientOrderId);
+  }
+
+  private async _handleUnlistedSell(target: TrackedOrder): Promise<void> {
+    const { position } = target;
+    if (!position) return;
+    const plan = await this._planUnlisted(target, position.sellClientOrderId);
+    if (plan.action === "wait") return;
+    this._noLongerMissing(target.orderId);
+    if (plan.action === "replace") {
+      this._noteUnlistedReplaced(target);
+      this._clearSellOrder(position);
+    } else {
+      this._warnings.push(
+        `Sell @${this._targetPrice(target)} not listed by the exchange for 5 minutes, sending it again under its own client order ID`,
+      );
+      position.sellOrderId = null;
+      position.sellClientOrderId = plan.clientOrderId;
+      this._lookUpFromGridStart(plan.clientOrderId);
+    }
+    this._saveGridState(this._state!);
+  }
+
+  private async _planUnlisted(
+    target: TrackedOrder,
+    savedClientOrderId: string | undefined,
+  ): Promise<UnlistedPlan> {
+    if (savedClientOrderId) {
+      return { action: "resend", clientOrderId: savedClientOrderId };
+    }
+    const { orderId } = target;
+    const holdOver = this._noteMissing(orderId) >= UNIDENTIFIED_HOLD_MS;
+    if (this._unidentified.has(orderId) && !holdOver) return { action: "wait" };
+    if ((this._historyRetryAt.get(orderId) ?? 0) > Date.now()) {
+      return { action: "wait" };
+    }
+    let found: string | undefined;
+    try {
+      found = await this._clientOrderIdInHistory(orderId);
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      this._historyRetryAt.set(orderId, Date.now() + HISTORY_RETRY_MS);
+      this._warnings.push(
+        `Check ${target.position ? "sell" : "buy"} #${target.level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
+      );
+      return { action: "wait" };
+    }
+    this._historyRetryAt.delete(orderId);
+    if (found) return { action: "resend", clientOrderId: found };
+    if (holdOver) return { action: "replace" };
+    this._unidentified.add(orderId);
+    void this._notify(this._unidentifiedMessage(target));
+    return { action: "wait" };
+  }
+
+  private _unidentifiedMessage(target: TrackedOrder): string {
+    const side = target.position ? "sell" : "buy";
+    const parts = [
+      `Grid Bot ${this._config.pair}: the ${side} at ${this._cs}${this._targetPrice(target)} (order ${target.orderId}) isn't listed by the exchange, and its client order ID is unknown, so the bot doesn't send it again.`,
+      `Check the ${this._config.pair} orders in the Revolut X app.`,
+      `If it doesn't show up within 24 hours of going missing, the bot places a new ${side}.`,
+    ];
+    if (this._config.trailingUp) parts.push("Trailing up waits until then.");
+    return parts.join(" ");
+  }
+
+  private _noteUnlistedReplaced(target: TrackedOrder): void {
+    const side = target.position ? "sell" : "buy";
+    const price = this._targetPrice(target);
+    this._warnings.push(
+      `${side === "buy" ? "Buy" : "Sell"} @${price} not listed by the exchange for 24 hours, client order ID unknown, placing a new ${side}`,
+    );
+    void this._notify(
+      `Grid Bot ${this._config.pair}: the ${side} at ${this._cs}${price} (order ${target.orderId}) was not listed by the exchange for 24 hours, so the bot stops waiting for it and places a new ${side}.`,
+    );
+  }
+
+  private async _clientOrderIdInHistory(
+    orderId: string,
+  ): Promise<string | undefined> {
+    const orders = await (this._tickHistory ??= this._ordersByClientOrderId());
+    for (const order of orders.values()) {
+      if (order.id === orderId) return order.client_order_id;
+    }
+    return undefined;
+  }
+
+  private _lookUpFromGridStart(clientOrderId: string): void {
+    this._unansweredSince.set(
+      clientOrderId,
+      this._gridHistoryStart() + ORDER_LOOKUP_LOOKBACK_MS,
+    );
   }
 
   private _clearPendingBuy(level: GridLevelState, clientOrderId: string): void {
@@ -1291,55 +2515,16 @@ export class ForegroundGridBot {
     }
   }
 
-  private async _handleRejectedBuy(
-    level: GridLevelState,
-    error: PostOnlyImmediateMatchError,
-    quoteSize?: Decimal,
-  ): Promise<never> {
-    const order = error.order;
-    if (order) {
-      this._clearPendingBuy(level, order.client_order_id);
-      if (this._hasFilledQuantity(order)) {
-        level.buyOrderQuoteSizes ??= {};
-        level.buyOrderQuoteSizes[order.id] = (
-          quoteSize ?? new Decimal(this._state!.quotePerLevel)
-        ).toString();
-        if (!level.buyOrderIds.includes(order.id)) {
-          level.buyOrderIds.push(order.id);
-        }
-        await this._processTerminalBuy(level, order, false, false);
-      } else {
-        this._removeBuyOrder(level, order.id);
-        this._saveGridState(this._state!);
-      }
-    }
-    throw error;
+  private _dropBuyOrder(level: GridLevelState, orderId: string): void {
+    const quote = level.buyOrderQuoteSizes?.[orderId];
+    if (quote) this._returnToSlot(level, quote);
+    this._removeBuyOrder(level, orderId);
   }
 
-  private async _handleRejectedSell(
-    level: GridLevelState,
-    sellLevel: GridLevelState,
-    position: GridLevelPosition,
-    error: PostOnlyImmediateMatchError,
-  ): Promise<never> {
-    const order = error.order;
-    if (order && this._hasFilledQuantity(order)) {
-      position.sellOrderId = order.id;
-      await this._processTerminalSell(
-        level,
-        sellLevel,
-        position,
-        order,
-        false,
-        false,
-      );
-    } else {
-      position.sellOrderId = null;
-      position.sellBaseSize = undefined;
-      position.sellClientOrderId = undefined;
-      this._saveGridState(this._state!);
-    }
-    throw error;
+  private _returnToSlot(level: GridLevelState, quote: Decimal.Value): void {
+    const position = level.positions[0];
+    if (!position) return;
+    position.slotQuote = this._slotQuote(position).plus(quote).toString();
   }
 
   private _removeBuyOrder(level: GridLevelState, orderId: string): void {
@@ -1347,13 +2532,17 @@ export class ForegroundGridBot {
     if (level.buyOrderQuoteSizes) {
       delete level.buyOrderQuoteSizes[orderId];
     }
+    if (level.buyClientOrderIds) {
+      delete level.buyClientOrderIds[orderId];
+    }
   }
 
   private _hasUnresolvedPlacementIntents(): boolean {
     if (!this._state) return false;
     return (
       (!!this._state.splitClientOrderId && !this._state.splitOrderId) ||
-      !!this._state.stopLossClientOrderId ||
+      !!this._state.halt ||
+      Object.keys(this._state.missingSince ?? {}).length > 0 ||
       this._state.levels.some(
         (level) =>
           (level.pendingBuyClientOrderIds?.length ?? 0) > 0 ||
@@ -1379,7 +2568,10 @@ export class ForegroundGridBot {
     level: GridLevelState,
     order: OrderDetails,
     fallbackPrice: Decimal,
-  ): { position: GridLevelPosition | null; remainingQuote: Decimal } {
+  ): {
+    position: GridLevelPosition | null;
+    remainingQuote: Decimal;
+  } {
     const submittedQuote = new Decimal(
       level.buyOrderQuoteSizes?.[order.id] ?? this._state!.quotePerLevel,
     );
@@ -1401,6 +2593,7 @@ export class ForegroundGridBot {
         id: order.id,
         baseHeld: netBase.toString(),
         fillCost: quoteCost.toString(),
+        slotQuote: submittedQuote.toString(),
         sellOrderId: null,
       };
       level.positions.push(position);
@@ -1408,7 +2601,7 @@ export class ForegroundGridBot {
       this._addFee(feeQuote);
       this._logTrade(
         "buy",
-        fallbackPrice.toString(),
+        this._executionPrice(order, fallbackPrice).toString(),
         netBase.toString(),
         order.id,
         undefined,
@@ -1419,23 +2612,42 @@ export class ForegroundGridBot {
     return { position, remainingQuote };
   }
 
+  private _shrinkSlot(
+    position: GridLevelPosition | null,
+    quote: Decimal,
+  ): void {
+    if (!position) return;
+    position.slotQuote = this._slotQuote(position).minus(quote).toString();
+  }
+
   private async _placeRemainingBuy(
     level: GridLevelState,
     quoteSize: Decimal,
+    slotOwner: GridLevelPosition | null,
   ): Promise<void> {
-    const constraints = this._getOrderConstraints();
-    if (quoteSize.lt(constraints.minQuote)) return;
-    const sellLevel = this._state!.levels[level.index + 1];
-    normalizeBaseOrderSize(
-      quoteSize.div(level.price),
-      constraints,
-      this._config.stopLoss
-        ? new Decimal(this._config.stopLoss)
-        : sellLevel
-          ? new Decimal(sellLevel.price)
-          : undefined,
-    );
+    if (!this._isPlaceableBuy(level, quoteSize)) return;
+    this._shrinkSlot(slotOwner, quoteSize);
     await this._placeBuyOrder(level, quoteSize);
+  }
+
+  private _isPlaceableBuy(level: GridLevelState, quoteSize: Decimal): boolean {
+    const constraints = this._getOrderConstraints();
+    if (quoteSize.lt(constraints.minQuote)) return false;
+    const sellLevel = this._state!.levels[level.index + 1];
+    try {
+      normalizeBaseOrderSize(
+        quoteSize.div(level.price),
+        constraints,
+        this._config.stopLoss
+          ? new Decimal(this._config.stopLoss)
+          : sellLevel
+            ? new Decimal(sellLevel.price)
+            : undefined,
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async _processTerminalBuy(
@@ -1463,20 +2675,22 @@ export class ForegroundGridBot {
         const feeStr = feeQuote.gt(0)
           ? ` | fee ${this._cs}${feeQuote.toFixed(2)}`
           : "";
-        this._notify(
-          `Grid Bot ${this._config.pair}: BUY filled @ ${this._cs}${level.price} | ${settlement.position.baseHeld} ${base}${feeStr}`,
+        void this._notify(
+          `Grid Bot ${this._config.pair}: BUY filled @ ${this._cs}${this._executionPrice(order, levelPrice)} | ${settlement.position.baseHeld} ${base}${feeStr}`,
         );
       }
     }
     if (replaceOrders && settlement.remainingQuote.gt(0)) {
       try {
-        await this._placeRemainingBuy(level, settlement.remainingQuote);
+        await this._placeRemainingBuy(
+          level,
+          settlement.remainingQuote,
+          settlement.position,
+        );
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof PostOnlyImmediateMatchError) throw err;
-        this._warnings.push(
-          `Partial buy remainder @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        if (err instanceof OrderRejectedError) throw err;
+        this._alertBuyFailure(level, settlement.remainingQuote, err);
       }
     }
     return true;
@@ -1502,9 +2716,10 @@ export class ForegroundGridBot {
     this._state!.stats.realizedPnl = new Decimal(this._state!.stats.realizedPnl)
       .plus(settlement.profit)
       .toString();
+    const fillPrice = this._executionPrice(order, sellPrice);
     this._logTrade(
       "sell",
-      sellPrice.toString(),
+      fillPrice.toString(),
       settlement.quantity.toString(),
       order.id,
       settlement.profit.toFixed(2),
@@ -1517,8 +2732,8 @@ export class ForegroundGridBot {
       const feeStr = settlement.feeQuote.gt(0)
         ? ` | fee ${this._cs}${settlement.feeQuote.toFixed(2)}`
         : "";
-      this._notify(
-        `Grid Bot ${this._config.pair}: SELL filled @ ${this._cs}${sellPrice} | ` +
+      void this._notify(
+        `Grid Bot ${this._config.pair}: SELL filled @ ${this._cs}${fillPrice} | ` +
           `${settlement.quantity} ${base} | profit ${fmtSignedPnl(settlement.profit, this._cs)}${feeStr} | ` +
           `total P&L: ${fmtSignedPnl(new Decimal(this._state!.stats.realizedPnl), this._cs)}`,
       );
@@ -1528,18 +2743,18 @@ export class ForegroundGridBot {
       await this._placeSellOnLevel(sellLevel, position);
     }
 
-    const rebuyQuote = FILLED_STATUSES.has(order.status)
-      ? new Decimal(this._state!.quotePerLevel)
-      : floorToStep(settlement.costBasis, this._getQuoteStep());
+    const rebuyQuote = settlement.rebuyQuote;
     if (replaceOrders && rebuyQuote.gt(0)) {
       try {
-        await this._placeRemainingBuy(level, rebuyQuote);
+        await this._placeRemainingBuy(
+          level,
+          rebuyQuote,
+          settlement.remainingBase.gt(0) ? position : null,
+        );
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof PostOnlyImmediateMatchError) throw err;
-        this._warnings.push(
-          `Partial sell re-buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        if (err instanceof OrderRejectedError) throw err;
+        this._alertBuyFailure(level, rebuyQuote, err);
       }
     }
     return settlement;
@@ -1569,20 +2784,26 @@ export class ForegroundGridBot {
       position.fillCost && position.fillCost !== "0"
         ? new Decimal(position.fillCost)
         : new Decimal(this._state!.quotePerLevel);
-    const settledCostBasis = fullCostBasis.times(settledBase).div(heldBase);
-    const remainingBase = heldBase.minus(settledBase);
-    const remainingCostBasis = fullCostBasis.minus(settledCostBasis);
+    const leftoverBase = heldBase.minus(settledBase);
+    const closesPosition =
+      !leftoverBase.gt(0) || !this._canSell(leftoverBase, fallbackPrice);
+    const settledCostBasis = closesPosition
+      ? fullCostBasis
+      : fullCostBasis.times(settledBase).div(heldBase);
+    const rebuyQuote = this._rebuyQuote(
+      position,
+      settledBase.div(heldBase),
+      closesPosition,
+    );
 
-    if (remainingBase.gt(0)) {
-      position.baseHeld = remainingBase.toString();
-      position.fillCost = remainingCostBasis.toString();
-      position.sellOrderId = null;
-      position.sellBaseSize = undefined;
-      position.sellClientOrderId = undefined;
-    } else {
+    if (closesPosition) {
       level.positions = level.positions.filter(
         (candidate) => candidate !== position,
       );
+    } else {
+      position.baseHeld = leftoverBase.toString();
+      position.fillCost = fullCostBasis.minus(settledCostBasis).toString();
+      this._clearSellOrder(position);
     }
 
     return {
@@ -1590,11 +2811,45 @@ export class ForegroundGridBot {
       feeQuote,
       profit: proceeds.minus(settledCostBasis),
       costBasis: settledCostBasis,
-      remainingBase,
+      remainingBase: closesPosition ? new Decimal(0) : leftoverBase,
+      rebuyQuote,
     };
   }
 
-  private _consumeHeldBase(quantity: Decimal): Decimal {
+  private _canSell(base: Decimal, price: Decimal): boolean {
+    let constraints: GridOrderConstraints;
+    try {
+      constraints = this._getOrderConstraints();
+    } catch {
+      return true;
+    }
+    try {
+      normalizeBaseOrderSize(base, constraints, price);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private _slotQuote(position: GridLevelPosition): Decimal {
+    return new Decimal(position.slotQuote ?? this._state!.quotePerLevel);
+  }
+
+  private _rebuyQuote(
+    position: GridLevelPosition,
+    soldShare: Decimal,
+    closesPosition: boolean,
+  ): Decimal {
+    const slot = this._slotQuote(position);
+    return closesPosition
+      ? slot
+      : floorToStep(slot.times(soldShare), this._getQuoteStep());
+  }
+
+  private _consumeHeldBase(
+    quantity: Decimal,
+    eligible?: Set<GridLevelPosition>,
+  ): Decimal {
     let remaining = quantity;
     let consumedCost = new Decimal(0);
 
@@ -1603,6 +2858,7 @@ export class ForegroundGridBot {
         if (!remaining.gt(0)) {
           return consumedCost;
         }
+        if (eligible && !eligible.has(position)) continue;
         const heldBase = new Decimal(position.baseHeld);
         if (!heldBase.gt(0)) continue;
 
@@ -1619,9 +2875,7 @@ export class ForegroundGridBot {
         if (residualBase.gt(0)) {
           position.baseHeld = residualBase.toString();
           position.fillCost = fullCostBasis.minus(positionCost).toString();
-          position.sellOrderId = null;
-          position.sellBaseSize = undefined;
-          position.sellClientOrderId = undefined;
+          this._clearSellOrder(position);
         } else {
           level.positions = level.positions.filter(
             (candidate) => candidate !== position,
@@ -1644,32 +2898,81 @@ export class ForegroundGridBot {
   ): Promise<{ base: Decimal; cost: Decimal; fee: Decimal }> {
     const state = this._state!;
     const constraints = this._getOrderConstraints();
+    const quoteCurrency = this._config.pair.split("-")[1] ?? "";
     state.splitRemainingQuote ??= totalQuote.toString();
     state.splitAccumulatedBase ??= "0";
     state.splitAccumulatedAmount ??= "0";
     state.splitAccumulatedFee ??= "0";
+    if (!state.splitOrderId && state.splitClientOrderId) {
+      this._log(
+        chalk.dim(
+          `  Looking up the split buy sent earlier, client order ID ${state.splitClientOrderId}...`,
+        ),
+      );
+      const found = (await this._ordersByClientOrderId()).get(
+        state.splitClientOrderId,
+      );
+      if (found) {
+        state.splitOrderId = found.id;
+        this._saveGridState(state);
+      }
+    }
     if (state.splitOrderId) {
       state.splitOrderQuoteSize ??= state.splitRemainingQuote;
     }
 
     while (new Decimal(state.splitRemainingQuote).gte(constraints.minQuote)) {
       if (!state.splitOrderId) {
-        state.splitClientOrderId ??= randomUUID();
+        if (this._isStopping()) throw new OrderNotSentError();
+        const newIntent = !state.splitClientOrderId;
+        const clientOrderId = (state.splitClientOrderId ??= randomUUID());
         state.splitOrderQuoteSize ??= state.splitRemainingQuote;
         this._saveGridState(state);
-        const orderResponse = await this._rateLimiter.place(() =>
-          this._client!.placeOrder({
-            symbol: this._config.pair,
-            side: "buy",
-            clientOrderId: state.splitClientOrderId,
-            market: { quoteSize: state.splitOrderQuoteSize },
-          }),
+        this._log(
+          chalk.dim(
+            `  Placing market buy for ${state.splitOrderQuoteSize} ${quoteCurrency}...`,
+          ),
         );
-        state.splitOrderId = orderResponse.data.venue_order_id;
+        try {
+          const orderResponse = await this._rateLimiter.place(
+            () =>
+              this._client!.placeOrder({
+                symbol: this._config.pair,
+                side: "buy",
+                clientOrderId,
+                market: { quoteSize: state.splitOrderQuoteSize },
+              }),
+            () => this._refuseWhenStopping(),
+          );
+          state.splitOrderId = orderResponse.data.venue_order_id;
+        } catch (err) {
+          if (err instanceof OrderNotSentError && newIntent) {
+            state.splitClientOrderId = undefined;
+            state.splitOrderQuoteSize = undefined;
+            this._saveGridState(state);
+          }
+          if (isDuplicateClientOrderIdError(err)) {
+            throw new Error(
+              `The split buy ${clientOrderId} was already sent, but the exchange doesn't list it yet. Start again in a few minutes.`,
+              { cause: err },
+            );
+          }
+          const doubt = placementDoubt(err);
+          if (!doubt) throw err;
+          throw new Error(
+            `The split buy may have been placed, but ${doubt}. Client order ID: ${clientOrderId}. Run the same command again. It looks the buy up before sending anything.`,
+            { cause: err },
+          );
+        }
         this._saveGridState(state);
+        this._log(
+          chalk.dim(
+            `  Market buy placed: ${state.splitOrderQuoteSize} ${quoteCurrency}. Waiting for fill...`,
+          ),
+        );
       }
 
-      const terminalOrder = await this._awaitOrderFill(state.splitOrderId);
+      const terminalOrder = await this._awaitTerminal(state.splitOrderId);
       if (!this._hasFilledQuantity(terminalOrder)) {
         const terminalStatus = terminalOrder.status;
         state.splitOrderId = undefined;
@@ -1681,31 +2984,7 @@ export class ForegroundGridBot {
         );
       }
 
-      const fallbackPrice = new Decimal(state.gridPrice);
-      const {
-        baseReceived: filledBase,
-        quoteCost,
-        feeQuote,
-      } = this._buyEconomics(terminalOrder, fallbackPrice);
-      const filledAmount = this._filledAmount(terminalOrder, fallbackPrice);
-      const submittedQuote: Decimal = new Decimal(state.splitOrderQuoteSize!);
-      state.splitAccumulatedBase = new Decimal(state.splitAccumulatedBase)
-        .plus(filledBase)
-        .toString();
-      state.splitAccumulatedAmount = new Decimal(state.splitAccumulatedAmount)
-        .plus(quoteCost)
-        .toString();
-      state.splitAccumulatedFee = new Decimal(state.splitAccumulatedFee)
-        .plus(feeQuote)
-        .toString();
-      state.splitRemainingQuote = floorToStep(
-        Decimal.max(new Decimal(0), submittedQuote.minus(filledAmount)),
-        constraints.quoteStep,
-      ).toString();
-      state.splitOrderId = undefined;
-      state.splitClientOrderId = undefined;
-      state.splitOrderQuoteSize = undefined;
-      this._saveGridState(state);
+      this._recordSplitFill(terminalOrder);
     }
 
     return {
@@ -1713,6 +2992,41 @@ export class ForegroundGridBot {
       cost: new Decimal(state.splitAccumulatedAmount),
       fee: new Decimal(state.splitAccumulatedFee),
     };
+  }
+
+  private _recordSplitFill(terminalOrder: OrderDetails): void {
+    const state = this._state!;
+    const constraints = this._getOrderConstraints();
+    const fallbackPrice = new Decimal(state.gridPrice);
+    const {
+      baseReceived: filledBase,
+      quoteCost,
+      feeQuote,
+    } = this._buyEconomics(terminalOrder, fallbackPrice);
+    const filledAmount = this._filledAmount(terminalOrder, fallbackPrice);
+    const submittedQuote = new Decimal(
+      state.splitOrderQuoteSize ??
+        this._filledAmount(terminalOrder, fallbackPrice),
+    );
+    state.splitAccumulatedBase = new Decimal(state.splitAccumulatedBase ?? 0)
+      .plus(filledBase)
+      .toString();
+    state.splitAccumulatedAmount = new Decimal(
+      state.splitAccumulatedAmount ?? 0,
+    )
+      .plus(quoteCost)
+      .toString();
+    state.splitAccumulatedFee = new Decimal(state.splitAccumulatedFee ?? 0)
+      .plus(feeQuote)
+      .toString();
+    state.splitRemainingQuote = floorToStep(
+      Decimal.max(new Decimal(0), submittedQuote.minus(filledAmount)),
+      constraints.quoteStep,
+    ).toString();
+    state.splitOrderId = undefined;
+    state.splitClientOrderId = undefined;
+    state.splitOrderQuoteSize = undefined;
+    this._saveGridState(state);
   }
 
   private _clearSplitExecutionState(): void {
@@ -1730,6 +3044,7 @@ export class ForegroundGridBot {
   // --------------- initialization ---------------
 
   private async _initNewGrid(): Promise<void> {
+    if (this._isStopping()) return;
     const config = this._config;
 
     this._log(chalk.dim("  Fetching current price..."));
@@ -1754,6 +3069,7 @@ export class ForegroundGridBot {
       split: config.splitInvestment,
       stopLoss: config.stopLoss ? new Decimal(config.stopLoss) : undefined,
       constraints,
+      takerFeeRate: TAKER_FEE_RATE,
     });
     const levels: GridLevelState[] = plan.levels.map((level) => ({
       index: level.index,
@@ -1819,16 +3135,6 @@ export class ForegroundGridBot {
     let splitFeeQuote = new Decimal(0);
     if (config.splitInvestment && !config.dryRun) {
       const marketBuyQuote = quotePerLevel.times(sellLevelIndices.size);
-      this._log(
-        chalk.dim(
-          `  Placing market buy for ${marketBuyQuote} ${quoteCurrency}...`,
-        ),
-      );
-      this._log(
-        chalk.dim(
-          `  Market buy placed: ${marketBuyQuote} ${quoteCurrency}. Waiting for fill...`,
-        ),
-      );
       const splitExecution = await this._executeSplitMarketBuy(marketBuyQuote);
       splitBaseAcquired = splitExecution.base;
       splitQuoteCost = splitExecution.cost;
@@ -1878,6 +3184,11 @@ export class ForegroundGridBot {
       );
     }
 
+    if (this._isStopping()) {
+      this._saveGridState(this._state);
+      return;
+    }
+
     // --- Place initial buy orders ---
     const buyLevels = plan.buyLevelIndices.map((index) => levels[index]);
     let buysPlaced = 0;
@@ -1886,13 +3197,18 @@ export class ForegroundGridBot {
     const buyResults = await Promise.allSettled(
       buyLevels.map((level) => this._placeBuyOrder(level, quotePerLevel)),
     );
-    let fatalBuyError: PostOnlyImmediateMatchError | null = null;
+    if (this._isStopping()) {
+      this._saveGridState(this._state);
+      return;
+    }
+    let fatalBuyError: OrderRejectedError | null = null;
     buyResults.forEach((result, index) => {
       if (result.status === "fulfilled") {
         buysPlaced++;
         return;
       }
-      if (result.reason instanceof PostOnlyImmediateMatchError) {
+      rethrowIfInsecureKey(result.reason);
+      if (result.reason instanceof OrderRejectedError) {
         fatalBuyError ??= result.reason;
       }
       const message =
@@ -1972,6 +3288,7 @@ export class ForegroundGridBot {
               id: `split-${sellIdx}`,
               baseHeld: baseForLevel.toString(),
               fillCost: costForLevel.toString(),
+              slotQuote: quotePerLevel.toString(),
               sellOrderId: null,
             };
             buyLevel.positions.push(position);
@@ -1994,10 +3311,14 @@ export class ForegroundGridBot {
         const fatalSellError = sellResults.find(
           (result) =>
             result.status === "rejected" &&
-            result.reason instanceof PostOnlyImmediateMatchError,
+            result.reason instanceof OrderRejectedError,
         );
         if (fatalSellError?.status === "rejected") {
           throw fatalSellError.reason;
+        }
+        if (this._isStopping()) {
+          this._saveGridState(this._state);
+          return;
         }
 
         this._log(
@@ -2018,9 +3339,6 @@ export class ForegroundGridBot {
     this._clearSplitExecutionState();
     this._saveGridState(this._state);
 
-    if (errors.length > 0) {
-      this._warnings = errors.slice(0, 3).map((e) => `Order failed: ${e}`);
-    }
     this._log(chalk.dim("  Grid initialized and state saved.\n"));
   }
 
@@ -2033,7 +3351,9 @@ export class ForegroundGridBot {
     this._log(chalk.dim("\n  Saved state found. Resuming grid..."));
 
     const constraints = this._getOrderConstraints();
-    this._validateSavedStateOrderConstraints(savedState, constraints);
+    if (!savedState.halt) {
+      this._validateSavedStateOrderConstraints(savedState, constraints);
+    }
 
     // Phase 1: Adopt saved state as-is
     this._state = savedState;
@@ -2046,8 +3366,8 @@ export class ForegroundGridBot {
     this._state.quotePrecision = quoteStep.toString();
     this._state.basePrecision = baseStep.toString();
 
-    if (this._state.stopLossClientOrderId) {
-      await this._triggerStopLoss(await this._getCurrentPrice());
+    if (this._state.halt) {
+      await this._liquidate(this._state.halt.reason);
       return;
     }
 
@@ -2055,158 +3375,139 @@ export class ForegroundGridBot {
     let buysFilled = 0;
     let sellsFilled = 0;
     let ordersKept = 0;
-    let ordersDead = 0;
+    let ordersGone = 0;
+    let ordersReplaced = 0;
+    let ordersUnlisted = 0;
+    const countReplaced = (order: OrderDetails): boolean => {
+      if (outsideChange(order) !== "replaced") return false;
+      ordersReplaced++;
+      this._untrackedReplacements++;
+      return true;
+    };
+    const countClosed = (order: OrderDetails) => {
+      if (!countReplaced(order)) ordersGone++;
+    };
     const settledBuyLevelIndices = new Set<number>();
     const settledSellSourceIndices = new Set<number>();
-    let activeOrderIds: Set<string> | null = null;
-    const isTerminalPartialFill = async (order: OrderDetails) => {
-      if (order.status !== PARTIALLY_FILLED_STATUS) return false;
-      activeOrderIds ??= await this._getActiveOrderIds();
-      return !activeOrderIds.has(order.id);
-    };
+    const isTerminalPartialFill = async (order: OrderDetails) =>
+      order.status === PARTIALLY_FILLED_STATUS &&
+      !(await this._isOrderActive(order.id));
 
-    for (const level of this._state.levels) {
-      for (const clientOrderId of [...(level.pendingBuyClientOrderIds ?? [])]) {
-        await this._placeBuyOrder(
-          level,
-          new Decimal(this._state.quotePerLevel),
-          clientOrderId,
+    const savedOrderIds = new Set(
+      this._trackedOrders(this._state).map((target) => target.orderId),
+    );
+    const resumed = await this._resumePendingPlacements();
+    const trackedOrders = this._trackedOrders(this._state);
+    const ordersResent = trackedOrders.filter((target) =>
+      resumed.resent.has(target.orderId),
+    ).length;
+    const ordersRenewed: Partial<Record<ClosedPendingOrder, number>> = {};
+    for (const target of trackedOrders) {
+      const closedAs = resumed.renewed.get(target.orderId);
+      if (closedAs)
+        ordersRenewed[closedAs] = (ordersRenewed[closedAs] ?? 0) + 1;
+    }
+    const ordersToVerify = trackedOrders.filter(
+      (target) =>
+        savedOrderIds.has(target.orderId) || resumed.found.has(target.orderId),
+    );
+
+    for (const target of ordersToVerify) {
+      if (target.position || !this._isStillTracked(target)) continue;
+      const { level, orderId: buyOrderId } = target;
+      if (buyOrderId.startsWith("dry-")) {
+        ordersKept++;
+        continue;
+      }
+      try {
+        const resp = await this._rateLimiter.query(() =>
+          client.getOrder(buyOrderId),
+        );
+        const order = resp.data;
+        this._recordReadOrder(target, order);
+        if (
+          FILLED_STATUSES.has(order.status) ||
+          (DEAD_STATUSES.has(order.status) && this._hasFilledQuantity(order)) ||
+          (await isTerminalPartialFill(order))
+        ) {
+          countReplaced(order);
+          if (await this._processTerminalBuy(level, order, false)) {
+            buysFilled++;
+            settledBuyLevelIndices.add(level.index);
+          }
+        } else if (DEAD_STATUSES.has(order.status)) {
+          this._dropBuyOrder(level, buyOrderId);
+          countClosed(order);
+        } else {
+          ordersKept++;
+        }
+      } catch (err) {
+        rethrowIfInsecureKey(err);
+        if (err instanceof OrderRejectedError) throw err;
+        if (err instanceof NotFoundError) {
+          this._noteMissing(buyOrderId);
+          ordersUnlisted++;
+          continue;
+        }
+        throw new Error(
+          `Unable to reconcile buy order ${buyOrderId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      const sellLevel = this._state.levels[level.index + 1];
-      if (sellLevel) {
-        for (const position of level.positions) {
-          if (position.sellClientOrderId && !position.sellOrderId) {
-            await this._placeSellOnLevel(sellLevel, position);
-          }
-        }
-      }
     }
 
-    // Check buy orders
-    for (const level of this._state.levels) {
-      for (const buyOrderId of [...level.buyOrderIds]) {
-        if (buyOrderId.startsWith("dry-")) {
-          ordersKept++;
-          continue;
-        }
-        try {
-          const resp = await this._rateLimiter.query(() =>
-            client.getOrder(buyOrderId),
-          );
-          const order = resp.data;
-          const rejection = this._postOnlyMatchErrorFromOrder(
-            order,
-            "buy",
-            level.price,
-          );
-          if (rejection) {
-            await this._handleRejectedBuy(level, rejection);
-          }
-          if (
-            FILLED_STATUSES.has(order.status) ||
-            (DEAD_STATUSES.has(order.status) &&
-              this._hasFilledQuantity(order)) ||
-            (await isTerminalPartialFill(order))
-          ) {
-            if (await this._processTerminalBuy(level, order, false)) {
-              buysFilled++;
-              settledBuyLevelIndices.add(level.index);
-            }
-          } else if (DEAD_STATUSES.has(order.status)) {
-            this._removeBuyOrder(level, buyOrderId);
-            ordersDead++;
-          } else {
-            ordersKept++;
-          }
-        } catch (err) {
-          rethrowIfInsecureKey(err);
-          if (err instanceof PostOnlyImmediateMatchError) throw err;
-          if (err instanceof NotFoundError) {
-            this._removeBuyOrder(level, buyOrderId);
-            ordersDead++;
-            continue;
-          }
-          throw new Error(
-            `Unable to reconcile buy order ${buyOrderId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    }
-
-    // Check sell orders (tracked via positions)
-    for (const level of this._state.levels) {
+    for (const target of ordersToVerify) {
+      const pos = target.position;
+      if (!pos || !this._isStillTracked(target)) continue;
+      const { level, orderId: sellOrderId } = target;
       const sellLevel = this._state.levels[level.index + 1];
-
-      for (const pos of [...level.positions]) {
-        if (!pos.sellOrderId) continue;
-        const sellOrderId = pos.sellOrderId;
-
-        if (sellOrderId.startsWith("dry-")) {
+      if (sellOrderId.startsWith("dry-")) {
+        ordersKept++;
+        continue;
+      }
+      try {
+        const resp = await this._rateLimiter.query(() =>
+          client.getOrder(sellOrderId),
+        );
+        const order = resp.data;
+        this._recordReadOrder(target, order);
+        if (
+          FILLED_STATUSES.has(order.status) ||
+          (DEAD_STATUSES.has(order.status) && this._hasFilledQuantity(order)) ||
+          (await isTerminalPartialFill(order))
+        ) {
+          countReplaced(order);
+          sellsFilled++;
+          const fallbackSellLevel = sellLevel ?? level;
+          const settlement = await this._processTerminalSell(
+            level,
+            fallbackSellLevel,
+            pos,
+            order,
+            false,
+          );
+          if (
+            pos.id.startsWith("split-") &&
+            settlement.remainingBase.isZero()
+          ) {
+            settledSellSourceIndices.add(level.index);
+          }
+        } else if (DEAD_STATUSES.has(order.status)) {
+          this._clearSellOrder(pos);
+          countClosed(order);
+        } else {
           ordersKept++;
+        }
+      } catch (err) {
+        rethrowIfInsecureKey(err);
+        if (err instanceof OrderRejectedError) throw err;
+        if (err instanceof NotFoundError) {
+          this._noteMissing(sellOrderId);
+          ordersUnlisted++;
           continue;
         }
-        try {
-          const resp = await this._rateLimiter.query(() =>
-            client.getOrder(sellOrderId),
-          );
-          const order = resp.data;
-          const rejection = this._postOnlyMatchErrorFromOrder(
-            order,
-            "sell",
-            sellLevel?.price ?? level.price,
-          );
-          if (rejection) {
-            await this._handleRejectedSell(
-              level,
-              sellLevel ?? level,
-              pos,
-              rejection,
-            );
-          }
-          if (
-            FILLED_STATUSES.has(order.status) ||
-            (DEAD_STATUSES.has(order.status) &&
-              this._hasFilledQuantity(order)) ||
-            (await isTerminalPartialFill(order))
-          ) {
-            sellsFilled++;
-            const fallbackSellLevel = sellLevel ?? level;
-            const settlement = await this._processTerminalSell(
-              level,
-              fallbackSellLevel,
-              pos,
-              order,
-              false,
-            );
-            if (
-              pos.id.startsWith("split-") &&
-              settlement.remainingBase.isZero()
-            ) {
-              settledSellSourceIndices.add(level.index);
-            }
-          } else if (DEAD_STATUSES.has(order.status)) {
-            pos.sellOrderId = null;
-            pos.sellBaseSize = undefined;
-            pos.sellClientOrderId = undefined;
-            ordersDead++;
-          } else {
-            ordersKept++;
-          }
-        } catch (err) {
-          rethrowIfInsecureKey(err);
-          if (err instanceof PostOnlyImmediateMatchError) throw err;
-          if (err instanceof NotFoundError) {
-            pos.sellOrderId = null;
-            pos.sellBaseSize = undefined;
-            pos.sellClientOrderId = undefined;
-            ordersDead++;
-            continue;
-          }
-          throw new Error(
-            `Unable to reconcile sell order ${sellOrderId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+        throw new Error(
+          `Unable to reconcile sell order ${sellOrderId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -2233,17 +3534,7 @@ export class ForegroundGridBot {
             `Insufficient ${quoteCurrency} balance (${available.toFixed(2)}) for split buy (${marketBuyQuote}).`,
           );
         }
-        this._log(
-          chalk.dim(
-            `  Placing market buy for ${marketBuyQuote} ${quoteCurrency}...`,
-          ),
-        );
       }
-      this._log(
-        chalk.dim(
-          `  Market buy placed: ${marketBuyQuote} ${quoteCurrency}. Waiting for fill...`,
-        ),
-      );
       const splitExecution = await this._executeSplitMarketBuy(marketBuyQuote);
       const splitBaseAcquired = splitExecution.base;
       const splitQuoteCost = splitExecution.cost;
@@ -2318,6 +3609,7 @@ export class ForegroundGridBot {
             id: `split-reconcile-${sellLevel.index}`,
             baseHeld: baseForLevel.toString(),
             fillCost: costForLevel.toString(),
+            slotQuote: this._state!.quotePerLevel,
             sellOrderId: null,
           };
           if (!existingPosition) {
@@ -2339,9 +3631,7 @@ export class ForegroundGridBot {
           }),
         );
         const fatalSellError = sellResults.find(
-          (result) =>
-            result.status === "rejected" &&
-            result.reason instanceof PostOnlyImmediateMatchError,
+          (result) => result.status === "rejected",
         );
         if (fatalSellError?.status === "rejected") {
           throw fatalSellError.reason;
@@ -2351,11 +3641,6 @@ export class ForegroundGridBot {
             `  Sell orders placed: ${sellsPlaced}/${sellLevelsToRestore.length}`,
           ),
         );
-        if (sellsPlaced !== sellLevelsToRestore.length) {
-          throw new Error(
-            `Failed to restore all split sell orders (${sellsPlaced}/${sellLevelsToRestore.length}).`,
-          );
-        }
       }
     } else if (config.splitInvestment && this._state.splitExecuted) {
       this._log(
@@ -2366,43 +3651,24 @@ export class ForegroundGridBot {
     }
 
     if (restoringInitialization) {
-      const currentPrice = await this._getCurrentPrice();
       const missingBuyLevels = this._state.levels
         .slice(0, this._state.levels.length / 2)
         .filter(
           (level) =>
             level.buyOrderIds.length === 0 &&
+            (level.pendingBuyClientOrderIds?.length ?? 0) === 0 &&
             !level.positions.some(
               (position) => !position.id.startsWith("split-"),
             ) &&
-            !settledBuyLevelIndices.has(level.index) &&
-            new Decimal(level.price).lt(currentPrice),
+            !settledBuyLevelIndices.has(level.index),
         );
-      const restoreErrors: string[] = [];
       const restoreResults = await Promise.allSettled(
-        missingBuyLevels.map((level) =>
-          this._placeBuyOrder(level, new Decimal(this._state!.quotePerLevel)),
-        ),
+        missingBuyLevels.map((level) => this._placeBuyOrAlert(level)),
       );
-      let fatalRestoreError: PostOnlyImmediateMatchError | null = null;
-      for (const result of restoreResults) {
-        if (result.status === "fulfilled") continue;
-        rethrowIfInsecureKey(result.reason);
-        if (result.reason instanceof PostOnlyImmediateMatchError) {
-          fatalRestoreError ??= result.reason;
-        }
-        restoreErrors.push(
-          result.reason instanceof Error
-            ? result.reason.message
-            : String(result.reason),
-        );
-      }
-      if (fatalRestoreError) throw fatalRestoreError;
-      if (restoreErrors.length > 0) {
-        throw new Error(
-          `Failed to restore ${restoreErrors.length} initial buy order${restoreErrors.length === 1 ? "" : "s"}: ${restoreErrors[0]}`,
-        );
-      }
+      const fatalBuyError = restoreResults.find(
+        (result) => result.status === "rejected",
+      );
+      if (fatalBuyError?.status === "rejected") throw fatalBuyError.reason;
       this._state.initializing = false;
       this._clearSplitExecutionState();
     }
@@ -2411,12 +3677,16 @@ export class ForegroundGridBot {
     this._saveGridState(this._state);
 
     this._log(
-      renderReconciliationSummary(
+      renderReconciliationSummary({
         buysFilled,
         sellsFilled,
-        ordersKept,
-        ordersDead,
-      ),
+        kept: ordersKept,
+        gone: ordersGone,
+        replaced: ordersReplaced,
+        resent: ordersResent,
+        renewed: ordersRenewed,
+        unlisted: ordersUnlisted,
+      }),
     );
     this._log(chalk.dim("  Grid resumed and state saved.\n"));
 
@@ -2430,7 +3700,7 @@ export class ForegroundGridBot {
         parts.push(
           `${sellsFilled} sell${sellsFilled !== 1 ? "s" : ""} filled offline`,
         );
-      this._notify(parts.join(" | "));
+      void this._notify(parts.join(" | "));
     }
   }
 
@@ -2438,6 +3708,7 @@ export class ForegroundGridBot {
 
   private async _loop(): Promise<void> {
     const source = this._priceSource!;
+    if (this._running) this._flushPlacementAlerts();
     while (this._running) {
       const cycleStart = performance.now();
 
@@ -2461,6 +3732,7 @@ export class ForegroundGridBot {
           throw err;
         }
         this._lastError = err instanceof Error ? err.message : String(err);
+        this._noteExchangeDown(this._lastError, err);
         this._render();
         if (!this._running) break;
         await this._paceSleep(cycleStart, source.paceIntervalSec);
@@ -2473,13 +3745,19 @@ export class ForegroundGridBot {
         break;
       }
 
+      if (!this._running) break;
       this._tradeLogStart = this._state?.tradeLog.length ?? 0;
 
+      let tickFailure: unknown = null;
       try {
-        await this._tick(tick.price);
+        this._tickInFlight = this._tick(tick.price);
+        await this._tickInFlight;
         this._lastError = null;
       } catch (err) {
-        if (err instanceof PostOnlyImmediateMatchError) {
+        tickFailure = err;
+        if (err instanceof OrderRejectedError) {
+          this.stop();
+          void this._liquidate("rejected-orders").catch(() => undefined);
           throw err;
         }
         if (err instanceof InsecureKeyPermissionsError) {
@@ -2500,7 +3778,17 @@ export class ForegroundGridBot {
         this._lastError = err instanceof Error ? err.message : String(err);
       }
 
+      if (this._ordersUnreachable) {
+        this._noteExchangeDown(
+          this._lastError ?? "orders could not be read",
+          tickFailure,
+        );
+      } else {
+        this._noteExchangeBack();
+      }
+
       try {
+        if (this._running) this._flushPlacementAlerts();
         this._render();
         this._emitTickEvent(tick.price, tick.timestamp);
         this._statusReporter?.update(this._renderStatusCard());
@@ -2619,7 +3907,10 @@ export class ForegroundGridBot {
       label = "Finished";
     } else if (this._lifecycle === "stopped") {
       glyph = "\u{1f534}";
-      label = "Stopped (stop-loss)";
+      label =
+        this._haltReason === "rejected-orders"
+          ? "Stopped (emergency stop)"
+          : "Stopped (stop-loss)";
     } else {
       glyph = "\u{1f7e2}";
       const dir = totalPnl.gt(0) ? "▲" : totalPnl.lt(0) ? "▼" : "━";
@@ -2651,14 +3942,27 @@ export class ForegroundGridBot {
     const state = this._state!;
     const client = this._client!;
     this._warnings = [];
-    this._connections = loadConnections().filter((c) => c.enabled);
+    this._cashShortfall = null;
+    this._tickHistory = null;
+    this._openBuyFills = new Decimal(0);
+    this._pruneMissing(state);
+    if (this._persistState) {
+      try {
+        this._connections = loadConnections().filter((c) => c.enabled);
+        this._forgetRemovedConnections();
+      } catch (err) {
+        this._warnings.push(
+          `Telegram connections can't be read, the last known ones are used: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     this._currentPrice = currentPrice;
 
     if (this._config.stopLoss) {
       const stopLossPrice = new Decimal(this._config.stopLoss);
       if (currentPrice.lte(stopLossPrice)) {
-        await this._triggerStopLoss(currentPrice);
+        await this._liquidate("stop-loss", currentPrice);
         this._tickCount++;
         return;
       }
@@ -2685,122 +3989,150 @@ export class ForegroundGridBot {
       return;
     }
 
-    // Fetch all active order IDs for this pair
-    let activeOrderIds: Set<string>;
+    let activeOrders: Map<string, Order>;
     try {
-      activeOrderIds = await this._getActiveOrderIds();
+      activeOrders = await this._getActiveOrders();
+      this._ordersUnreachable = false;
     } catch (err) {
+      this._ordersUnreachable = true;
       throw new Error(
         `Failed to fetch active orders: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
       );
     }
 
-    // Check each level's buy orders
-    for (const level of state.levels) {
-      for (const buyOrderId of [...level.buyOrderIds]) {
-        if (activeOrderIds.has(buyOrderId)) continue;
+    const trackedOrders = this._trackedOrders(state);
 
-        try {
-          const resp = await this._rateLimiter.query(() =>
-            client.getOrder(buyOrderId),
-          );
-          const order = resp.data;
-          const rejection = this._postOnlyMatchErrorFromOrder(
-            order,
-            "buy",
-            level.price,
-          );
-          if (rejection) {
-            await this._handleRejectedBuy(level, rejection);
-          }
-          if (
-            FILLED_STATUSES.has(order.status) ||
-            (DEAD_STATUSES.has(order.status) &&
-              this._hasFilledQuantity(order)) ||
-            order.status === PARTIALLY_FILLED_STATUS
-          ) {
-            await this._processTerminalBuy(level, order, true);
-          } else if (DEAD_STATUSES.has(order.status)) {
-            this._removeBuyOrder(level, buyOrderId);
-            await this._replaceGridBuy(level);
-          }
-        } catch (err) {
-          rethrowIfInsecureKey(err);
-          if (err instanceof PostOnlyImmediateMatchError) throw err;
-          this._warnings.push(
-            `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
-          );
+    for (const target of trackedOrders) {
+      if (target.position || !this._isStillTracked(target)) continue;
+      const { level, orderId: buyOrderId } = target;
+      const listed = activeOrders.get(buyOrderId);
+      if (listed) {
+        this._recordListedOrder(target, listed);
+        this._addOpenBuyFill(listed);
+        continue;
+      }
+
+      try {
+        const resp = await this._rateLimiter.query(() =>
+          client.getOrder(buyOrderId),
+        );
+        const order = resp.data;
+        this._recordReadOrder(target, order);
+        const openPartialFill =
+          order.status === PARTIALLY_FILLED_STATUS &&
+          (await this._isOrderActive(order.id));
+        if (
+          FILLED_STATUSES.has(order.status) ||
+          (DEAD_STATUSES.has(order.status) && this._hasFilledQuantity(order)) ||
+          (order.status === PARTIALLY_FILLED_STATUS && !openPartialFill)
+        ) {
+          this._noteChangedOutside(order);
+          await this._processTerminalBuy(level, order, true);
+        } else if (DEAD_STATUSES.has(order.status)) {
+          this._noteChangedOutside(order);
+          await this._replaceBuy(level, buyOrderId);
+        } else if (openPartialFill) {
+          this._addOpenBuyFill(order);
         }
+      } catch (err) {
+        rethrowIfInsecureKey(err);
+        if (err instanceof OrderRejectedError) throw err;
+        if (err instanceof NotFoundError) {
+          if (this._unreadRejections.has(buyOrderId)) {
+            if (this._isLostRejection(buyOrderId, err)) {
+              await this._replaceBuy(level, buyOrderId);
+            }
+          } else if (this._noteMissing(buyOrderId) >= UNCONFIRMED_GRACE_MS) {
+            await this._handleUnlistedBuy(target);
+          }
+          continue;
+        }
+        this._warnings.push(
+          `Check buy #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
+        );
       }
     }
 
-    // Check each level's positions for sell fills
-    for (const level of state.levels) {
+    for (const target of trackedOrders) {
+      const pos = target.position;
+      if (!pos || !this._isStillTracked(target)) continue;
+      const { level, orderId: sellOrderId } = target;
       const sellLevel = state.levels[level.index + 1];
       if (!sellLevel) continue;
+      const listed = activeOrders.get(sellOrderId);
+      if (listed) {
+        this._recordListedOrder(target, listed);
+        continue;
+      }
 
-      for (const pos of [...level.positions]) {
-        if (!pos.sellOrderId || activeOrderIds.has(pos.sellOrderId)) continue;
-
-        try {
-          const resp = await this._rateLimiter.query(() =>
-            client.getOrder(pos.sellOrderId!),
-          );
-          const order = resp.data;
-          const rejection = this._postOnlyMatchErrorFromOrder(
-            order,
-            "sell",
-            sellLevel.price,
-          );
-          if (rejection) {
-            await this._handleRejectedSell(level, sellLevel, pos, rejection);
-          }
-          if (
-            FILLED_STATUSES.has(order.status) ||
-            (DEAD_STATUSES.has(order.status) &&
-              this._hasFilledQuantity(order)) ||
-            order.status === PARTIALLY_FILLED_STATUS
-          ) {
-            await this._processTerminalSell(level, sellLevel, pos, order, true);
-          } else if (DEAD_STATUSES.has(order.status)) {
-            pos.sellOrderId = null;
-            pos.sellBaseSize = undefined;
-            pos.sellClientOrderId = undefined;
-            // HELD recovery below will re-place the sell
-          }
-        } catch (err) {
-          rethrowIfInsecureKey(err);
-          if (err instanceof PostOnlyImmediateMatchError) throw err;
-          this._warnings.push(
-            `Check sell #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
-          );
+      try {
+        const resp = await this._rateLimiter.query(() =>
+          client.getOrder(sellOrderId),
+        );
+        const order = resp.data;
+        this._recordReadOrder(target, order);
+        if (
+          FILLED_STATUSES.has(order.status) ||
+          (DEAD_STATUSES.has(order.status) && this._hasFilledQuantity(order)) ||
+          (order.status === PARTIALLY_FILLED_STATUS &&
+            !(await this._isOrderActive(order.id)))
+        ) {
+          this._noteChangedOutside(order);
+          await this._processTerminalSell(level, sellLevel, pos, order, true);
+        } else if (DEAD_STATUSES.has(order.status)) {
+          this._noteChangedOutside(order);
+          this._clearSellOrder(pos);
         }
+      } catch (err) {
+        rethrowIfInsecureKey(err);
+        if (err instanceof OrderRejectedError) throw err;
+        if (err instanceof NotFoundError) {
+          if (this._unreadRejections.has(sellOrderId)) {
+            if (this._isLostRejection(sellOrderId, err)) {
+              this._clearSellOrder(pos);
+              this._saveGridState(state);
+            }
+          } else if (this._noteMissing(sellOrderId) >= UNCONFIRMED_GRACE_MS) {
+            await this._handleUnlistedSell(target);
+          }
+          continue;
+        }
+        this._warnings.push(
+          `Check sell #${level.index + 1}: ${err instanceof Error ? err.message : String(err)} (will retry)`,
+        );
       }
     }
 
-    // Orphan recovery: empty levels below price get buy orders
+    await this._sweepPendingBuys();
+
     const quoteCurrency = this._config.pair.split("-")[1] ?? "";
-    const recoveryBalance = this._config.dryRun
+    let freeCash = this._config.dryRun
       ? null
       : await this._checkBalance(quoteCurrency);
-    const canPlaceBuys =
-      recoveryBalance === null ||
-      recoveryBalance.gte(new Decimal(state.quotePerLevel));
-    if (canPlaceBuys) {
-      for (const level of state.levels) {
-        if (
-          level.positions.length === 0 &&
-          new Decimal(level.price).lt(currentPrice) &&
-          new Decimal(level.price).lt(new Decimal(state.gridPrice))
-        ) {
-          const expected = level.expectedBuys ?? 1;
-          const missing = expected - level.buyOrderIds.length;
-          for (let i = 0; i < missing; i++) {
-            await this._replaceGridBuy(level);
-          }
+    let buysWaitingForCash = 0;
+    let cashNeeded = new Decimal(0);
+    for (const level of state.levels) {
+      if (
+        level.positions.length > 0 ||
+        !new Decimal(level.price).lt(new Decimal(state.gridPrice))
+      ) {
+        continue;
+      }
+      for (const quoteSize of this._missingBuyQuotes(level)) {
+        if (freeCash !== null && freeCash.lt(quoteSize)) {
+          buysWaitingForCash++;
+          cashNeeded = cashNeeded.plus(quoteSize);
+          continue;
         }
+        await this._placeBuyOrAlert(level, quoteSize);
+        if (freeCash !== null) freeCash = freeCash.minus(quoteSize);
       }
     }
+    this._cashShortfall =
+      buysWaitingForCash > 0 && freeCash
+        ? { buys: buysWaitingForCash, free: freeCash, needed: cashNeeded }
+        : null;
 
     // HELD recovery: positions without a sell order get one placed
     for (const level of state.levels) {
@@ -2848,11 +4180,17 @@ export class ForegroundGridBot {
         const quotePerLevel = new Decimal(state.quotePerLevel);
         const baseStep = this._getBaseStep();
         const filledQty = floorToStep(quotePerLevel.div(levelPrice), baseStep);
+        const fillCost = ceilToStep(
+          filledQty.times(levelPrice),
+          this._getQuoteStep(),
+        );
 
         const pos: GridLevelPosition = {
           id: `dry-${randomUUID().slice(0, 8)}`,
           baseHeld: filledQty.toString(),
-          fillCost: quotePerLevel.toString(),
+          fillCost: fillCost.toString(),
+          slotQuote:
+            level.buyOrderQuoteSizes?.[buyOrderId] ?? state.quotePerLevel,
           sellOrderId: null,
         };
         level.positions.push(pos);
@@ -2867,7 +4205,7 @@ export class ForegroundGridBot {
 
         const base = this._config.pair.split("-")[0] ?? "";
         const cs = this._cs;
-        this._notify(
+        void this._notify(
           `Grid Bot ${this._config.pair}: BUY filled @ ${cs}${level.price} | ${filledQty} ${base} [DRY RUN]`,
         );
 
@@ -2897,7 +4235,10 @@ export class ForegroundGridBot {
           pos.fillCost && pos.fillCost !== "0"
             ? new Decimal(pos.fillCost)
             : new Decimal(state.quotePerLevel);
-        const revenue = filledQty.times(sellLevelPrice);
+        const revenue = floorToStep(
+          filledQty.times(sellLevelPrice),
+          this._getQuoteStep(),
+        );
         const profit = revenue.minus(costBasis);
 
         level.positions = level.positions.filter((p) => p !== pos);
@@ -2915,7 +4256,7 @@ export class ForegroundGridBot {
 
         const base = this._config.pair.split("-")[0] ?? "";
         const cs = this._cs;
-        this._notify(
+        void this._notify(
           `Grid Bot ${this._config.pair}: SELL filled @ ${cs}${sellLevelPrice} | ` +
             `${filledQty} ${base} | profit ${fmtSignedPnl(profit, cs)} | ` +
             `total P&L: ${fmtSignedPnl(new Decimal(state.stats.realizedPnl), cs)} [DRY RUN]`,
@@ -2926,12 +4267,10 @@ export class ForegroundGridBot {
       }
     }
 
-    // Orphan recovery: empty levels below price get buy orders (excluding last level)
     for (const level of state.levels) {
       if (
         level.buyOrderIds.length === 0 &&
         level.positions.length === 0 &&
-        new Decimal(level.price).lt(currentPrice) &&
         new Decimal(level.price).lt(new Decimal(state.gridPrice))
       ) {
         level.buyOrderIds.push(`dry-buy-${randomUUID().slice(0, 8)}`);
@@ -2971,171 +4310,761 @@ export class ForegroundGridBot {
       return;
     }
 
+    const refusedId = position.sellClientOrderId;
+    if (refusedId && this._refusedRecheckAt.has(refusedId)) {
+      await this._recheckRefused(refusedId, (order) =>
+        this._resumePendingSell(sellLevel, position, order, false),
+      );
+      return;
+    }
+
     if (this._config.dryRun) {
       position.sellOrderId = `dry-sell-${sellLevel.index}`;
       position.sellBaseSize = heldBase.toString();
       return;
     }
 
+    const level = this._state!.levels[sellLevel.index - 1];
     try {
       const baseAmount = normalizeBaseOrderSize(
         heldBase,
         this._getOrderConstraints(),
         new Decimal(sellLevel.price),
       );
-      position.sellClientOrderId ??= randomUUID();
-      position.sellBaseSize = baseAmount.toString();
-      this._saveGridState(this._state!);
-      const resp = await this._rateLimiter
-        .place(() =>
-          this._client!.placeOrder({
+      for (;;) {
+        if (this._isStopping()) return;
+        const newIntent = !position.sellClientOrderId;
+        const clientOrderId = (position.sellClientOrderId ??= randomUUID());
+        position.sellBaseSize = baseAmount.toString();
+        this._saveGridState(this._state!);
+        let placement: OrderPlacementResult;
+        try {
+          placement = await this._placeGridOrder({
             symbol: this._config.pair,
             side: "sell",
-            clientOrderId: position.sellClientOrderId,
+            clientOrderId,
             limit: {
               price: sellLevel.price,
               baseSize: baseAmount.toString(),
-              executionInstructions: ["post_only"],
+              executionInstructions: ["allow_taker"],
             },
-          }),
-        )
-        .catch((err) => {
-          if (hasPostOnlyImmediateMatchReason(err)) {
-            position.sellBaseSize = undefined;
+          });
+        } catch (err) {
+          if (!(err instanceof OrderNotSentError)) throw err;
+          if (newIntent) {
             position.sellClientOrderId = undefined;
+            position.sellBaseSize = undefined;
             this._saveGridState(this._state!);
-            throw new PostOnlyImmediateMatchError("sell", sellLevel.price);
           }
-          throw err;
-        });
-      const rejection = await this._postOnlyMatchErrorFromPlacement(
-        resp.data,
-        "sell",
-        sellLevel.price,
-      );
-      if (rejection) {
-        const sourceLevel = this._state!.levels[sellLevel.index - 1];
-        await this._handleRejectedSell(
-          sourceLevel,
-          sellLevel,
-          position,
-          rejection,
-        );
+          return;
+        }
+        const orderId = placement.venue_order_id;
+        const slot = this._sellSlot(position);
+        position.sellOrderId = orderId;
+        this._saveGridState(this._state!);
+        if (placement.state !== "rejected") {
+          this._placementHealth.sent(slot, orderId);
+          return;
+        }
+        this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
+        this._countRejection(slot, clientOrderId, "sell", sellLevel.price);
+        const order = await this._awaitRejection(orderId);
+        if (!order) {
+          this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
+          return;
+        }
+        if (this._hasFilledQuantity(order)) {
+          await this._processTerminalSell(
+            level,
+            sellLevel,
+            position,
+            order,
+            true,
+          );
+          return;
+        }
+        this._clearSellOrder(position);
+        this._saveGridState(this._state!);
+        if (this._state!.halt) return;
       }
-      position.sellOrderId = resp.data.venue_order_id;
-      this._saveGridState(this._state!);
     } catch (err) {
       rethrowIfInsecureKey(err);
-      if (err instanceof PostOnlyImmediateMatchError) throw err;
-      this._warnings.push(
-        `Sell @${sellLevel.price}: ${err instanceof Error ? err.message : String(err)}`,
+      if (err instanceof OrderRejectedError) throw err;
+      const clientOrderId = position.sellClientOrderId;
+      if (clientOrderId && isDuplicateClientOrderIdError(err)) {
+        this._markRefused(this._sellSlot(position), clientOrderId);
+        await this._recheckRefused(clientOrderId, (order) =>
+          this._resumePendingSell(sellLevel, position, order, false),
+        );
+        return;
+      }
+      const base = this._config.pair.split("-")[0] ?? "";
+      this._alertPlacementFailure(
+        this._sellSlot(position),
+        `the sell of ${position.baseHeld} ${base} at ${this._cs}${sellLevel.price}`,
+        err,
       );
     }
   }
 
-  private async _replaceGridBuy(level: GridLevelState): Promise<void> {
-    const quotePerLevel = new Decimal(this._state!.quotePerLevel);
+  private _alertBuyFailure(
+    level: GridLevelState,
+    quoteSize: Decimal,
+    err: unknown,
+  ): void {
+    this._alertPlacementFailure(
+      this._buySlot(level),
+      `the buy of ${fmtMoney(quoteSize, this._cs)} at ${this._cs}${level.price}`,
+      err,
+    );
+  }
 
-    try {
-      await this._placeBuyOrder(
+  private _alertPlacementFailure(
+    slot: string,
+    order: string,
+    err: unknown,
+  ): void {
+    const failure = retryFailure(err);
+    const message = refusalOf(err)
+      ? refusedKeyNotice(err, "grid")
+      : err instanceof Error
+        ? err.message
+        : String(err);
+    const reason = [message, failure]
+      .filter((part): part is string => Boolean(part))
+      .map((part) => part.replace(/\.$/, ""))
+      .join(". ");
+    this._placementHealth.failed(slot, reason, order);
+  }
+
+  private _flushPlacementAlerts(): void {
+    for (const { order, reason } of this._placementHealth.takeAlerts()) {
+      void this._notify(
+        `Grid Bot ${this._config.pair}: could not place ${order} (${reason}). The bot keeps retrying.`,
+      );
+    }
+  }
+
+  private _attentionLines(): string[] {
+    const state = this._state;
+    if (!state || state.halt || this._lifecycle !== "running") return [];
+    const waiting = new Map<
+      string,
+      { side: "buy" | "sell"; price: string; detail: string; count: number }
+    >();
+    const note = (side: "buy" | "sell", price: string, detail: string) => {
+      const key = `${side}|${price}|${detail}`;
+      const entry = waiting.get(key);
+      if (entry) entry.count++;
+      else waiting.set(key, { side, price, detail, count: 1 });
+    };
+    const unplaced = (slot: string, status: string) => {
+      const reason = this._placementHealth.failureReason(slot);
+      return reason ? `not placed: ${reason}` : status;
+    };
+    const missing = state.missingSince ?? {};
+    const now = Date.now();
+    const unlisted = (orderId: string): string | null => {
+      if (this._unidentified.has(orderId)) return UNLISTED_WITHOUT_ID;
+      const since = Date.parse(missing[orderId] ?? "");
+      return Number.isFinite(since) && now - since >= UNLISTED_NOTICE_MS
+        ? NOT_LISTED_YET
+        : null;
+    };
+    for (const level of state.levels) {
+      (level.pendingBuyClientOrderIds ?? []).forEach(() =>
+        note(
+          "buy",
+          level.price,
+          unplaced(this._buySlot(level), AWAITING_LOOKUP),
+        ),
+      );
+      for (const orderId of level.buyOrderIds) {
+        const detail = unlisted(orderId);
+        if (detail) note("buy", level.price, detail);
+      }
+      const sellLevel = state.levels[level.index + 1];
+      if (!sellLevel) continue;
+      for (const position of level.positions) {
+        if (position.sellOrderId) {
+          const detail = unlisted(position.sellOrderId);
+          if (detail) note("sell", sellLevel.price, detail);
+          continue;
+        }
+        if (!new Decimal(position.baseHeld).gt(0)) continue;
+        const refused =
+          !!position.sellClientOrderId &&
+          this._refusedRecheckAt.has(position.sellClientOrderId);
+        note(
+          "sell",
+          sellLevel.price,
+          unplaced(
+            this._sellSlot(position),
+            refused ? AWAITING_LOOKUP : NOT_PLACED_YET,
+          ),
+        );
+      }
+    }
+    const lines: string[] = [];
+    if (this._keyRefusal) {
+      lines.push(refusedKeyNotice(this._keyRefusal, "grid"));
+    }
+    if (this._changedOutside) {
+      const { cancelled, replaced, lastAt } = this._changedOutside;
+      const time = new Date(lastAt).toLocaleTimeString("en-GB", {
+        hour12: false,
+      });
+      if (cancelled > 0) {
+        lines.push(
+          `${cancelled} order${cancelled === 1 ? "" : "s"} cancelled outside the bot, placed again (last ${time})`,
+        );
+      }
+      if (replaced > 0) {
+        lines.push(
+          `${replaced} order${replaced === 1 ? "" : "s"} replaced outside the bot, placed again, replacement${replaced === 1 ? "" : "s"} untracked`,
+        );
+      }
+    }
+    if (this._cashShortfall) {
+      const { buys, free, needed } = this._cashShortfall;
+      lines.push(
+        `${buys} buy${buys === 1 ? " waits" : "s wait"} for cash: ${fmtMoney(free, this._cs)} free, ${fmtMoney(needed, this._cs)} needed`,
+      );
+    }
+    for (const { side, price, detail, count } of waiting.values()) {
+      const orders =
+        count === 1 ? (side === "buy" ? "Buy" : "Sell") : `${count} ${side}s`;
+      lines.push(`${orders} @${price} ${detail}`);
+    }
+    return lines;
+  }
+
+  private async _sweepPendingBuys(): Promise<void> {
+    const state = this._state!;
+    const pending = state.levels.flatMap((level) =>
+      (level.pendingBuyClientOrderIds ?? []).map((clientOrderId) => ({
         level,
-        quotePerLevel,
-        level.pendingBuyClientOrderIds?.[0],
+        clientOrderId,
+      })),
+    );
+    const pendingIds = new Set(pending.map((entry) => entry.clientOrderId));
+    for (const clientOrderId of this._pendingMissedOnce) {
+      if (!pendingIds.has(clientOrderId)) {
+        this._pendingMissedOnce.delete(clientOrderId);
+      }
+    }
+    if (pending.length === 0 || Date.now() < this._pendingSweepAt) return;
+    this._pendingSweepAt = Date.now() + REFUSED_RECHECK_MS;
+    let orders: Map<string, Order>;
+    try {
+      orders = await this._ordersByClientOrderId(
+        this._lookupStart(pending.map((entry) => entry.clientOrderId)),
       );
     } catch (err) {
       rethrowIfInsecureKey(err);
-      if (err instanceof PostOnlyImmediateMatchError) throw err;
       this._warnings.push(
-        `Buy @${level.price}: ${err instanceof Error ? err.message : String(err)}`,
+        `Order lookup: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return;
+    }
+    const quoteCurrency = this._config.pair.split("-")[1] ?? "";
+    let freeQuote: Decimal | null | undefined;
+    for (const { level, clientOrderId } of pending) {
+      if (!level.pendingBuyClientOrderIds?.includes(clientOrderId)) continue;
+      const quoteSize = this._pendingBuyQuote(level, clientOrderId);
+      const order = orders.get(clientOrderId);
+      if (order) {
+        this._forgetLookup(clientOrderId);
+        this._pendingMissedOnce.delete(clientOrderId);
+        await this._resumePendingBuy(level, clientOrderId, order, true);
+        continue;
+      }
+      if (this._refusedRecheckAt.has(clientOrderId)) continue;
+      if (!this._pendingMissedOnce.has(clientOrderId)) {
+        this._pendingMissedOnce.add(clientOrderId);
+        continue;
+      }
+      if (freeQuote === undefined) {
+        freeQuote = await this._checkBalance(quoteCurrency);
+      }
+      if (freeQuote !== null && freeQuote.lt(quoteSize)) {
+        this._alertBuyFailure(
+          level,
+          quoteSize,
+          `not enough ${quoteCurrency}, ${fmtMoney(freeQuote, this._cs)} free`,
+        );
+        continue;
+      }
+      await this._placeBuyOrAlert(level, quoteSize, clientOrderId);
+      if (freeQuote !== null) freeQuote = freeQuote.minus(quoteSize);
+    }
+  }
+
+  private async _placeBuyOrAlert(
+    level: GridLevelState,
+    quoteSize = new Decimal(this._state!.quotePerLevel),
+    clientOrderId?: string,
+  ): Promise<string | null> {
+    try {
+      return await this._placeBuyOrder(level, quoteSize, clientOrderId);
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      if (err instanceof OrderRejectedError) throw err;
+      if (clientOrderId && isDuplicateClientOrderIdError(err)) {
+        this._markRefused(this._buySlot(level), clientOrderId);
+        return null;
+      }
+      this._alertBuyFailure(level, quoteSize, err);
+      return null;
+    }
+  }
+
+  private _markRefused(slot: string, clientOrderId: string): void {
+    this._placementHealth.adopted(slot);
+    this._refusedRecheckAt.set(clientOrderId, 0);
+  }
+
+  private _pendingBuyQuote(
+    level: GridLevelState,
+    clientOrderId: string,
+  ): Decimal {
+    return new Decimal(
+      level.pendingBuyQuoteSizes?.[clientOrderId] ?? this._state!.quotePerLevel,
+    );
+  }
+
+  private async _recheckRefused(
+    clientOrderId: string,
+    resolve: (order: Order) => Promise<unknown>,
+  ): Promise<void> {
+    if (Date.now() < (this._refusedRecheckAt.get(clientOrderId) ?? 0)) return;
+    const order = await this._findByClientOrderId(clientOrderId);
+    if (!order) {
+      this._refusedRecheckAt.set(
+        clientOrderId,
+        Date.now() + REFUSED_RECHECK_MS,
+      );
+      return;
+    }
+    this._forgetLookup(clientOrderId);
+    await resolve(order);
+  }
+
+  private async _findByClientOrderId(
+    clientOrderId: string,
+  ): Promise<Order | undefined> {
+    try {
+      return (
+        await this._ordersByClientOrderId(this._lookupStart([clientOrderId]))
+      ).get(clientOrderId);
+    } catch (err) {
+      rethrowIfInsecureKey(err);
+      this._warnings.push(
+        `Order lookup: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
     }
   }
 
   private async _placeBuyOrder(
     level: GridLevelState,
     quoteSize: Decimal,
-    clientOrderId: string = randomUUID(),
-  ): Promise<string> {
+    clientOrderId?: string,
+  ): Promise<string | null> {
     if (this._config.dryRun) {
       const orderId = `dry-buy-${randomUUID().slice(0, 8)}`;
       level.buyOrderIds.push(orderId);
       return orderId;
     }
 
-    level.pendingBuyClientOrderIds ??= [];
+    let attemptClientOrderId = clientOrderId ?? randomUUID();
+    let minted = clientOrderId === undefined;
     level.pendingBuyQuoteSizes ??= {};
-    const persistedQuoteSize = level.pendingBuyQuoteSizes[clientOrderId];
+    const persistedQuoteSize = level.pendingBuyQuoteSizes[attemptClientOrderId];
     const requestedQuoteSize = persistedQuoteSize
       ? new Decimal(persistedQuoteSize)
       : quoteSize;
-    if (!level.pendingBuyClientOrderIds.includes(clientOrderId)) {
-      level.pendingBuyClientOrderIds.push(clientOrderId);
-      level.pendingBuyQuoteSizes[clientOrderId] = requestedQuoteSize.toString();
-      this._saveGridState(this._state!);
-    }
-    const resp = await this._rateLimiter
-      .place(() =>
-        this._client!.placeOrder({
+    for (;;) {
+      const pendingIds = (level.pendingBuyClientOrderIds ??= []);
+      const newIntent = !pendingIds.includes(attemptClientOrderId);
+      if (newIntent && minted && this._isStopping()) {
+        this._returnToSlot(level, requestedQuoteSize);
+        this._saveGridState(this._state!);
+        return null;
+      }
+      if (newIntent) {
+        pendingIds.push(attemptClientOrderId);
+        (level.pendingBuyQuoteSizes ??= {})[attemptClientOrderId] =
+          requestedQuoteSize.toString();
+        this._saveGridState(this._state!);
+      }
+      let placement: OrderPlacementResult;
+      try {
+        placement = await this._placeGridOrder({
           symbol: this._config.pair,
           side: "buy",
-          clientOrderId,
+          clientOrderId: attemptClientOrderId,
           limit: {
             price: level.price,
             quoteSize: requestedQuoteSize.toString(),
-            executionInstructions: ["post_only"],
+            executionInstructions: ["allow_taker"],
           },
-        }),
-      )
-      .catch((err) => {
-        if (hasPostOnlyImmediateMatchReason(err)) {
-          this._clearPendingBuy(level, clientOrderId);
+        });
+      } catch (err) {
+        if (!(err instanceof OrderNotSentError)) throw err;
+        if (newIntent && minted) {
+          this._clearPendingBuy(level, attemptClientOrderId);
+          this._returnToSlot(level, requestedQuoteSize);
           this._saveGridState(this._state!);
-          throw new PostOnlyImmediateMatchError("buy", level.price);
         }
-        throw err;
-      });
-    const rejection = await this._postOnlyMatchErrorFromPlacement(
-      resp.data,
-      "buy",
-      level.price,
-    );
-    if (rejection) {
-      await this._handleRejectedBuy(level, rejection, requestedQuoteSize);
+        return null;
+      }
+      const orderId = placement.venue_order_id;
+      this._clearPendingBuy(level, attemptClientOrderId);
+      level.buyOrderQuoteSizes ??= {};
+      level.buyOrderQuoteSizes[orderId] = requestedQuoteSize.toString();
+      (level.buyClientOrderIds ??= {})[orderId] = attemptClientOrderId;
+      if (!level.buyOrderIds.includes(orderId)) {
+        level.buyOrderIds.push(orderId);
+      }
+      this._saveGridState(this._state!);
+      const slot = this._buySlot(level);
+      if (placement.state !== "rejected") {
+        this._placementHealth.sent(slot, orderId);
+        return orderId;
+      }
+      this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
+      this._countRejection(slot, attemptClientOrderId, "buy", level.price);
+      const order = await this._awaitRejection(orderId);
+      if (!order) {
+        this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
+        return orderId;
+      }
+      if (await this._processTerminalBuy(level, order, true)) return null;
+      if (this._state!.halt) return null;
+      attemptClientOrderId = randomUUID();
+      minted = true;
     }
-    const orderId = resp.data.venue_order_id;
+  }
+
+  private async _resumePendingPlacements(resend = true): Promise<{
+    resent: Set<string>;
+    renewed: Map<string, ClosedPendingOrder>;
+    found: Set<string>;
+  }> {
+    const state = this._state!;
+    const resentOrderIds = new Set<string>();
+    const renewedOrderIds = new Map<string, ClosedPendingOrder>();
+    const foundOrderIds = new Set<string>();
+    const note = (placement: ResumedPlacement | null) => {
+      if (!placement) return;
+      if (placement.closedAs) {
+        renewedOrderIds.set(placement.orderId, placement.closedAs);
+      } else {
+        resentOrderIds.add(placement.orderId);
+      }
+    };
+    const resumed = () => ({
+      resent: resentOrderIds,
+      renewed: renewedOrderIds,
+      found: foundOrderIds,
+    });
+    const hasPending = state.levels.some(
+      (level) =>
+        (level.pendingBuyClientOrderIds?.length ?? 0) > 0 ||
+        level.positions.some(
+          (position) => !!position.sellClientOrderId && !position.sellOrderId,
+        ),
+    );
+    if (!hasPending) return resumed();
+    const ordersByClientOrderId = await this._ordersByClientOrderId();
+    for (const order of ordersByClientOrderId.values()) {
+      foundOrderIds.add(order.id);
+    }
+    for (const level of state.levels) {
+      for (const clientOrderId of [...(level.pendingBuyClientOrderIds ?? [])]) {
+        note(
+          await this._resumePendingBuy(
+            level,
+            clientOrderId,
+            ordersByClientOrderId.get(clientOrderId),
+            resend,
+          ),
+        );
+      }
+      const sellLevel = state.levels[level.index + 1];
+      if (!sellLevel) continue;
+      for (const position of level.positions) {
+        if (position.sellClientOrderId && !position.sellOrderId) {
+          note(
+            await this._resumePendingSell(
+              sellLevel,
+              position,
+              ordersByClientOrderId.get(position.sellClientOrderId),
+              resend,
+            ),
+          );
+        }
+      }
+    }
+    return resumed();
+  }
+
+  private _gridHistoryStart(state = this._state!): number {
+    const createdAt = Date.parse(state.createdAt);
+    return Number.isFinite(createdAt)
+      ? createdAt - ORDER_LOOKUP_LOOKBACK_MS
+      : Date.now() - ORDER_LOOKUP_FALLBACK_MS;
+  }
+
+  private _lookupStart(clientOrderIds: string[]): number {
+    const sentTimes: number[] = [];
+    for (const clientOrderId of clientOrderIds) {
+      const sentAt = this._unansweredSince.get(clientOrderId);
+      if (sentAt === undefined) return this._gridHistoryStart();
+      sentTimes.push(sentAt);
+    }
+    if (sentTimes.length === 0) return this._gridHistoryStart();
+    return Math.min(...sentTimes) - ORDER_LOOKUP_LOOKBACK_MS;
+  }
+
+  private _forgetLookup(clientOrderId: string): void {
+    this._refusedRecheckAt.delete(clientOrderId);
+    this._unansweredSince.delete(clientOrderId);
+  }
+
+  private async _ordersByClientOrderId(
+    historyFrom = this._gridHistoryStart(),
+  ): Promise<Map<string, Order>> {
+    const orders = new Map<string, Order>();
+    let cursor: string | undefined;
+    do {
+      const response = await this._rateLimiter.query(() =>
+        this._client!.getActiveOrders({
+          symbols: [this._config.pair],
+          cursor,
+          limit: 100,
+        }),
+      );
+      for (const order of response.data) {
+        orders.set(order.client_order_id, order);
+      }
+      cursor = response.metadata?.next_cursor as string | undefined;
+    } while (cursor);
+    const endDate = Date.now();
+    const historical = await paginateWithDynamicWindows<Order>({
+      fetchPage: (startDate, windowEnd, pageCursor, limit) =>
+        this._rateLimiter.query(() =>
+          this._client!.getHistoricalOrders({
+            symbols: [this._config.pair],
+            startDate,
+            endDate: windowEnd,
+            cursor: pageCursor,
+            limit,
+          }),
+        ),
+      startDate: historyFrom,
+      endDate,
+      apiLimit: HISTORICAL_ORDERS_API_LIMIT,
+    });
+    for (const order of historical) {
+      if (!orders.has(order.client_order_id)) {
+        orders.set(order.client_order_id, order);
+      }
+    }
+    return orders;
+  }
+
+  private _isOpenOrFilled(
+    order: Pick<Order, "status" | "filled_quantity">,
+  ): boolean {
+    return (
+      !DEAD_STATUSES.has(order.status) ||
+      new Decimal(order.filled_quantity || 0).gt(0)
+    );
+  }
+
+  private async _resumePendingBuy(
+    level: GridLevelState,
+    clientOrderId: string,
+    order: Order | undefined,
+    resend: boolean,
+  ): Promise<ResumedPlacement | null> {
+    const quoteSize = this._pendingBuyQuote(level, clientOrderId);
+    if (!order) {
+      if (resend) {
+        return placedAgain(
+          await this._placeBuyOrAlert(level, quoteSize, clientOrderId),
+          null,
+        );
+      }
+      if (this._recordMissing(clientOrderId) === "gone") {
+        this._clearPendingBuy(level, clientOrderId);
+        this._saveGridState(this._state!);
+      }
+      return null;
+    }
     this._clearPendingBuy(level, clientOrderId);
-    level.buyOrderQuoteSizes ??= {};
-    level.buyOrderQuoteSizes[orderId] = requestedQuoteSize.toString();
-    if (!level.buyOrderIds.includes(orderId)) {
-      level.buyOrderIds.push(orderId);
+    if (this._isOpenOrFilled(order)) {
+      level.buyOrderQuoteSizes ??= {};
+      level.buyOrderQuoteSizes[order.id] = quoteSize.toString();
+      (level.buyClientOrderIds ??= {})[order.id] = clientOrderId;
+      if (!level.buyOrderIds.includes(order.id)) {
+        level.buyOrderIds.push(order.id);
+      }
+      this._saveGridState(this._state!);
+      this._placementHealth.adopted(this._buySlot(level));
+      this._recordFoundOrder(this._buySlot(level), order, "buy", level.price);
+      return null;
     }
     this._saveGridState(this._state!);
-    return orderId;
+    this._recordFoundOrder(this._buySlot(level), order, "buy", level.price);
+    const closedAs = this._closedAs(order);
+    if (!resend) return null;
+    return placedAgain(await this._placeBuyOrAlert(level, quoteSize), closedAs);
+  }
+
+  private async _resumePendingSell(
+    sellLevel: GridLevelState,
+    position: GridLevelPosition,
+    order: Order | undefined,
+    resend: boolean,
+  ): Promise<ResumedPlacement | null> {
+    const closedAs =
+      order && !this._isOpenOrFilled(order) ? this._closedAs(order) : null;
+    if (order) {
+      if (this._isOpenOrFilled(order)) {
+        position.sellOrderId = order.id;
+        this._saveGridState(this._state!);
+        this._placementHealth.adopted(this._sellSlot(position));
+        this._recordFoundOrder(
+          this._sellSlot(position),
+          order,
+          "sell",
+          sellLevel.price,
+        );
+        return null;
+      }
+      position.sellClientOrderId = undefined;
+      position.sellBaseSize = undefined;
+      this._saveGridState(this._state!);
+      this._recordFoundOrder(
+        this._sellSlot(position),
+        order,
+        "sell",
+        sellLevel.price,
+      );
+    } else if (!resend) {
+      if (
+        position.sellClientOrderId &&
+        this._recordMissing(position.sellClientOrderId) === "gone"
+      ) {
+        position.sellClientOrderId = undefined;
+        position.sellBaseSize = undefined;
+        this._saveGridState(this._state!);
+      }
+      return null;
+    }
+    if (!resend) return null;
+    await this._placeSellOnLevel(sellLevel, position);
+    return placedAgain(position.sellOrderId ?? null, closedAs);
   }
 
   // --------------- notifications & logging ---------------
 
-  private _notify(message: string): void {
-    if (this._connections.length === 0) return;
-    for (const tc of this._connections) {
-      void sendWithRetries(tc.bot_token, tc.chat_id, message).then((r) => {
-        if (r.success) this._lastNotifyOk = Date.now();
-      });
+  private _noteChangedOutside(
+    order: Pick<OrderDetails, "id" | "status" | "reject_reason">,
+  ): void {
+    if (this._selfCancelled.has(order.id)) return;
+    const change = outsideChange(order);
+    if (!change) return;
+    if (change === "replaced") this._untrackedReplacements++;
+    const seen = this._changedOutside ?? {
+      cancelled: 0,
+      replaced: 0,
+      lastAt: 0,
+    };
+    this._changedOutside = {
+      ...seen,
+      [change]: seen[change] + 1,
+      lastAt: Date.now(),
+    };
+  }
+
+  private _closedAs(order: Order): ClosedPendingOrder {
+    const change = outsideChange(order);
+    if (change === "replaced") this._noteChangedOutside(order);
+    return change ?? "rejected";
+  }
+
+  private _noteExchangeDown(error: string, cause: unknown): void {
+    this._keyRefusal = refusalOf(cause);
+    const alert = this._outage.failed(exchangeFault(cause));
+    if (!alert) return;
+    const subject = `Grid Bot ${this._config.pair}`;
+    this._sendOutageAlert(
+      alert,
+      alert.fault === "refused"
+        ? refusedKeyMessage(subject, cause, {
+            user: "grid",
+            keyLabel: this._keyLabel,
+            meanwhile: "Open grid orders stay on the exchange meanwhile.",
+          })
+        : noDataMessage(subject, alert.minutes, error),
+    );
+  }
+
+  private _noteExchangeBack(): void {
+    this._keyRefusal = null;
+    const alert = this._outage.recovered();
+    if (!alert) return;
+    this._sendOutageAlert(
+      alert,
+      recoveryMessage(`Grid Bot ${this._config.pair}`, alert),
+    );
+  }
+
+  private _sendOutageAlert(alert: OutageAlert, message: string): void {
+    void this._notify(message).then((delivered) => {
+      if (!delivered) this._outage.undelivered(alert);
+    });
+  }
+
+  private _forgetRemovedConnections(): void {
+    const current = new Set(this._connections.map((c) => c.id));
+    for (const connectionId of [...this._telegramProblems.keys()]) {
+      if (!current.has(connectionId)) {
+        this._telegramProblems.delete(connectionId);
+      }
     }
   }
 
-  private async _notifyAndWait(message: string): Promise<void> {
-    if (this._connections.length === 0) return;
-    const results = await Promise.allSettled(
-      this._connections.map((tc) =>
-        sendWithRetries(tc.bot_token, tc.chat_id, message),
-      ),
+  private async _notify(message: string): Promise<boolean> {
+    if (this._connections.length === 0) return true;
+    const delivered = await Promise.all(
+      this._connections.map(async (tc) => {
+        const result = await sendWithRetries(tc.bot_token, tc.chat_id, message);
+        this._noteTelegram(tc.id, result);
+        return result.success;
+      }),
     );
-    for (const r of results) {
-      if (r.status === "fulfilled" && r.value.success) {
-        this._lastNotifyOk = Date.now();
-      }
+    return delivered.includes(true);
+  }
+
+  private _noteTelegram(connectionId: string, result: TelegramResult): void {
+    if (result.success) {
+      this._telegramProblems.delete(connectionId);
+    } else {
+      this._telegramProblems.set(connectionId, result.error ?? "not delivered");
     }
+  }
+
+  private _telegramProblem(): string | null {
+    for (const connection of this._connections) {
+      const problem = this._telegramProblems.get(connection.id);
+      if (problem) return problem;
+    }
+    return null;
   }
 
   private _logTrade(
@@ -3177,10 +5106,12 @@ export class ForegroundGridBot {
       uptime: Date.now() - this._startTime,
       tickCount: this._tickCount,
       lastError: this._lastError,
+      attention: this._attentionLines(),
       warnings: this._warnings,
       telegramConnections: this._connections.length,
       intervalSec: this._config.intervalSec,
-      lastNotifyOk: this._lastNotifyOk,
+      telegramProblem: this._telegramProblem(),
+      openBuyFills: this._openBuyFills,
     };
 
     process.stdout.write("\x1B[2J\x1B[H");

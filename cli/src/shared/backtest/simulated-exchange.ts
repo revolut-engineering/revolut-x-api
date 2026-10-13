@@ -1,5 +1,5 @@
 import { Decimal } from "decimal.js";
-import { floorToStep } from "../../engine/grid-plan.js";
+import { ceilToStep, floorToStep } from "../../engine/grid-plan.js";
 import { MAKER_FEE_RATE, TAKER_FEE_RATE } from "../../engine/grid-math.js";
 
 interface SimOrder {
@@ -243,16 +243,19 @@ export class SimulatedExchange {
     if (order.side === "buy") {
       const quoteSize = order.quoteSize ?? new Decimal(0);
       filledQuantity = floorToStep(quoteSize.div(order.price), this._baseStep);
-      filledAmount = quoteSize;
+      filledAmount =
+        order.type === "limit"
+          ? ceilToStep(filledQuantity.times(order.price), this._quoteStep)
+          : quoteSize;
 
       // Track fill for this tick (limit buys only — market fills tracked at placement)
       if (order.type === "limit") {
         this._filledBuysThisTick.push({
           price: order.price,
           quantity: filledQuantity,
-          quoteValue: quoteSize,
+          quoteValue: filledAmount,
         });
-        this._cashBalance = this._cashBalance.minus(quoteSize);
+        this._cashBalance = this._cashBalance.minus(filledAmount);
       }
     } else {
       const baseSize = order.baseSize ?? new Decimal(0);

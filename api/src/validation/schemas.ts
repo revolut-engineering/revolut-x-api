@@ -21,6 +21,14 @@ export const symbolSchema = z
   .min(1, "Symbol is required")
   .regex(/^[A-Z0-9]+-[A-Z0-9]+$/, "Symbol must be in format ABC-XYZ");
 
+export const placementReplySchema = z.object({
+  data: z.object({
+    venue_order_id: z.string().min(1),
+    client_order_id: z.string().min(1),
+    state: z.string().min(1),
+  }),
+});
+
 export const placeOrderSchema = z
   .object({
     symbol: symbolSchema,

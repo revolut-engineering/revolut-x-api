@@ -1,6 +1,6 @@
 # Privacy Policy — Revolut X MCP Server
 
-Last updated: 2026-03-24
+Last updated: 2026-10-12
 
 ---
 
@@ -15,9 +15,9 @@ Revolut X is a **local MCP server** that runs on your machine via STDIO transpor
 ### API Credentials (local storage)
 
 - **Private key** (Ed25519) and **API key** are stored in a platform-specific config directory with `0600` file permissions (owner read/write only):
-  - macOS: `~/.config/revolutx-mcp/`
-  - Linux: `~/.config/revolutx-mcp/`
-  - Windows: `%APPDATA%\revolutx-mcp\`
+  - macOS: `~/.config/revolut-x/`
+  - Linux: `~/.config/revolut-x/`
+  - Windows: `%APPDATA%\revolut-x\`
 - The private key **never leaves your machine** — it is used only to sign API requests locally.
 - You can override the config directory with the `REVOLUTX_CONFIG_DIR` environment variable.
 
@@ -26,10 +26,10 @@ Revolut X is a **local MCP server** that runs on your machine via STDIO transpor
 - Account balances, order books, tickers, candlestick data, active orders, and trade history are fetched from the Revolut X API on demand when you invoke the corresponding MCP tools.
 - This data is **not persisted** — it is returned to the LLM client and discarded.
 
-### Alert and Event Data (local SQLite)
+### CLI Data (local files)
 
-- Alert configurations, trigger history, Telegram connection details, and system events are stored in a local SQLite database managed by the Worker service.
-- The database file lives inside the config directory or the `revolutx-data` Docker volume.
+- The `revx` CLI keeps Telegram connection details (`telegram.json`) and grid bot state (`grid_state_<pair>.json`) as files in the same config directory.
+- Alert history is not stored. Alerts are only shown in the terminal and sent to the connected Telegram chats.
 
 ---
 

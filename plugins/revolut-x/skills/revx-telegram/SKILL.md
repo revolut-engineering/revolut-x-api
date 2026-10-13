@@ -26,7 +26,7 @@ revx connector telegram add --token <token> --chat-id <id> --label prod --test
 | `--token <token>` | Telegram Bot API token (required) |
 | `--chat-id <id>` | Telegram chat ID (required) |
 | `--label <name>` | Connection label (default: "default") |
-| `--test` | Send test message after adding |
+| `--test` | Send a test message first and save the connection only if it arrives |
 
 ### Behavioral Instructions for Claude
 
@@ -65,7 +65,7 @@ Once the user provides both values, run:
 revx connector telegram add --token <bot-token> --chat-id <chat-id> --test
 ```
 
-The `--test` flag sends a test message to verify the connection works. If the test succeeds, the setup is complete.
+The `--test` flag sends a test message before saving. The connection is saved only if the message arrives. If it fails, the command exits 1, says why and saves nothing, so fix the token or chat ID and run it again. The token must look like `123456789:AA...` and the chat ID like `123456789`, `-1001234567890` or `@mychannel`, otherwise nothing is saved either.
 
 **Troubleshooting:**
 - "chat not found" or empty `getUpdates` response — the user must send a message to the bot first, then retry the URL

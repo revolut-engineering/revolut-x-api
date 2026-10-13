@@ -242,6 +242,53 @@ describe("grid plan", () => {
     ).toThrow(/minimum base order size/i);
   });
 
+  it("charges the split buy its full amount, as the exchange does for a market buy", () => {
+    // given
+    const constraints: GridOrderConstraints = {
+      baseStep: new Decimal("0.01"),
+      quoteStep: new Decimal("0.01"),
+      minBase: new Decimal("0.01"),
+      maxBase: new Decimal("100"),
+      minQuote: new Decimal("1"),
+    };
+
+    // when
+    const plan = createGridPlan({
+      startPrice: new Decimal("2000"),
+      totalLevels: 6,
+      rangePct: new Decimal("0.05"),
+      investment: new Decimal("1000"),
+      split: true,
+      takerFeeRate: new Decimal("0.0009"),
+      constraints,
+    });
+
+    // then
+    const splitCost = plan.splitCostByLevel.reduce(
+      (sum, cost) => sum.plus(cost),
+      new Decimal(0),
+    );
+    expect(splitCost.toFixed(2)).toBe(plan.quotePerLevel.times(3).toFixed(2));
+  });
+
+  it("rejects a size that rounds down to nothing even without a minimum", () => {
+    // given
+    const unbounded: GridOrderConstraints = {
+      ...CONSTRAINTS,
+      minBase: new Decimal(0),
+      minQuote: new Decimal(0),
+    };
+
+    // when
+    const size = () =>
+      normalizeBaseOrderSize(new Decimal("0.00009"), unbounded);
+
+    // then
+    expect(size).toThrow(
+      "Order size rounds down to nothing at the size step 0.0001.",
+    );
+  });
+
   it("rejects an aligned sell whose quote value is below the minimum", () => {
     // then
     expect(() =>
@@ -451,7 +498,7 @@ describe("level parsing", () => {
     (value) => {
       // then
       expect(() => parseLevelsPerSide(value)).toThrow(
-        /between 1 and 100 \(per side\)/,
+        `--levels must be a whole number between 1 and 100 (per side), got "${value}".`,
       );
     },
   );

@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 import { registerOrderCommand } from "../../src/commands/order.js";
 import { formatLocalDateTime } from "../../src/output/formatter.js";
+import {
+  BadRequestError,
+  NetworkError,
+  ServerError,
+} from "@revolut/revolut-x-api";
 
 const mockPlaceOrder = vi.fn();
 const mockGetActiveOrders = vi.fn();
@@ -11,6 +16,19 @@ const mockCancelOrder = vi.fn();
 const mockCancelAllOrders = vi.fn();
 const mockGetOrderFills = vi.fn();
 const mockReplaceOrder = vi.fn();
+const mockGetCurrencyPairs = vi.fn(async () => ({
+  "BTC/USD": {
+    base: "BTC",
+    quote: "USD",
+    base_step: "0.00000001",
+    quote_step: "0.01",
+    min_order_size: "0.00001",
+    max_order_size: "1000",
+    min_order_size_quote: "1",
+    slippage: 0.01,
+    status: "active",
+  },
+}));
 
 vi.mock("../../src/util/client.js", () => ({
   getClient: vi.fn(() => ({
@@ -22,12 +40,8 @@ vi.mock("../../src/util/client.js", () => ({
     cancelAllOrders: mockCancelAllOrders,
     getOrderFills: mockGetOrderFills,
     replaceOrder: mockReplaceOrder,
+    getCurrencyPairs: mockGetCurrencyPairs,
   })),
-}));
-
-vi.mock("../../src/util/parse.js", () => ({
-  parseTimestamp: vi.fn((val) => Number(val)),
-  parsePositiveInt: vi.fn((val) => Number(val)),
 }));
 
 vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
@@ -38,7 +52,21 @@ vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
   class RateLimitError extends RevolutXError {}
   class BadRequestError extends RevolutXError {}
   class NotFoundError extends RevolutXError {}
-  class NetworkError extends RevolutXError {}
+  class NetworkError extends RevolutXError {
+    readonly mayHaveReachedServer: boolean;
+    constructor(message: string, options?: { mayHaveReachedServer?: boolean }) {
+      super(message);
+      this.mayHaveReachedServer = options?.mayHaveReachedServer ?? true;
+    }
+  }
+  class ServerError extends RevolutXError {
+    constructor(
+      message: string,
+      readonly statusCode: number,
+    ) {
+      super(message);
+    }
+  }
   return {
     ...actual,
     RevolutXClient: vi.fn(),
@@ -51,6 +79,10 @@ vi.mock("@revolut/revolut-x-api", async (importOriginal) => {
     BadRequestError,
     NotFoundError,
     NetworkError,
+    ServerError,
+    isDuplicateClientOrderIdError: (err: unknown) =>
+      err instanceof BadRequestError &&
+      /already been placed/i.test((err as Error).message),
   };
 });
 
@@ -108,6 +140,10 @@ const sampleTwapOrder = {
   stop_loss: null,
 };
 
+afterEach(() => {
+  process.exitCode = undefined;
+});
+
 function makeProgram() {
   const program = new Command().exitOverride();
   registerOrderCommand(program);
@@ -143,6 +179,221 @@ describe("order place", () => {
     exitSpy.mockRestore();
   });
 
+  it("names --qty when it is zero and sends nothing", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0",
+        "--market",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      '--qty must be greater than 0, got "0".',
+    );
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("refuses a limit price off the price step before sending", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000.015",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "The nearest valid prices are 95000.01 and 95000.02.",
+    );
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("reads no pair rules for a market order", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--qty",
+      "0.001",
+      "--market",
+    ]);
+
+    expect(mockGetCurrencyPairs).not.toHaveBeenCalled();
+    expect(mockPlaceOrder).toHaveBeenCalledOnce();
+  });
+
+  it("names a pair Revolut X doesn't have and sends nothing", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "NOPE-USD",
+        "buy",
+        "--qty",
+        "1",
+        "--limit",
+        "1",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "NOPE-USD is not a pair on Revolut X. See: revx market pairs",
+    );
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("says the order was not sent when the pair rules can't be read", async () => {
+    mockGetCurrencyPairs.mockRejectedValueOnce(
+      new Error("Service unavailable"),
+    );
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "Could not read the BTC-USD price step, so the order was not sent. Service unavailable",
+    );
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("refuses a blank --client-order-id", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "0.001",
+        "--market",
+        "--client-order-id",
+        " ",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "--client-order-id must not be empty.",
+    );
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("checks the pair format before reading any pair rules", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "btc/usd",
+        "buy",
+        "--qty",
+        "0.001",
+        "--limit",
+        "95000",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      'The pair must look like BTC-USD, got "btc/usd".',
+    );
+    expect(mockGetCurrencyPairs).not.toHaveBeenCalled();
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("accepts a lowercase pair", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "btc-usd",
+      "buy",
+      "--qty",
+      "0.001",
+      "--market",
+    ]);
+
+    expect(mockPlaceOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "BTC-USD" }),
+    );
+  });
+
+  it("refuses an empty --limit instead of ignoring it", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "place",
+        "BTC-USD",
+        "buy",
+        "--qty",
+        "1",
+        "--limit",
+        "",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      '--limit must be a positive number, got "".',
+    );
+    expect(mockPlaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("sends a number written with an exponent in plain form", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "place",
+      "BTC-USD",
+      "buy",
+      "--qty",
+      "1e-3",
+      "--limit",
+      "95000",
+    ]);
+
+    expect(mockPlaceOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: expect.objectContaining({ baseSize: "0.001", price: "95000" }),
+      }),
+    );
+  });
+
   it("places a market buy order with base quantity", async () => {
     await program.parseAsync([
       "node",
@@ -156,6 +407,7 @@ describe("order place", () => {
       "--market",
     ]);
     expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
       symbol: "BTC-USD",
       side: "buy",
       market: { baseSize: "0.001" },
@@ -178,6 +430,7 @@ describe("order place", () => {
       "100000",
     ]);
     expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
       symbol: "BTC-USD",
       side: "sell",
       limit: { price: "100000", baseSize: "0.001" },
@@ -200,6 +453,7 @@ describe("order place", () => {
       "ioc",
     ]);
     expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
       symbol: "BTC-USD",
       side: "buy",
       limit: { price: "95000", baseSize: "0.001", timeInForce: "ioc" },
@@ -370,6 +624,7 @@ describe("order place", () => {
       "--market",
     ]);
     expect(mockPlaceOrder).toHaveBeenCalledWith({
+      clientOrderId: expect.any(String),
       symbol: "BTC-USD",
       side: "buy",
       market: { quoteSize: "500" },
@@ -409,6 +664,198 @@ describe("order place", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     const parsed = JSON.parse(output);
     expect(parsed.data.venue_order_id).toBe("v-abc");
+  });
+
+  function placeArgs(...extra: string[]) {
+    return ["node", "revx", "order", "place", "BTC-USD", "buy", ...extra];
+  }
+
+  function answer(state: string) {
+    mockPlaceOrder.mockResolvedValue({
+      data: { venue_order_id: "v-abc", client_order_id: "c-abc", state },
+    });
+  }
+
+  it("reports a placed order as placed and leaves the exit code alone", async () => {
+    answer("new");
+
+    await program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000"));
+
+    expect(logSpy.mock.calls.flat().join(" ")).toContain("✓ Order placed.");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("reports a rejected order as an error on stderr and exits 1", async () => {
+    answer("rejected");
+
+    await program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000"));
+
+    const errors = errSpy.mock.calls.flat().join(" ");
+    expect(errors).toContain("The exchange rejected the order.");
+    expect(errors).toContain("v-abc");
+    expect(errors).toContain(
+      "See why in a few seconds with: revx order get v-abc",
+    );
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("names the usual cause of a rejected post-only order", async () => {
+    answer("rejected");
+
+    await program.parseAsync(
+      placeArgs("--qty", "0.001", "--limit", "90000", "--post-only"),
+    );
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "A post-only order is usually rejected because its price would trade at once.",
+    );
+  });
+
+  it("keeps the JSON document of a rejected order, gives the reason on stderr and exits 1", async () => {
+    answer("rejected");
+
+    await program.parseAsync(
+      placeArgs("--qty", "0.001", "--limit", "90000", "--json"),
+    );
+
+    expect(JSON.parse(logSpy.mock.calls.flat().join(" "))).toEqual({
+      data: {
+        venue_order_id: "v-abc",
+        client_order_id: "c-abc",
+        state: "rejected",
+      },
+    });
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "The exchange rejected the order.",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("warns, without failing, when an IOC limit order closed at once", async () => {
+    answer("cancelled");
+
+    await program.parseAsync(
+      placeArgs("--qty", "0.001", "--limit", "90000", "--time-in-force", "ioc"),
+    );
+
+    expect(logSpy.mock.calls.flat().join(" ")).toContain(
+      "Order closed at once.",
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("says an order whose reply was lost may have been placed, and how to retry safely", async () => {
+    mockPlaceOrder.mockRejectedValue(
+      new NetworkError("No reply from the exchange: UND_ERR_SOCKET.", {
+        mayHaveReachedServer: true,
+      }),
+    );
+
+    await program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000"));
+
+    const sentId = mockPlaceOrder.mock.calls[0][0].clientOrderId as string;
+    const errors = errSpy.mock.calls.flat().join("\n");
+    expect(sentId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(errors).toContain(
+      "No reply from the exchange: UND_ERR_SOCKET. The order may have been placed.",
+    );
+    expect(errors).toContain(`Client order ID: ${sentId}`);
+    expect(errors).toContain(`--client-order-id ${sentId}`);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("treats a server error after retries as maybe placed", async () => {
+    mockPlaceOrder.mockRejectedValue(new ServerError("Internal error", 503));
+
+    await program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000"));
+
+    expect(errSpy.mock.calls.flat().join("\n")).toContain(
+      "The exchange answered with a server error (503). The order may have been placed.",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("says no second order was placed when a chosen id already exists", async () => {
+    mockPlaceOrder.mockRejectedValue(
+      new BadRequestError(
+        "An order with the client_order_id 'c-mine' has already been placed",
+      ),
+    );
+
+    await program.parseAsync(
+      placeArgs(
+        "--qty",
+        "0.001",
+        "--limit",
+        "90000",
+        "--client-order-id",
+        "c-mine",
+      ),
+    );
+
+    const errors = errSpy.mock.calls.flat().join("\n");
+    expect(errors).toContain(
+      "An order with client order ID c-mine already exists, so no second one was placed.",
+    );
+    expect(errors).not.toContain("--client-order-id c-mine.");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("keeps the plain network error when the request never reached the exchange", async () => {
+    mockPlaceOrder.mockRejectedValue(
+      new NetworkError("Could not reach the exchange: ECONNREFUSED.", {
+        mayHaveReachedServer: false,
+      }),
+    );
+
+    await expect(
+      program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000")),
+    ).rejects.toThrow("process.exit");
+
+    const errors = errSpy.mock.calls.flat().join("\n");
+    expect(errors).toContain("Could not reach the exchange: ECONNREFUSED.");
+    expect(errors).not.toContain("may have been placed");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("leaves the exit code to the error handler when the request itself fails", async () => {
+    mockPlaceOrder.mockRejectedValue(new Error("Insufficient balance"));
+
+    await expect(
+      program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000")),
+    ).rejects.toThrow("process.exit");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "Insufficient balance",
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("warns, without failing, when a market order closed at once", async () => {
+    answer("cancelled");
+
+    await program.parseAsync(placeArgs("--qty", "0.001", "--market"));
+
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Order closed at once.");
+    expect(output).toContain(
+      "See what filled in a few seconds with: revx order fills v-abc",
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("fails when the exchange cancelled a resting order at once", async () => {
+    answer("cancelled");
+
+    await program.parseAsync(placeArgs("--qty", "0.001", "--limit", "90000"));
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "The exchange cancelled the order at once.",
+    );
+    expect(process.exitCode).toBe(1);
   });
 
   it("exits with error for invalid side", async () => {
@@ -1041,6 +1488,37 @@ describe("order cancel", () => {
     exitSpy.mockRestore();
   });
 
+  it("prints a small JSON document for a cancel", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "cancel",
+      "order-123",
+      "--json",
+    ]);
+
+    expect(JSON.parse(logSpy.mock.calls.flat().join(""))).toEqual({
+      cancelled: "order-123",
+    });
+  });
+
+  it("prints a small JSON document for cancel --all", async () => {
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "cancel",
+      "--all",
+      "--output",
+      "json",
+    ]);
+
+    expect(JSON.parse(logSpy.mock.calls.flat().join(""))).toEqual({
+      cancelled: "all",
+    });
+  });
+
   it("cancels a specific order by ID", async () => {
     await program.parseAsync(["node", "revx", "order", "cancel", "order-123"]);
     expect(mockCancelOrder).toHaveBeenCalledWith("order-123");
@@ -1104,6 +1582,258 @@ describe("order replace", () => {
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  function answer(state: string) {
+    mockReplaceOrder.mockResolvedValue({
+      data: {
+        venue_order_id: "new-order-999",
+        client_order_id: "client-new",
+        state,
+      },
+    });
+  }
+
+  it("checks a new price against the step of the order's own pair", async () => {
+    mockGetOrder.mockResolvedValue({ data: { symbol: "BTC-USD" } });
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-1",
+        "--price",
+        "95000.015",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(mockGetOrder).toHaveBeenCalledWith("order-1");
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "--price 95000.015 is not a multiple of the BTC-USD price step 0.01.",
+    );
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("names the pair the way the CLI writes it when the order says BTC/USD", async () => {
+    mockGetOrder.mockResolvedValue({ data: { symbol: "BTC/USD" } });
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-1",
+        "--price",
+        "95000.015",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "the BTC-USD price step 0.01",
+    );
+  });
+
+  it("lets the exchange decide when it doesn't list the order yet", async () => {
+    const { NotFoundError } = await import("@revolut/revolut-x-api");
+    mockGetOrder.mockRejectedValue(new NotFoundError("Order not found"));
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-1",
+      "--price",
+      "95000.01",
+    ]);
+
+    expect(mockGetCurrencyPairs).not.toHaveBeenCalled();
+    expect(mockReplaceOrder).toHaveBeenCalledWith(
+      "order-1",
+      expect.objectContaining({ price: "95000.01" }),
+    );
+  });
+
+  it("refuses an empty --price instead of ignoring it", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-1",
+        "--price",
+        "",
+        "--qty",
+        "1",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("replaces with a price on the step", async () => {
+    mockGetOrder.mockResolvedValue({ data: { symbol: "BTC-USD" } });
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-1",
+      "--price",
+      "95000.01",
+    ]);
+
+    expect(mockReplaceOrder).toHaveBeenCalledWith(
+      "order-1",
+      expect.objectContaining({ price: "95000.01" }),
+    );
+  });
+
+  it("names --qty when it is not a number and reads nothing", async () => {
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "order",
+        "replace",
+        "order-1",
+        "--qty",
+        "0x10",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      '--qty must be a positive number, got "0x10".',
+    );
+    expect(mockGetOrder).not.toHaveBeenCalled();
+    expect(mockReplaceOrder).not.toHaveBeenCalled();
+  });
+
+  it("reports a rejected replacement as an error and says the original is gone", async () => {
+    answer("rejected");
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+    ]);
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "The exchange rejected the replacement. A replace cancels the original order order-123 first, so neither order is open now.",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("says a replacement whose reply was lost may have been placed", async () => {
+    mockReplaceOrder.mockRejectedValue(
+      new NetworkError("No reply from the exchange: UND_ERR_SOCKET.", {
+        mayHaveReachedServer: true,
+      }),
+    );
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+      "--client-order-id",
+      "c-chosen",
+    ]);
+
+    const errors = errSpy.mock.calls.flat().join("\n");
+    expect(errors).toContain("The replacement may have been placed.");
+    expect(errors).toContain(
+      "If revx order get order-123 shows the original still open, the replace didn't happen and can be run again.",
+    );
+    expect(errors).toContain("--client-order-id c-chosen");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("names the post-only cause of a rejected post-only replacement", async () => {
+    answer("rejected");
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+      "--post-only",
+    ]);
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "A post-only order is usually rejected because its price would trade at once.",
+    );
+  });
+
+  it("keeps the JSON document of a rejected replacement and exits 1", async () => {
+    answer("rejected");
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+      "--json",
+    ]);
+
+    expect(JSON.parse(logSpy.mock.calls.flat().join(" ")).data.state).toBe(
+      "rejected",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("reports an accepted replacement as replaced", async () => {
+    answer("new");
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--price",
+      "96000",
+    ]);
+
+    expect(logSpy.mock.calls.flat().join(" ")).toContain("✓ Order replaced.");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("warns, without failing, when an IOC replacement closed at once", async () => {
+    answer("cancelled");
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "order",
+      "replace",
+      "order-123",
+      "--time-in-force",
+      "ioc",
+    ]);
+
+    expect(logSpy.mock.calls.flat().join(" ")).toContain(
+      "Order replaced by an IOC order that closed at once.",
+    );
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("replaces order with --qty", async () => {
@@ -1375,4 +2105,33 @@ describe("order fills", () => {
     const parsed = JSON.parse(output);
     expect(parsed.data[0].id).toBe("fill-1");
   });
+});
+
+describe("order help", () => {
+  function helpOf(name: string): string {
+    const program = new Command();
+    registerOrderCommand(program);
+    const command = program.commands
+      .find((candidate) => candidate.name() === "order")!
+      .commands.find((candidate) => candidate.name() === name)!;
+    let help = "";
+    command.configureOutput({ writeOut: (text) => (help += text) });
+    command.outputHelp();
+    return help;
+  }
+
+  it("says what a price-only replace keeps", () => {
+    expect(helpOf("replace")).toContain(
+      "Changing only --price keeps a buy's quote amount (its quantity changes) and a",
+    );
+  });
+
+  it.each(["place", "replace"])(
+    "tells scripts to pass their own client order ID in %s",
+    (name) => {
+      expect(helpOf(name)).toContain(
+        "Scripts: pass your own --client-order-id <uuid> to know the ID even if the",
+      );
+    },
+  );
 });

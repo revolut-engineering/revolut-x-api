@@ -6,6 +6,7 @@ import {
   handleApiError,
   parseDateRange,
   textResult,
+  errorResult,
   validateResolution,
   validateSymbol,
 } from "../shared/_helpers.js";
@@ -148,7 +149,7 @@ export function registerMarketDataTools(server: McpServer): void {
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
-      if (error) return textResult(error);
+      if (error) return errorResult(error);
 
       let result;
       try {
@@ -317,7 +318,7 @@ export function registerMarketDataTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "End of the time range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
+            "End of the time range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to now if omitted. A later time is treated as now.",
           ),
       },
       annotations: {
@@ -332,7 +333,7 @@ export function registerMarketDataTools(server: McpServer): void {
 
       symbol = symbol.trim().toUpperCase();
       const symError = validateSymbol(symbol);
-      if (symError) return textResult(symError);
+      if (symError) return errorResult(symError);
 
       const resError = validateResolution(resolution);
       if (resError) return resError;
@@ -439,7 +440,7 @@ export function registerMarketDataTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "End of the date range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to 7 days after start_date if omitted, or current timestamp if both omitted.",
+            "End of the date range, in your local timezone. Accepts ISO format (e.g. '2024-06-30') or relative (e.g. '1h', '30m', '7d' for 1 hour/30 minutes/7 days ago). Defaults to now if omitted. A later time is treated as now.",
           ),
         totalLimit: z
           .number()
@@ -465,7 +466,7 @@ export function registerMarketDataTools(server: McpServer): void {
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
-      if (error) return textResult(error);
+      if (error) return errorResult(error);
 
       const dates = parseDateRange(start_date, end_date, {
         endDefaultsToNow: true,

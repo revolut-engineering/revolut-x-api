@@ -10,7 +10,7 @@ description: >
 
 > Install the CLI, generate API keys, and configure write-operation security.
 
-> **Auto-resolve target.** When invoked from another `revx-*` skill due to an auth error, do not bounce the user back to manual setup. Diagnose the failure against the [Error Reference](#error-reference) below, run the fix yourself (e.g. `chmod 600 ~/.config/revolut-x/private.pem`, `revx configure generate-keypair`, `revx configure set --api-key <key>`), then return to the calling skill and retry the original command. Only ask the user for inputs that only they can provide: the 64-character API key string, confirmation that they have registered the public key in their Revolut X profile, the keypair passphrase, or approval to overwrite an existing keypair.
+> **Auto-resolve target.** When invoked from another `revx-*` skill due to an auth error, do not bounce the user back to manual setup. Diagnose the failure against the [Error Reference](#error-reference) below, run the fix yourself (e.g. `chmod 600 ~/.config/revolut-x/private.pem`, `revx configure generate-keypair`, `revx configure set --api-key <key>`), then return to the calling skill and retry the original command. Only ask the user for inputs that only they can provide: the 64-character API key string, confirmation that they have registered the public key in their Revolut X profile, or approval to move an existing keypair aside.
 
 ## Prerequisites
 
@@ -87,6 +87,11 @@ revx configure path                     # Print config directory path
 | Error | Cause | Fix |
 |---|---|---|
 | Auth not configured | Missing API key or private key | Run `revx configure` |
+| The private key or config file `<path>` can't be read (EACCES) | The file isn't readable by this user | Make sure it belongs to the user, then `chmod 600 <path>` |
+| `<path>` is not a file | A folder is in the way | Ask before moving the folder aside, then run `revx configure` |
+| The private key `<path>` is missing | The API key is set but the key file is gone | Put the user's copy back at `<path>` if they have one. Otherwise `revx configure generate-keypair`, then register the new public key and create a new API key for it |
+| The private key `<path>` is empty, holds a public key, is protected by a passphrase, is in OpenSSH format, is not a valid PEM private key, or is not an Ed25519 key | The key file is damaged or the wrong kind | Ask first. Then move it to a new name that doesn't exist yet, such as `mv -n <path> <path>.old-$(date +%s)`, run `revx configure generate-keypair`, register the new public key and create a new API key for it. Never delete the old file |
+| The config file `<path>` is not valid JSON, is not a settings object, has an API key that is not 64 letters and digits, or has a private_key_path that is not text | `config.json` was damaged | `revx configure set --api-key <key>` writes it again |
 | Authentication failed (401) | Invalid key or signature | Re-register public key at exchange.revolut.com |
 | Network error | Connection/timeout failure | Check connectivity, retry |
 

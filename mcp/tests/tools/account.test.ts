@@ -12,31 +12,6 @@ vi.mock("../../src/server.js", () => ({
   SETUP_GUIDE: "Setup guide text",
 }));
 
-vi.mock("@revolut/revolut-x-api", async () => {
-  class AuthNotConfiguredError extends Error {
-    name = "AuthNotConfiguredError";
-  }
-  class ForbiddenError extends Error {
-    name = "ForbiddenError";
-  }
-  class RateLimitError extends Error {
-    name = "RateLimitError";
-  }
-  class ServerError extends Error {
-    name = "ServerError";
-  }
-  class InsecureKeyPermissionsError extends Error {
-    name = "InsecureKeyPermissionsError";
-  }
-  return {
-    AuthNotConfiguredError,
-    ForbiddenError,
-    RateLimitError,
-    ServerError,
-    InsecureKeyPermissionsError,
-  };
-});
-
 async function createClient(): Promise<Client> {
   const server = new McpServer({ name: "test", version: "0.0.1" });
   registerAccountTools(server);
@@ -101,6 +76,7 @@ describe("account tools", () => {
     });
     const text = getText(result);
     expect(text).toContain("Setup guide text");
+    expect(result.isError).toBe(true);
   });
 
   it("get_balances returns help message on forbidden error", async () => {
@@ -115,5 +91,65 @@ describe("account tools", () => {
     const text = getText(result);
     expect(text).toContain("Access Forbidden");
     expect(text).toContain("Add public key");
+  });
+
+  it("get_balances says what is wrong with credentials it can't use", async () => {
+    const { InvalidCredentialsError } = await import("@revolut/revolut-x-api");
+    mockGetBalances.mockRejectedValue(
+      new InvalidCredentialsError({
+        file: "private_key",
+        fault: "malformed",
+        path: "/cfg/private.pem",
+        problem:
+          "The private key /cfg/private.pem is not a valid PEM private key.",
+      }),
+    );
+
+    const client = await createClient();
+    const text = getText(
+      await client.callTool({ name: "get_balances", arguments: {} }),
+    );
+
+    expect(text).toContain(
+      "The private key /cfg/private.pem is not a valid PEM private key.",
+    );
+    expect(text).toContain("'generate_keypair' moves this key aside");
+    expect(text).toContain("Setup guide text");
+  });
+
+  it("get_balances reports a wrong API URL on its own", async () => {
+    const { ConfigurationError } = await import("@revolut/revolut-x-api");
+    mockGetBalances.mockRejectedValue(
+      new ConfigurationError(
+        'The API URL (REVOLUTX_API_URL) must start with https://. Got "http://x".',
+      ),
+    );
+
+    const client = await createClient();
+    const text = getText(
+      await client.callTool({ name: "get_balances", arguments: {} }),
+    );
+
+    expect(text).toContain("correct the API URL setting");
+    expect(text).not.toContain("Setup guide text");
+  });
+
+  it("get_balances explains a key the exchange refuses", async () => {
+    const { AuthenticationError } = await import("@revolut/revolut-x-api");
+    mockGetBalances.mockRejectedValue(
+      new AuthenticationError("Unable to resolve API key"),
+    );
+
+    const client = await createClient();
+    const result = await client.callTool({
+      name: "get_balances",
+      arguments: {},
+    });
+
+    expect(getText(result)).toContain(
+      "The exchange refused the credentials: Unable to resolve API key",
+    );
+    expect(getText(result)).toContain("public key is registered");
+    expect(result.isError).toBe(true);
   });
 });

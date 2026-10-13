@@ -12,6 +12,7 @@ export const LOCAL_TIME_NOTE = "(times shown in local time)";
 
 export function formatLocalDateTime(value: number | string | Date): string {
   const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
   const pad = (n: number) => String(n).padStart(2, "0");
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
@@ -58,10 +59,13 @@ export function printTable<T>(rows: T[], columns: ColumnDef<T>[]): void {
   console.log(table.toString());
 }
 
-export function printKeyValue(entries: [string, string][]): void {
+export function printKeyValue(
+  entries: [string, string][],
+  write: (line: string) => void = console.log,
+): void {
   const maxKeyLen = Math.max(...entries.map(([k]) => k.length));
   for (const [key, value] of entries) {
-    console.log(`${chalk.bold(key.padEnd(maxKeyLen))}  ${value}`);
+    write(`${chalk.bold(key.padEnd(maxKeyLen))}  ${value}`);
   }
 }
 

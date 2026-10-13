@@ -1,18 +1,37 @@
 import { Command, Option } from "commander";
-import { randomUUID } from "node:crypto";
 import chalk from "chalk";
 import {
   type Order,
+  type OrderPlacementResult,
   type TriggeredBy,
   type OnFill,
   type TwapOrderDetails,
   type TwapTriggeredBy,
   paginateWithDynamicWindows,
   HISTORICAL_ORDERS_API_LIMIT,
+  type RevolutXClient,
+  AuthNotConfiguredError,
+  AuthenticationError,
+  ForbiddenError,
+  InsecureKeyPermissionsError,
+  NotFoundError,
 } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
-import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
+import {
+  OrderInputError,
+  assertOnPriceStep,
+  clientOrderIdOption,
+  orderAmount,
+  orderSymbol,
+} from "../util/order-input.js";
+import { resolveDateWindow, parsePositiveInt } from "../util/parse.js";
+import {
+  placementOutcome,
+  uncertainPlacement,
+  type PlacementContext,
+  retryFailure,
+} from "../util/order-outcome.js";
 import {
   isJsonOutput,
   printJson,
@@ -35,6 +54,88 @@ function formatPeriod(start?: number, end?: number): string {
     return `Period: Up to ${formatLocalDateTime(end)}`;
   }
   return "Period: Default / Recent";
+}
+
+function notSent(err: unknown, note: string): unknown {
+  if (
+    err instanceof AuthNotConfiguredError ||
+    err instanceof AuthenticationError ||
+    err instanceof ForbiddenError ||
+    err instanceof InsecureKeyPermissionsError
+  ) {
+    return err;
+  }
+  const reason = err instanceof Error ? err.message : String(err);
+  const retry = retryFailure(err);
+  return new Error(`${note} ${reason}${retry ? ` ${retry}` : ""}`, {
+    cause: err,
+  });
+}
+
+async function assertPriceOnStep(
+  client: RevolutXClient,
+  flag: string,
+  price: string,
+  symbol: string,
+  unchanged: string,
+): Promise<void> {
+  const display = symbol.toUpperCase().replace("/", "-");
+  let pairs: Awaited<ReturnType<RevolutXClient["getCurrencyPairs"]>>;
+  try {
+    pairs = await client.getCurrencyPairs();
+  } catch (err) {
+    throw notSent(
+      err,
+      `Could not read the ${display} price step, so ${unchanged}.`,
+    );
+  }
+  const wanted = display.replace("-", "/");
+  const pair = Object.entries(pairs).find(
+    ([key]) => key.toUpperCase().replace("-", "/") === wanted,
+  )?.[1];
+  if (!pair) {
+    throw new OrderInputError(
+      `${display} is not a pair on Revolut X. See: revx market pairs`,
+    );
+  }
+  assertOnPriceStep(flag, price, pair.quote_step, display);
+}
+
+function reportPlacement(
+  result: { data: OrderPlacementResult },
+  context: PlacementContext,
+  opts: { json?: boolean; output?: string },
+): void {
+  const outcome = placementOutcome(result.data.state, context);
+  const failed = outcome.kind === "error";
+  const headline = failed
+    ? `${chalk.red.bold("✖ Error:")} ${chalk.white(outcome.headline)}`
+    : outcome.kind === "warning"
+      ? chalk.yellow(`⚠ ${outcome.headline}`)
+      : chalk.green(`✓ ${outcome.headline}`);
+  if (isJsonOutput(opts)) {
+    printJson(result);
+    if (failed) console.error(headline);
+  } else {
+    const write = failed ? console.error : console.log;
+    write(`${headline}\n`);
+    printKeyValue(
+      [
+        ["Venue Order ID", chalk.white.bold(result.data.venue_order_id)],
+        ["Client Order ID", result.data.client_order_id],
+        ["State", chalk.yellow(result.data.state)],
+      ],
+      write,
+    );
+    if (outcome.hint) write(chalk.gray(`\n  ↳ ${outcome.hint}`));
+  }
+  if (failed) process.exitCode = 1;
+}
+
+function reportUncertainPlacement([headline, ...details]: string[]): void {
+  console.error(`${chalk.red.bold("✖ Error:")} ${chalk.white(headline)}`);
+  for (const line of details) console.error(chalk.gray(`  ↳ ${line}`));
+  process.exitCode = 1;
 }
 
 function printSectionHeader(title: string, subtitle?: string): void {
@@ -265,9 +366,9 @@ Order type (exactly one required):
   --market Market order at the best available price
 
 Limit-only flags (rejected with --market):
-  --time-in-force  gtc (default) keeps the order open; ioc fills what it can
+  --time-in-force  gtc (default) keeps the order open, ioc fills what it can
                    immediately and cancels the rest
-  --post-only      Maker-only; the order is rejected if it would take liquidity.
+  --post-only      Maker-only. The order is rejected if it would take liquidity.
                    Cannot be combined with --time-in-force ioc
 
 Examples:
@@ -278,12 +379,17 @@ Examples:
   $ revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
   $ revx order place BTC-USD buy --qty 0.001 --market --json       Output as JSON
 
-The client order ID must be a UUID; one is generated for you unless you pass
---client-order-id <uuid>.`,
+The client order ID must be a UUID. One is generated unless you pass
+--client-order-id <uuid>.
+Scripts: pass your own --client-order-id <uuid> to know the ID even if the
+reply is lost.`,
     )
     .option("--qty <amount>", "Quantity in base currency (e.g. 0.001 for BTC)")
     .option("--quote <amount>", "Amount in quote currency (e.g. 100 for USD)")
-    .option("--limit <price>", "Limit order price (required unless --market)")
+    .option(
+      "--limit <price>",
+      "Limit order price, a multiple of the pair's price step (required unless --market)",
+    )
     .option("--market", "Market order (required unless --limit)")
     .addOption(
       new Option(
@@ -296,7 +402,7 @@ The client order ID must be a UUID; one is generated for you unless you pass
       "Post-only execution instruction (limit orders only)",
     )
     .option(
-      "--client-order-id <id>",
+      "--client-order-id <uuid>",
       "Your own UUID for idempotency (a random UUID is generated if omitted)",
     )
     .option("--json", "Output as JSON")
@@ -329,28 +435,28 @@ The client order ID must be a UUID; one is generated for you unless you pass
             process.exit(1);
           }
 
-          if (!opts.qty && !opts.quote) {
+          if (opts.qty === undefined && opts.quote === undefined) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --qty <amount> or --quote <amount>.")}`,
             );
             process.exit(1);
           }
 
-          if (opts.qty && opts.quote) {
+          if (opts.qty !== undefined && opts.quote !== undefined) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --qty or --quote, not both.")}`,
             );
             process.exit(1);
           }
 
-          if (!opts.market && !opts.limit) {
+          if (!opts.market && opts.limit === undefined) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify --limit <price> or --market.")}`,
             );
             process.exit(1);
           }
 
-          if (opts.market && opts.limit) {
+          if (opts.market && opts.limit !== undefined) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --limit <price> or --market, not both.")}`,
             );
@@ -379,25 +485,40 @@ The client order ID must be a UUID; one is generated for you unless you pass
             process.exit(1);
           }
 
+          const sizeField =
+            opts.quote !== undefined
+              ? { quoteSize: orderAmount("--quote", opts.quote) }
+              : { baseSize: orderAmount("--qty", opts.qty!) };
+          const limitPrice =
+            opts.limit !== undefined
+              ? orderAmount("--limit", opts.limit)
+              : undefined;
+          const pairSymbol = orderSymbol(symbol);
+          const clientOrderId = clientOrderIdOption(opts.clientOrderId);
+
           const client = getClient({ requireAuth: true });
 
           const params: Parameters<typeof client.placeOrder>[0] = {
-            symbol: symbol.toUpperCase(),
+            symbol: pairSymbol,
             side: side.toLowerCase() as "buy" | "sell",
-            ...(opts.clientOrderId
-              ? { clientOrderId: opts.clientOrderId }
-              : {}),
+            clientOrderId,
           };
 
-          const sizeField = opts.quote
-            ? { quoteSize: opts.quote }
-            : { baseSize: opts.qty! };
+          if (limitPrice) {
+            await assertPriceOnStep(
+              client,
+              "--limit",
+              limitPrice,
+              params.symbol,
+              "the order was not sent",
+            );
+          }
 
           if (opts.market) {
             params.market = sizeField;
           } else {
             params.limit = {
-              price: opts.limit!,
+              price: limitPrice!,
               ...sizeField,
               ...(opts.timeInForce
                 ? { timeInForce: opts.timeInForce as "gtc" | "ioc" }
@@ -408,18 +529,30 @@ The client order ID must be a UUID; one is generated for you unless you pass
             };
           }
 
-          const result = await client.placeOrder(params);
-
-          if (isJsonOutput(opts)) {
-            printJson(result);
-          } else {
-            printSuccess(`✓ Order placed successfully.\n`);
-            printKeyValue([
-              ["Venue Order ID", chalk.white.bold(result.data.venue_order_id)],
-              ["Client Order ID", result.data.client_order_id],
-              ["State", chalk.yellow(result.data.state)],
-            ]);
+          let result: Awaited<ReturnType<typeof client.placeOrder>>;
+          try {
+            result = await client.placeOrder(params);
+          } catch (err) {
+            const lines = uncertainPlacement(err, {
+              action: "place",
+              symbol: params.symbol,
+              clientOrderId,
+            });
+            if (!lines) throw err;
+            reportUncertainPlacement(lines);
+            return;
           }
+
+          reportPlacement(
+            result,
+            {
+              action: "place",
+              orderId: result.data.venue_order_id,
+              immediateOrCancel: !!opts.market || opts.timeInForce === "ioc",
+              postOnly: !!opts.postOnly,
+            },
+            opts,
+          );
         } catch (err) {
           handleError(err);
         }
@@ -562,12 +695,11 @@ The client order ID must be a UUID; one is generated for you unless you pass
             : undefined;
 
           const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-          const endTimeMs = opts.endDate
-            ? parseTimestamp(opts.endDate)
-            : Date.now();
-          const startTimeMs = opts.startDate
-            ? parseTimestamp(opts.startDate)
-            : endTimeMs - THIRTY_DAYS_MS;
+          const dates = resolveDateWindow(
+            opts.startDate,
+            opts.endDate,
+            THIRTY_DAYS_MS,
+          );
 
           const allOrders = await paginateWithDynamicWindows<Order>({
             fetchPage: (startDate, endDate, cursor, apiLimit) =>
@@ -578,8 +710,8 @@ The client order ID must be a UUID; one is generated for you unless you pass
                 cursor,
                 limit: apiLimit,
               }),
-            startDate: startTimeMs,
-            endDate: endTimeMs,
+            startDate: dates.start,
+            endDate: dates.end,
             apiLimit: HISTORICAL_ORDERS_API_LIMIT,
             userLimit,
           });
@@ -587,10 +719,7 @@ The client order ID must be a UUID; one is generated for you unless you pass
           if (isJsonOutput(opts)) {
             printJson({ data: allOrders });
           } else {
-            const periodText = formatPeriod(
-              opts.startDate ? parseTimestamp(opts.startDate) : undefined,
-              opts.endDate ? parseTimestamp(opts.endDate) : undefined,
-            );
+            const periodText = formatPeriod(dates.givenStart, dates.givenEnd);
             printSectionHeader("Order History", periodText);
 
             if (allOrders.length === 0) {
@@ -716,33 +845,49 @@ The client order ID must be a UUID; one is generated for you unless you pass
     .description("Cancel an order, or all open orders with --all")
     .argument("[order-id]", "Venue order ID to cancel (omit when using --all)")
     .option("--all", "Cancel all open orders")
-    .action(async (orderId: string | undefined, opts: { all?: boolean }) => {
-      try {
-        if (!orderId && !opts.all) {
-          console.error(
-            `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify an order ID or use --all to cancel all open orders.")}`,
-          );
-          process.exit(1);
-        }
-        if (orderId && opts.all) {
-          console.error(
-            `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either an order ID or --all, not both.")}`,
-          );
-          process.exit(1);
-        }
-        const client = getClient({ requireAuth: true });
+    .option("--json", "Output as JSON")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
+    .action(
+      async (
+        orderId: string | undefined,
+        opts: { all?: boolean; json?: boolean; output?: string },
+      ) => {
+        try {
+          if (!orderId && !opts.all) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify an order ID or use --all to cancel all open orders.")}`,
+            );
+            process.exit(1);
+          }
+          if (orderId && opts.all) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either an order ID or --all, not both.")}`,
+            );
+            process.exit(1);
+          }
+          const client = getClient({ requireAuth: true });
 
-        if (opts.all) {
-          await client.cancelAllOrders();
-          printSuccess("✓ All open orders cancelled.");
-        } else {
-          await client.cancelOrder(orderId!);
-          printSuccess(`✓ Order ${chalk.cyan(orderId)} cancelled.`);
+          if (opts.all) {
+            await client.cancelAllOrders();
+          } else {
+            await client.cancelOrder(orderId!);
+          }
+          if (isJsonOutput(opts)) {
+            printJson({ cancelled: opts.all ? "all" : orderId });
+          } else if (opts.all) {
+            printSuccess("✓ All open orders cancelled.");
+          } else {
+            printSuccess(`✓ Order ${chalk.cyan(orderId)} cancelled.`);
+          }
+        } catch (err) {
+          handleError(err);
         }
-      } catch (err) {
-        handleError(err);
-      }
-    });
+      },
+    );
 
   order
     .command("replace")
@@ -759,9 +904,18 @@ Examples:
   $ revx order replace <order-id> --quote 150                Update quote amount (qty recalculated)
   $ revx order replace <order-id> --time-in-force ioc        Fill immediately, cancel the rest
   $ revx order replace <order-id> --post-only                Maker-only execution
-  $ revx order replace <order-id> --allow-taker              Allow taking liquidity`,
+  $ revx order replace <order-id> --allow-taker              Allow taking liquidity
+
+Changing only --price keeps a buy's quote amount (its quantity changes) and a
+sell's quantity. To keep a buy's quantity, pass --qty <current qty> too.
+
+Scripts: pass your own --client-order-id <uuid> to know the ID even if the
+reply is lost.`,
     )
-    .option("--price <price>", "Replacement limit price")
+    .option(
+      "--price <price>",
+      "Replacement limit price, a multiple of the pair's price step",
+    )
     .option(
       "--qty <amount>",
       "Replacement quantity in base currency (amount recalculated server-side)",
@@ -771,8 +925,8 @@ Examples:
       "Replacement amount in quote currency (qty recalculated server-side)",
     )
     .option(
-      "--client-order-id <id>",
-      "Client order ID for the replacement (auto-generated if omitted)",
+      "--client-order-id <uuid>",
+      "Your own UUID for the replacement (a random UUID is generated if omitted)",
     )
     .addOption(
       new Option(
@@ -807,7 +961,7 @@ Examples:
         },
       ) => {
         try {
-          if (opts.qty && opts.quote) {
+          if (opts.qty !== undefined && opts.quote !== undefined) {
             console.error(
               `${chalk.red.bold("✖ Error:")} ${chalk.white("Specify either --qty or --quote, not both.")}`,
             );
@@ -829,9 +983,9 @@ Examples:
           }
 
           if (
-            !opts.price &&
-            !opts.qty &&
-            !opts.quote &&
+            opts.price === undefined &&
+            opts.qty === undefined &&
+            opts.quote === undefined &&
             !opts.timeInForce &&
             !opts.postOnly &&
             !opts.allowTaker
@@ -842,32 +996,79 @@ Examples:
             process.exit(1);
           }
 
+          const price =
+            opts.price !== undefined
+              ? orderAmount("--price", opts.price)
+              : undefined;
+          const baseSize =
+            opts.qty !== undefined ? orderAmount("--qty", opts.qty) : undefined;
+          const quoteSize =
+            opts.quote !== undefined
+              ? orderAmount("--quote", opts.quote)
+              : undefined;
+
           const client = getClient({ requireAuth: true });
 
+          if (price) {
+            let symbol: string | null = null;
+            try {
+              symbol = (await client.getOrder(orderId)).data.symbol;
+            } catch (err) {
+              if (!(err instanceof NotFoundError)) {
+                throw notSent(
+                  err,
+                  `Could not read order ${orderId}, so it was not changed.`,
+                );
+              }
+            }
+            if (symbol) {
+              await assertPriceOnStep(
+                client,
+                "--price",
+                price,
+                symbol,
+                `order ${orderId} was not changed`,
+              );
+            }
+          }
+
           const params: Parameters<typeof client.replaceOrder>[1] = {
-            clientOrderId: opts.clientOrderId ?? randomUUID(),
+            clientOrderId: clientOrderIdOption(opts.clientOrderId),
           };
-          if (opts.price) params.price = opts.price;
-          if (opts.qty) params.baseSize = opts.qty;
-          if (opts.quote) params.quoteSize = opts.quote;
+          if (price) params.price = price;
+          if (baseSize) params.baseSize = baseSize;
+          if (quoteSize) params.quoteSize = quoteSize;
           if (opts.timeInForce)
             params.timeInForce = opts.timeInForce as "gtc" | "ioc";
           if (opts.postOnly) params.executionInstructions = ["post_only"];
           else if (opts.allowTaker)
             params.executionInstructions = ["allow_taker"];
 
-          const result = await client.replaceOrder(orderId, params);
-
-          if (isJsonOutput(opts)) {
-            printJson(result);
-          } else {
-            printSuccess(`✓ Order replaced successfully.\n`);
-            printKeyValue([
-              ["Venue Order ID", chalk.white.bold(result.data.venue_order_id)],
-              ["Client Order ID", result.data.client_order_id],
-              ["State", chalk.yellow(result.data.state)],
-            ]);
+          let result: Awaited<ReturnType<typeof client.replaceOrder>>;
+          try {
+            result = await client.replaceOrder(orderId, params);
+          } catch (err) {
+            const lines = uncertainPlacement(err, {
+              action: "replace",
+              originalOrderId: orderId,
+              clientOrderId: params.clientOrderId,
+            });
+            if (!lines) throw err;
+            reportUncertainPlacement(lines);
+            return;
           }
+
+          reportPlacement(
+            result,
+            {
+              action: "replace",
+              orderId: result.data.venue_order_id,
+              originalOrderId: orderId,
+              immediateOrCancel: opts.timeInForce === "ioc",
+              postOnly: !!opts.postOnly,
+            },
+            opts,
+          );
         } catch (err) {
           handleError(err);
         }

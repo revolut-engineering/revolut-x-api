@@ -9,7 +9,11 @@ import {
   type TelegramConnection,
 } from "../db/store.js";
 import { handleError } from "../util/errors.js";
+import { maskSecret } from "../util/mask.js";
+import { sendMessage } from "../engine/notify.js";
 import {
+  LOCAL_TIME_NOTE,
+  formatLocalDateTime,
   isJsonOutput,
   printJson,
   printTable,
@@ -23,51 +27,30 @@ function printSectionHeader(title: string): void {
   console.log(chalk.dim("─".repeat(50)));
 }
 
-function maskToken(token: string): string {
-  if (token.length <= 10) return "****";
-  return token.slice(0, 4) + "****" + token.slice(-4);
-}
+const BOT_TOKEN_FORMAT = /^\d{5,}:[A-Za-z0-9_-]{30,}$/;
+const CHAT_ID_FORMAT = /^(-?[1-9]\d{0,15}|@[A-Za-z][A-Za-z0-9_]{4,})$/;
+const TEST_MESSAGE = "Test message from Revolut X CLI";
 
-async function sendTelegramMessage(
-  botToken: string,
-  chatId: string,
-  text: string,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (resp.ok) return { ok: true };
-    const body = (await resp.json().catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    return {
-      ok: false,
-      error: String(body.description ?? `HTTP ${resp.status}`),
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
+function connectionInputProblem(token: string, chatId: string): string | null {
+  if (!BOT_TOKEN_FORMAT.test(token)) {
+    return "--token doesn't look like a Telegram bot token. It is digits, a colon, then the secret from @BotFather.";
   }
+  if (!CHAT_ID_FORMAT.test(chatId)) {
+    return `--chat-id must be a number such as 123456789 or -1001234567890, or a channel name such as @mychannel, got "${chatId}".`;
+  }
+  return null;
 }
 
 const CONN_COLUMNS: ColumnDef<TelegramConnection>[] = [
   { header: "ID", key: "id" },
   { header: "Label", key: "label" },
   { header: "Chat ID", key: "chat_id" },
-  { header: "Token", accessor: (c) => chalk.gray(maskToken(c.bot_token)) },
+  { header: "Token", accessor: (c) => chalk.gray(maskSecret(c.bot_token)) },
   {
     header: "Enabled",
     accessor: (c) => (c.enabled ? chalk.green("yes") : chalk.gray("no")),
   },
-  { header: "Created", accessor: (c) => c.created_at.slice(0, 19) },
+  { header: "Created", accessor: (c) => formatLocalDateTime(c.created_at) },
 ];
 
 export function registerConnectorCommand(program: Command): void {
@@ -113,7 +96,10 @@ Only enabled connections receive monitor and grid bot notifications.`,
     .requiredOption("--token <token>", "Telegram Bot API token")
     .requiredOption("--chat-id <id>", "Telegram chat ID to send messages to")
     .option("--label <name>", "Connection label", "default")
-    .option("--test", "Send a test message after adding")
+    .option(
+      "--test",
+      "Send a test message first and save the connection only if it arrives",
+    )
     .option("--json", "Output as JSON")
     .addOption(
       new Option("--output <format>", "Output format")
@@ -130,25 +116,41 @@ Only enabled connections receive monitor and grid bot notifications.`,
         output?: string;
       }) => {
         try {
+          const token = opts.token.trim();
+          const chatId = opts.chatId.trim();
+          const problem = connectionInputProblem(token, chatId);
+          if (problem) {
+            console.error(
+              `${chalk.red.bold("✖ Error:")} ${chalk.white(problem)}`,
+            );
+            process.exit(1);
+          }
+
+          loadConnections();
+
+          let testResult: { ok: boolean } | undefined;
+          if (opts.test) {
+            const sent = await sendMessage(token, chatId, TEST_MESSAGE);
+            if (!sent.success) {
+              console.error(
+                `${chalk.red.bold("✖ Test message failed:")} ${chalk.white(sent.error ?? "unknown error")}`,
+              );
+              console.error(chalk.gray("  ↳ Nothing was saved.\n"));
+              process.exit(1);
+            }
+            testResult = { ok: true };
+          }
+
           const conn = createConnection(
-            opts.token.trim(),
-            opts.chatId.trim(),
+            token,
+            chatId,
             opts.label.trim() || "default",
           );
-
-          let testResult: { ok: boolean; error?: string } | undefined;
-          if (opts.test) {
-            testResult = await sendTelegramMessage(
-              conn.bot_token,
-              conn.chat_id,
-              "Test message from Revolut X CLI",
-            );
-          }
 
           if (isJsonOutput(opts)) {
             printJson({
               ...conn,
-              bot_token: maskToken(conn.bot_token),
+              bot_token: maskSecret(conn.bot_token),
               test_result: testResult,
             });
           } else {
@@ -159,18 +161,12 @@ Only enabled connections receive monitor and grid bot notifications.`,
               ["ID", chalk.white.bold(conn.id)],
               ["Label", chalk.cyan(conn.label)],
               ["Chat ID", conn.chat_id],
-              ["Token", chalk.gray(maskToken(conn.bot_token))],
+              ["Token", chalk.gray(maskSecret(conn.bot_token))],
             ]);
 
             if (testResult) {
-              console.log(""); // Spacing
-              if (testResult.ok) {
-                printSuccess("✓ Test message sent successfully.");
-              } else {
-                console.error(
-                  `${chalk.red.bold("✖ Test message failed:")} ${chalk.white(testResult.error)}`,
-                );
-              }
+              console.log("");
+              printSuccess("✓ Test message sent successfully.");
             }
           }
         } catch (err) {
@@ -193,7 +189,7 @@ Only enabled connections receive monitor and grid bot notifications.`,
         const all = loadConnections();
         if (isJsonOutput(opts)) {
           printJson(
-            all.map((c) => ({ ...c, bot_token: maskToken(c.bot_token) })),
+            all.map((c) => ({ ...c, bot_token: maskSecret(c.bot_token) })),
           );
         } else {
           printSectionHeader("Telegram Connections");
@@ -205,6 +201,7 @@ Only enabled connections receive monitor and grid bot notifications.`,
               ),
             );
           } else {
+            console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
             printTable(all, CONN_COLUMNS);
           }
         }
@@ -286,11 +283,7 @@ Only enabled connections receive monitor and grid bot notifications.`,
       "<connection-id>",
       "Connection ID from 'revx connector telegram list'",
     )
-    .option(
-      "--message <msg>",
-      "Custom test message",
-      "Test message from Revolut X CLI",
-    )
+    .option("--message <msg>", "Custom test message", TEST_MESSAGE)
     .action(async (connectionId: string, opts: { message: string }) => {
       try {
         const conn = getConnection(connectionId);
@@ -300,12 +293,12 @@ Only enabled connections receive monitor and grid bot notifications.`,
           );
           process.exit(1);
         }
-        const result = await sendTelegramMessage(
+        const result = await sendMessage(
           conn.bot_token,
           conn.chat_id,
           opts.message,
         );
-        if (result.ok) {
+        if (result.success) {
           printSuccess(
             `✓ Test message sent to connection ${chalk.cyan(connectionId)}.`,
           );

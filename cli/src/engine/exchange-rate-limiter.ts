@@ -4,6 +4,7 @@ export interface RateWindow {
   limit: number;
   intervalMs: number;
   onExhausted: "wait" | "reject";
+  exhaustedMessage?: string;
 }
 
 export class SlidingWindowRateLimiter {
@@ -15,19 +16,26 @@ export class SlidingWindowRateLimiter {
     this._windows = windows;
   }
 
-  async run<T>(operation: () => Promise<T>): Promise<T> {
-    await this._acquire();
+  async run<T>(
+    operation: () => Promise<T>,
+    refuse?: () => Error | null,
+  ): Promise<T> {
+    await this._acquire(refuse);
     return operation();
   }
 
-  private async _acquire(): Promise<void> {
-    const reservation = this._reservationQueue.then(() => this._reserve());
+  private async _acquire(refuse?: () => Error | null): Promise<void> {
+    const reservation = this._reservationQueue.then(() =>
+      this._reserve(refuse),
+    );
     this._reservationQueue = reservation.catch(() => undefined);
     return reservation;
   }
 
-  private async _reserve(): Promise<void> {
+  private async _reserve(refuse?: () => Error | null): Promise<void> {
     while (true) {
+      const refusal = refuse?.();
+      if (refusal) throw refusal;
       const now = Date.now();
       const longestWindow = Math.max(
         ...this._windows.map((window) => window.intervalMs),
@@ -47,7 +55,8 @@ export class SlidingWindowRateLimiter {
         if (recent.length < window.limit) continue;
         if (window.onExhausted === "reject") {
           throw new Error(
-            `Local rate limit exhausted: ${window.limit} requests per ${window.intervalMs}ms.`,
+            window.exhaustedMessage ??
+              `Local rate limit exhausted: ${window.limit} requests per ${window.intervalMs}ms.`,
           );
         }
         const oldestBlocking = recent[recent.length - window.limit];
@@ -63,18 +72,28 @@ export class SlidingWindowRateLimiter {
   }
 }
 
+const DAILY_PLACEMENT_LIMIT = 1000;
+
 export class ExchangeRateLimiter {
   private readonly _placementLimiter = new SlidingWindowRateLimiter([
     { limit: 10, intervalMs: 1000, onExhausted: "wait" },
-    { limit: 1000, intervalMs: 86_400_000, onExhausted: "reject" },
+    {
+      limit: DAILY_PLACEMENT_LIMIT,
+      intervalMs: 86_400_000,
+      onExhausted: "reject",
+      exhaustedMessage: `Daily limit of ${DAILY_PLACEMENT_LIMIT} orders reached. New orders go out as earlier ones pass 24 hours.`,
+    },
   ]);
   private readonly _orderLimiter = new SlidingWindowRateLimiter([
     { limit: 100, intervalMs: 1000, onExhausted: "wait" },
     { limit: 1000, intervalMs: 60_000, onExhausted: "wait" },
   ]);
 
-  async place<T>(operation: () => Promise<T>): Promise<T> {
-    return this._runWithRetry(this._placementLimiter, operation);
+  async place<T>(
+    operation: () => Promise<T>,
+    refuse?: () => Error | null,
+  ): Promise<T> {
+    return this._runWithRetry(this._placementLimiter, operation, refuse);
   }
 
   async cancel<T>(operation: () => Promise<T>): Promise<T> {
@@ -88,9 +107,10 @@ export class ExchangeRateLimiter {
   private async _runWithRetry<T>(
     limiter: SlidingWindowRateLimiter,
     operation: () => Promise<T>,
+    refuse?: () => Error | null,
   ): Promise<T> {
     try {
-      return await limiter.run(operation);
+      return await limiter.run(operation, refuse);
     } catch (err) {
       if (
         !(err instanceof RateLimitError) ||
@@ -101,7 +121,7 @@ export class ExchangeRateLimiter {
         throw err;
       }
       await sleep(err.retryAfter);
-      return limiter.run(operation);
+      return limiter.run(operation, refuse);
     }
   }
 }

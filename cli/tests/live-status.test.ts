@@ -203,4 +203,45 @@ describe("LiveStatusReporter", () => {
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(r.snapshot()).toEqual({});
   });
+
+  it("reports each send and edit result for its connection", async () => {
+    // given
+    const results: Array<[string, boolean]> = [];
+    const c = conn("a");
+    const r = new LiveStatusReporter({
+      connections: [c],
+      onResult: (id, result) => results.push([id, result.success]),
+    });
+    mockEdit.mockResolvedValueOnce({ success: false, error: "HTTP 401" });
+
+    // when
+    await r.flush("first");
+    await r.flush("second");
+    await r.flush("third");
+
+    // then
+    expect(results).toEqual([
+      ["a", true],
+      ["a", false],
+      ["a", true],
+    ]);
+  });
+
+  it("reports the new message, not the edit that found it gone", async () => {
+    // given
+    const results: boolean[] = [];
+    const c = conn("a");
+    const r = new LiveStatusReporter({
+      connections: [c],
+      refs: { [c.id]: { messageId: 55, chatId: c.chat_id } },
+      onResult: (_, result) => results.push(result.success),
+    });
+    mockEdit.mockResolvedValueOnce({ success: false, notFound: true });
+
+    // when
+    await r.flush("text");
+
+    // then
+    expect(results).toEqual([true]);
+  });
 });

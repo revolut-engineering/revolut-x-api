@@ -94,8 +94,16 @@ jobs:
 
       - run: npm run sync-skills:check
 
+      - run: npm run api-range:check
+
+      - name: Check package licenses
+        run: cmp LICENSE api/LICENSE && cmp LICENSE cli/LICENSE
+
   test-api:
-    name: Test API
+    name: Test API (Node ${{ matrix.node }})
+    strategy:
+      matrix:
+        node: [20, 22]
     needs: install
     runs-on: ubuntu-latest
     defaults:
@@ -106,7 +114,7 @@ jobs:
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -119,7 +127,10 @@ jobs:
       - run: npm test
 
   test-mcp:
-    name: Test MCP
+    name: Test MCP (Node ${{ matrix.node }})
+    strategy:
+      matrix:
+        node: [20, 22]
     needs: [install, build-api]
     runs-on: ubuntu-latest
     defaults:
@@ -130,7 +141,7 @@ jobs:
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -149,7 +160,10 @@ jobs:
       - run: npm test
 
   test-cli:
-    name: Test CLI
+    name: Test CLI (Node ${{ matrix.node }})
+    strategy:
+      matrix:
+        node: [20, 22]
     needs: build-api
     runs-on: ubuntu-latest
     defaults:
@@ -160,7 +174,7 @@ jobs:
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
 
       - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -206,10 +220,14 @@ jobs:
 
       - run: npm pack
 
+      - name: Check the license is packed
+        run: tar -tzf *.tgz | grep -qx package/LICENSE
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: "@revolut/revolut-x-api"
-          path: api/revolut-x-api-*.tgz
+          name: revolut-x-api-tgz
+          path: api/*.tgz
+          if-no-files-found: error
 
   pack-cli:
     name: Pack CLI
@@ -240,10 +258,17 @@ jobs:
       - name: Pack tarball
         run: cd cli && npm pack
 
+      - name: Check the license is packed
+        run: cd cli && tar -tzf *.tgz | grep -qx package/LICENSE
+
+      - name: Install the packed CLI like a client
+        run: npm run pack:check
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: "@revolut/revolut-x-cli"
-          path: cli/revolut-x-cli-*.tgz
+          name: revolut-x-cli-tgz
+          path: cli/*.tgz
+          if-no-files-found: error
 
   pack-mcp:
     name: Pack MCP
@@ -278,6 +303,7 @@ jobs:
         with:
           name: revolutx-mcp-mcpb
           path: mcp/dist/revolutx-mcp.mcpb
+          if-no-files-found: error
 
   sbom:
     name: Generate SBOM
@@ -306,3 +332,4 @@ jobs:
         with:
           name: sbom
           path: sbom-*.json
+          if-no-files-found: error

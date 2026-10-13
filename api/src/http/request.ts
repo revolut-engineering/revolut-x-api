@@ -11,7 +11,9 @@ import {
   NotFoundError,
   ConflictError,
   ServerError,
+  NetworkError,
   InsecureKeyPermissionsError,
+  isDuplicateClientOrderIdError,
 } from "./errors.js";
 
 export interface RequestOptions {
@@ -100,6 +102,116 @@ async function raiseForStatus(response: Response): Promise<void> {
   }
 }
 
+const UNSENT_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "ERR_INVALID_URL",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "ERR_TLS_HANDSHAKE_TIMEOUT",
+  "ERR_SSL_WRONG_VERSION_NUMBER",
+  "ERR_SSL_PACKET_LENGTH_TOO_LONG",
+  "ERR_SSL_UNSUPPORTED_PROTOCOL",
+  "ERR_SSL_NO_PROTOCOLS_AVAILABLE",
+  "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+  "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+]);
+const UNSENT_WHILE_CONNECTING = new Set([
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+]);
+const UNSENT_MESSAGES = new Set(["bad port"]);
+
+function errorCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function failedWhileConnecting(error: unknown): boolean {
+  if (error instanceof AggregateError) {
+    return (
+      error.errors.length > 0 &&
+      error.errors.every((inner) => failedWhileConnecting(inner))
+    );
+  }
+  return (error as { syscall?: unknown } | null)?.syscall === "connect";
+}
+
+function isUnsent(
+  code: string | undefined,
+  cause: unknown,
+  message: string,
+): boolean {
+  if (UNSENT_MESSAGES.has(message)) return true;
+  if (code === undefined) return false;
+  if (UNSENT_ERROR_CODES.has(code)) return true;
+  return UNSENT_WHILE_CONNECTING.has(code) && failedWhileConnecting(cause);
+}
+
+function withPeriod(text: string): string {
+  return `${text.replace(/\.+$/, "")}.`;
+}
+
+export function toNetworkError(
+  error: unknown,
+  timeoutMs: number,
+  afterServerError = false,
+): NetworkError | null {
+  if (error instanceof RevolutXError) return null;
+  if (
+    error instanceof DOMException &&
+    (error.name === "TimeoutError" || error.name === "AbortError")
+  ) {
+    return new NetworkError(
+      afterServerError
+        ? `The exchange answered with a server error, and the retry got no reply within ${timeoutMs / 1000} s.`
+        : `No reply from the exchange within ${timeoutMs / 1000} s.`,
+      { cause: error, mayHaveReachedServer: true },
+    );
+  }
+  const cause = (error as Error | undefined)?.cause;
+  const code = errorCode(error) ?? errorCode(cause);
+  const fetchFailed =
+    error instanceof TypeError && error.message === "fetch failed";
+  if (code === undefined && !fetchFailed) return null;
+  const causeMessage = cause instanceof Error ? cause.message : "";
+  const reason = code ?? (causeMessage || "fetch failed");
+  if (afterServerError) {
+    return new NetworkError(
+      `The exchange answered with a server error, and the retry failed: ${reason}.`,
+      { cause: error, mayHaveReachedServer: true },
+    );
+  }
+  const unsent = isUnsent(code, errorCode(error) ? error : cause, causeMessage);
+  return new NetworkError(
+    unsent
+      ? `Could not reach the exchange: ${reason}.`
+      : `No reply from the exchange: ${reason}.`,
+    { cause: error, mayHaveReachedServer: !unsent },
+  );
+}
+
+function parseReply(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new NetworkError(
+      withPeriod(
+        `The exchange's reply couldn't be read: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+      { cause: error, mayHaveReachedServer: true },
+    );
+  }
+}
+
 export async function makeRequest(
   options: RequestOptions,
   method: string,
@@ -128,7 +240,7 @@ export async function makeRequest(
 
   applyAuthHeaders(options, headers, method, fullPath, queryString, bodyString);
 
-  let lastError: Error | undefined;
+  let lastError: ServerError | undefined;
 
   for (let attempt = 0; attempt <= options.maxRetries; attempt++) {
     if (attempt > 0) {
@@ -175,7 +287,7 @@ export async function makeRequest(
         status: response.status,
         path: fullPath,
       });
-      return JSON.parse(text);
+      return parseReply(text);
     } catch (error) {
       options.logger.warn("Request failed", {
         attempt,
@@ -183,11 +295,28 @@ export async function makeRequest(
         error: error instanceof Error ? error.message : String(error),
       });
 
-      if (!(error instanceof ServerError)) {
-        throw error;
+      const changesState = method !== "GET";
+      const networkError = toNetworkError(
+        error,
+        options.timeout,
+        changesState && lastError !== undefined,
+      );
+      if (networkError) throw networkError;
+      if (error instanceof ServerError) {
+        lastError = error;
+        continue;
       }
-
-      lastError = error;
+      if (changesState && lastError !== undefined) {
+        if (isDuplicateClientOrderIdError(error)) {
+          throw new BadRequestError((error as BadRequestError).message, {
+            cause: lastError,
+          });
+        }
+        throw new ServerError(lastError.message, lastError.statusCode ?? 500, {
+          cause: error,
+        });
+      }
+      throw error;
     }
   }
 

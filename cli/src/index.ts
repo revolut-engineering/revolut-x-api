@@ -7,7 +7,6 @@ import { registerOrderCommand } from "./commands/order.js";
 import { registerTradeCommand } from "./commands/trade.js";
 import { registerTransactionCommand } from "./commands/transaction.js";
 import { registerMonitorCommand } from "./commands/monitor.js";
-import { registerEventsCommand } from "./commands/events.js";
 import { registerStrategyCommand } from "./commands/strategy.js";
 import { registerConnectorCommand } from "./commands/connector.js";
 
@@ -116,11 +115,6 @@ Examples:
     $ revx connector telegram disable <id>
     $ revx connector telegram delete <id>
 
-  Events:
-    $ revx events                                         Show recent alert events
-    $ revx events --limit 10                              Show last 10 events
-    $ revx events --category alert_triggered              Filter by category
-
 These examples are a curated subset. Run 'revx <command> --help' (e.g.
 'revx order place --help') for the complete list of arguments and flags.`,
     );
@@ -132,7 +126,6 @@ These examples are a curated subset. Run 'revx <command> --help' (e.g.
   registerTradeCommand(program);
   registerTransactionCommand(program);
   registerMonitorCommand(program);
-  registerEventsCommand(program);
   registerStrategyCommand(program);
   registerConnectorCommand(program);
 

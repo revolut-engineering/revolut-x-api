@@ -29,10 +29,12 @@ export interface DashboardData {
   uptime: number;
   tickCount: number;
   lastError: string | null;
+  attention: string[];
   warnings: string[];
   telegramConnections: number;
   intervalSec: number;
-  lastNotifyOk: number;
+  telegramProblem: string | null;
+  openBuyFills?: Decimal;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -303,9 +305,8 @@ function padLine(content: string, width: number): string {
 }
 
 function sectionHeader(label: string, width: number): string {
-  const inner = width - 2;
-  const text = ` ${label} `;
-  const remaining = inner - text.length;
+  const text = label ? ` ${label} ` : "";
+  const remaining = width - text.length;
   const left = Math.floor(remaining / 2);
   const right = remaining - left;
   return `${BOX.ml}${BOX.h.repeat(left)}${text}${BOX.h.repeat(right)}${BOX.mr}`;
@@ -313,7 +314,7 @@ function sectionHeader(label: string, width: number): string {
 
 function getBoxWidth(): number {
   const cols = process.stdout.columns ?? 80;
-  return Math.max(50, Math.min(80, cols - 2));
+  return Math.max(38, Math.min(80, cols - 2));
 }
 
 export function renderDashboard(data: DashboardData): string {
@@ -354,12 +355,19 @@ export function renderDashboard(data: DashboardData): string {
   lines.push(padLine(`  ${pairLabel}${" ".repeat(gap)}${priceBlock}`, innerW));
   lines.push(padLine("", innerW));
 
-  const rangeLow = new Decimal(state.gridPrice).times(
-    new Decimal(1).minus(state.config.rangePct),
-  );
-  const rangeHigh = new Decimal(state.gridPrice).times(
-    new Decimal(1).plus(state.config.rangePct),
-  );
+  const levelPrices = state.levels.map((level) => new Decimal(level.price));
+  const rangeLow =
+    levelPrices.length > 0
+      ? Decimal.min(...levelPrices)
+      : new Decimal(state.gridPrice).times(
+          new Decimal(1).minus(state.config.rangePct),
+        );
+  const rangeHigh =
+    levelPrices.length > 0
+      ? Decimal.max(...levelPrices)
+      : new Decimal(state.gridPrice).times(
+          new Decimal(1).plus(state.config.rangePct),
+        );
   const rangePctDisplay = new Decimal(state.config.rangePct)
     .times(100)
     .toFixed(1);
@@ -436,24 +444,16 @@ export function renderDashboard(data: DashboardData): string {
     telegramStr = chalk.yellow("None");
   } else {
     const connLabel = `${data.telegramConnections} connection${data.telegramConnections !== 1 ? "s" : ""}`;
-    const staleSec = 5 * 60;
-    if (
-      data.lastNotifyOk > 0 &&
-      Date.now() - data.lastNotifyOk > staleSec * 1000
-    ) {
-      const ago = Math.floor((Date.now() - data.lastNotifyOk) / 60_000);
-      telegramStr = `${connLabel}  ${chalk.yellow(`\u26A0 last OK ${ago}m ago`)}`;
-    } else if (data.lastNotifyOk === 0 && data.tickCount > 2) {
-      telegramStr = `${connLabel}  ${chalk.yellow("\u26A0 no delivery yet")}`;
-    } else {
-      telegramStr = connLabel;
-    }
+    telegramStr = data.telegramProblem
+      ? `${connLabel}  ${chalk.yellow(`\u26A0 last send failed: ${data.telegramProblem}`)}`
+      : connLabel;
   }
   lines.push(
     padLine(`  ${chalk.dim("Telegram".padEnd(14))}${telegramStr}`, innerW),
   );
 
-  if (data.lastError || data.warnings.length > 0) {
+  const notices = [...data.warnings, ...data.attention];
+  if (data.lastError || notices.length > 0) {
     lines.push(padLine("", innerW));
     if (data.lastError) {
       lines.push(
@@ -463,15 +463,15 @@ export function renderDashboard(data: DashboardData): string {
         ),
       );
     }
-    for (const w of data.warnings.slice(0, 3)) {
+    for (const notice of notices.slice(0, 3)) {
       lines.push(
-        padLine(`  ${chalk.yellow("\u26A0")} ${chalk.yellow(w)}`, innerW),
+        padLine(`  ${chalk.yellow("\u26A0")} ${chalk.yellow(notice)}`, innerW),
       );
     }
-    if (data.warnings.length > 3) {
+    if (notices.length > 3) {
       lines.push(
         padLine(
-          `  ${chalk.dim(`  ...and ${data.warnings.length - 3} more`)}`,
+          `  ${chalk.dim(`  ...and ${notices.length - 3} more`)}`,
           innerW,
         ),
       );
@@ -736,6 +736,14 @@ export function renderDashboard(data: DashboardData): string {
       innerW,
     ),
   );
+  if (data.openBuyFills?.gt(0)) {
+    lines.push(
+      padLine(
+        `  ${chalk.dim("Open buy fills".padEnd(16))}${data.openBuyFills.toFixed(8)}`,
+        innerW,
+      ),
+    );
+  }
 
   lines.push(padLine("", innerW));
   lines.push(sectionHeader("RECENT TRADES", innerW));
@@ -781,8 +789,7 @@ export function renderDashboard(data: DashboardData): string {
 export function renderShutdownSummary(
   state: GridState,
   currentPrice: Decimal,
-  remainingOrders = 0,
-  stateRetainedForInventory = false,
+  notes: string[] = [],
 ): string {
   const cs = getCurrSymbol(state.pair);
   const lines: string[] = [];
@@ -829,15 +836,8 @@ export function renderShutdownSummary(
   );
   lines.push(`  ${chalk.dim("Net Value".padEnd(18))}${fmtPrice(netValue, cs)}`);
   lines.push(chalk.dim("  " + "\u2500".repeat(40)));
-  if (remainingOrders > 0) {
-    lines.push(
-      `  ${chalk.yellow(`\u26A0 ${remainingOrders} order${remainingOrders !== 1 ? "s" : ""} could not be cancelled. State saved for next startup.`)}`,
-    );
-  } else if (stateRetainedForInventory) {
-    lines.push(
-      `  ${chalk.yellow(`\u26A0 Acquired ${base} remains. State saved for the next startup.`)}`,
-    );
-  } else {
+  for (const note of notes) lines.push(`  ${chalk.yellow(note)}`);
+  if (notes.length === 0) {
     lines.push(`  ${chalk.dim("All orders cancelled. Clean exit.")}`);
   }
   lines.push("");
@@ -845,33 +845,104 @@ export function renderShutdownSummary(
   return lines.join("\n");
 }
 
+export function untrackedReplacementsNote(replaced: number): string {
+  return replaced === 1
+    ? "1 order was replaced outside the bot. The replacement isn't tracked and wasn't cancelled. Check revx order open."
+    : `${replaced} orders were replaced outside the bot. The replacements aren't tracked and weren't cancelled. Check revx order open.`;
+}
+
+export type ClosedPendingOrder = "cancelled" | "rejected" | "replaced";
+
+export interface ReconciliationCounts {
+  buysFilled: number;
+  sellsFilled: number;
+  kept: number;
+  gone: number;
+  replaced: number;
+  resent: number;
+  renewed: Partial<Record<ClosedPendingOrder, number>>;
+  unlisted: number;
+}
+
+const CLOSED_PENDING_WORDING: Record<ClosedPendingOrder, string> = {
+  cancelled: "cancelled on the exchange",
+  rejected: "rejected by the exchange",
+  replaced: "replaced outside the bot",
+};
+
+function renewedLine(closedAs: ClosedPendingOrder, n: number): string {
+  const one = n === 1;
+  const placed = `${n} pending order${one ? " was" : "s were"} ${CLOSED_PENDING_WORDING[closedAs]}, ${one ? "a new one was" : "new ones were"} placed`;
+  if (closedAs !== "replaced") return placed;
+  return `${placed}. The replacement${one ? " isn't" : "s aren't"} tracked: revx order open`;
+}
+
 export function renderReconciliationSummary(
-  buysFilled: number,
-  sellsFilled: number,
-  ordersKept: number,
-  ordersDead: number,
+  counts: ReconciliationCounts,
 ): string {
+  const {
+    buysFilled,
+    sellsFilled,
+    kept,
+    gone,
+    replaced,
+    resent,
+    renewed,
+    unlisted,
+  } = counts;
+  const count = (n: number, noun: string) =>
+    `${n} ${noun}${n !== 1 ? "s" : ""}`;
   const lines: string[] = [];
   lines.push("");
   lines.push(chalk.bold("  Reconciliation Summary"));
   lines.push(chalk.dim("  " + "\u2500".repeat(40)));
   if (buysFilled > 0)
     lines.push(
-      `  ${chalk.green("\u2713")} ${buysFilled} buy order${buysFilled !== 1 ? "s" : ""} filled while offline`,
+      `  ${chalk.green("\u2713")} ${count(buysFilled, "buy order")} filled while offline`,
     );
   if (sellsFilled > 0)
     lines.push(
-      `  ${chalk.green("\u2713")} ${sellsFilled} sell order${sellsFilled !== 1 ? "s" : ""} filled while offline`,
+      `  ${chalk.green("\u2713")} ${count(sellsFilled, "sell order")} filled while offline`,
     );
-  if (ordersKept > 0)
+  if (kept > 0)
     lines.push(
-      `  ${chalk.cyan("\u21BB")} ${ordersKept} order${ordersKept !== 1 ? "s" : ""} kept from previous session`,
+      `  ${chalk.cyan("\u21BB")} ${count(kept, "order")} kept from previous session`,
     );
-  if (ordersDead > 0)
+  if (resent > 0)
     lines.push(
-      `  ${chalk.yellow("\u2717")} ${ordersDead} order${ordersDead !== 1 ? "s" : ""} expired/cancelled on exchange`,
+      `  ${chalk.cyan("\u21BB")} ${count(resent, "pending order")} sent again`,
     );
-  if (buysFilled + sellsFilled + ordersKept + ordersDead === 0)
+  if (unlisted > 0)
+    lines.push(
+      `  ${chalk.cyan("\u21BB")} ${count(unlisted, "order")} not listed by the exchange yet, looked up again`,
+    );
+  for (const [closedAs, n] of Object.entries(renewed)) {
+    if (n > 0) {
+      lines.push(
+        `  ${chalk.yellow("\u2717")} ${renewedLine(closedAs as ClosedPendingOrder, n)}`,
+      );
+    }
+  }
+  if (replaced > 0)
+    lines.push(
+      `  ${chalk.yellow("\u2717")} ${replaced === 1 ? "1 order was" : `${replaced} orders were`} replaced outside the bot. The replacement${replaced === 1 ? " isn't" : "s aren't"} tracked: revx order open`,
+    );
+  if (gone > 0)
+    lines.push(
+      `  ${chalk.yellow("\u2717")} ${count(gone, "order")} expired/cancelled on exchange`,
+    );
+  const renewedTotal = Object.values(renewed).reduce((sum, n) => sum + n, 0);
+  if (
+    buysFilled +
+      sellsFilled +
+      kept +
+      gone +
+      replaced +
+      resent +
+      unlisted +
+      renewedTotal ===
+    0
+  )
     lines.push(`  ${chalk.dim("No leftover orders from previous session")}`);
   lines.push(chalk.dim("  " + "\u2500".repeat(40)));
   lines.push("");

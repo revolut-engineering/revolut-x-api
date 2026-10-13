@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Decimal } from "decimal.js";
 import {
   editMessage,
+  formatNotification,
   pinMessage,
   editWithRetries,
   sendWithRetries,
@@ -23,6 +25,44 @@ let mockFetch: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   mockFetch = vi.fn();
   vi.stubGlobal("fetch", mockFetch);
+});
+
+describe("telegram errors shown to the user", () => {
+  const TOKEN = "123456789:AAH-secret-token-tail";
+
+  it("puts a proxy error page on one line", async () => {
+    // given
+    mockFetch.mockResolvedValue(
+      res(
+        502,
+        "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n</html>",
+      ),
+    );
+
+    // when
+    const result = await sendWithRetries(TOKEN, "chat", "hi", 1);
+
+    // then
+    expect(result.error).toBe(
+      "HTTP 502: <html> <head><title>502 Bad Gateway</title></head> </html>",
+    );
+  });
+
+  it("never shows the bot token from a failed request", async () => {
+    // given
+    mockFetch.mockRejectedValue(
+      new TypeError(
+        `Failed to parse URL from https://api.telegram.org/bot${TOKEN}/sendMessage`,
+      ),
+    );
+
+    // when
+    const result = await sendWithRetries(TOKEN, "chat", "hi", 1);
+
+    // then
+    expect(result.error).not.toContain(TOKEN);
+    expect(result.error).toContain("bot1234****tail/sendMessage");
+  });
 });
 
 describe("telegram api primitives", () => {
@@ -124,5 +164,21 @@ describe("telegram api primitives", () => {
     const r = await pinMessage("t", "c", 9);
     expect(r.success).toBe(true);
     expect(mockFetch.mock.calls[0][0]).toContain("/pinChatMessage");
+  });
+});
+
+describe("formatNotification", () => {
+  it("writes a tiny price without an exponent", () => {
+    // when
+    const message = formatNotification(
+      "rsi",
+      "PEPE-USD",
+      new Decimal("0.00000005"),
+      { conditionMet: true, detail: "RSI above 70" },
+    );
+
+    // then
+    expect(message).toContain("Price: 0.00000005");
+    expect(message).not.toMatch(/\de-\d/);
   });
 });

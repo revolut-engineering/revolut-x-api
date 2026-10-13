@@ -6,6 +6,32 @@ import {
   mockOrder,
   mockTwapOrder,
 } from "../helpers/test-utils.js";
+import { NetworkError } from "../../src/http/errors.js";
+
+const UNUSABLE_PLACEMENT_REPLIES: Array<[string, string | object]> = [
+  ["an empty body", ""],
+  ["an empty object", {}],
+  ["no data", { data: null }],
+  ["data without an order id", { data: { state: "new" } }],
+  [
+    "data as a list",
+    [{ venue_order_id: "v-1", client_order_id: "c-1", state: "new" }],
+  ],
+  [
+    "a numeric order id",
+    { data: { venue_order_id: 1, client_order_id: "c-1", state: "new" } },
+  ],
+];
+
+const FUTURE_PLACEMENT_REPLY = {
+  data: {
+    venue_order_id: "v-1",
+    client_order_id: "c-1",
+    state: "accepted_new",
+    note: "x",
+  },
+  meta: {},
+};
 
 beforeAll(() => {
   nock.disableNetConnect();
@@ -111,13 +137,13 @@ describe("Orders", () => {
           capturedBody = body;
           return true;
         })
-        .reply(200, {
+        .reply(200, (_, body) => ({
           data: {
             venue_order_id: "order-123",
-            client_order_id: capturedBody?.client_order_id,
+            client_order_id: (body as Record<string, unknown>).client_order_id,
             state: "new",
           },
-        });
+        }));
 
       await client.placeOrder({
         symbol: "BTC-USD",
@@ -832,6 +858,86 @@ describe("Orders", () => {
       expect(result.data.triggered_by!.twap!.parent_id).toBe("twap-parent-123");
       expect(result.data.triggered_by!.twap!.slice_index).toBe(1);
     });
+  });
+
+  describe("placement replies", () => {
+    it("accepts a placement reply with a new state and extra fields, and keeps them", async () => {
+      // given
+      const client = createTestClient();
+      nock(BASE_URL).post("/api/1.0/orders").reply(200, FUTURE_PLACEMENT_REPLY);
+
+      // when
+      const result = await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "buy",
+        limit: { price: "95000", baseSize: "0.001" },
+      });
+
+      // then
+      expect(result).toEqual(FUTURE_PLACEMENT_REPLY);
+    });
+
+    it("accepts a replace reply with a new state and extra fields, and keeps them", async () => {
+      // given
+      const client = createTestClient();
+      nock(BASE_URL)
+        .put("/api/1.0/orders/order-123")
+        .reply(200, FUTURE_PLACEMENT_REPLY);
+
+      // when
+      const result = await client.replaceOrder("order-123", {
+        clientOrderId: "client-new",
+        price: "96000",
+      });
+
+      // then
+      expect(result).toEqual(FUTURE_PLACEMENT_REPLY);
+    });
+
+    it.each(UNUSABLE_PLACEMENT_REPLIES)(
+      "treats a placement reply with %s as an order that may have been placed",
+      async (_, body) => {
+        // given
+        const client = createTestClient();
+        nock(BASE_URL).post("/api/1.0/orders").reply(200, body);
+
+        // when
+        const placing = client.placeOrder({
+          symbol: "BTC-USD",
+          side: "buy",
+          limit: { price: "95000", baseSize: "0.001" },
+        });
+
+        // then
+        await expect(placing).rejects.toBeInstanceOf(NetworkError);
+        await expect(placing).rejects.toMatchObject({
+          mayHaveReachedServer: true,
+          message: "The exchange's reply didn't include the order's details.",
+        });
+      },
+    );
+
+    it.each(UNUSABLE_PLACEMENT_REPLIES)(
+      "treats a replace reply with %s as a replacement that may have been placed",
+      async (_, body) => {
+        // given
+        const client = createTestClient();
+        nock(BASE_URL).put("/api/1.0/orders/order-123").reply(200, body);
+
+        // when
+        const replacing = client.replaceOrder("order-123", {
+          clientOrderId: "client-new",
+          price: "96000",
+        });
+
+        // then
+        await expect(replacing).rejects.toBeInstanceOf(NetworkError);
+        await expect(replacing).rejects.toMatchObject({
+          mayHaveReachedServer: true,
+          message: "The exchange's reply didn't include the order's details.",
+        });
+      },
+    );
   });
 
   describe("replaceOrder", () => {

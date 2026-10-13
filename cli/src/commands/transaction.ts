@@ -8,7 +8,7 @@ import {
 } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
-import { parseTimestamp, parsePositiveInt } from "../util/parse.js";
+import { resolveDateWindow, parsePositiveInt } from "../util/parse.js";
 import {
   isJsonOutput,
   printJson,
@@ -190,12 +190,11 @@ Without --start-date, the 30 days ending at --end-date (now by default) are retu
             : undefined;
 
           const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-          const endTimeMs = opts.endDate
-            ? parseTimestamp(opts.endDate)
-            : Date.now();
-          const startTimeMs = opts.startDate
-            ? parseTimestamp(opts.startDate)
-            : endTimeMs - THIRTY_DAYS_MS;
+          const dates = resolveDateWindow(
+            opts.startDate,
+            opts.endDate,
+            THIRTY_DAYS_MS,
+          );
 
           const types = parseList(opts.types, TRANSACTION_TYPES, "types");
           const statuses = parseList(
@@ -222,8 +221,8 @@ Without --start-date, the 30 days ending at --end-date (now by default) are retu
                   cursor,
                   limit: apiLimit,
                 }),
-              startDate: startTimeMs,
-              endDate: endTimeMs,
+              startDate: dates.start,
+              endDate: dates.end,
               apiLimit: TRANSACTIONS_API_LIMIT,
               userLimit,
             },
@@ -232,10 +231,7 @@ Without --start-date, the 30 days ending at --end-date (now by default) are retu
           if (isJsonOutput(opts)) {
             printJson({ data: allTransactions });
           } else {
-            const periodText = formatPeriod(
-              opts.startDate ? parseTimestamp(opts.startDate) : undefined,
-              opts.endDate ? parseTimestamp(opts.endDate) : undefined,
-            );
+            const periodText = formatPeriod(dates.givenStart, dates.givenEnd);
             printSectionHeader("Transactions", periodText);
 
             if (allTransactions.length === 0) {

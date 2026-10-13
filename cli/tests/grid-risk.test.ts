@@ -8,7 +8,9 @@ import {
   trailUpTriggerPrice,
 } from "../src/engine/grid-math.js";
 import {
+  renderShutdownSummary,
   renderDashboard,
+  renderReconciliationSummary,
   renderRiskLine,
   renderStartedMessage,
 } from "../src/engine/grid-renderer.js";
@@ -236,14 +238,45 @@ describe("renderStartedMessage", () => {
       uptime: 1000,
       tickCount: 1,
       lastError: null,
+      attention: [],
       warnings: [],
       telegramConnections: 0,
       intervalSec: 10,
-      lastNotifyOk: 0,
+      telegramProblem: null,
     });
     expect(dash).toContain("3 per side");
     expect(renderStartedMessage(state.pair, state.config)).toContain(
       "3 levels/side",
+    );
+  });
+});
+
+describe("the Telegram line of the dashboard", () => {
+  function telegramLine(telegramProblem: string | null, tickCount = 50) {
+    const dash = stripVTControlCharacters(
+      renderDashboard({
+        state: makeState(),
+        currentPrice: PRICE,
+        uptime: 60 * 60 * 1000,
+        tickCount,
+        lastError: null,
+        attention: [],
+        warnings: [],
+        telegramConnections: 1,
+        intervalSec: 10,
+        telegramProblem,
+      }),
+    );
+    return dash.split("\n").find((line) => line.includes("Telegram"))!;
+  }
+
+  it("raises no warning after a quiet spell", () => {
+    expect(telegramLine(null)).not.toContain("\u26A0");
+  });
+
+  it("warns with the reason when the latest send failed", () => {
+    expect(telegramLine("HTTP 401: Unauthorized")).toContain(
+      "1 connection  \u26A0 last send failed: HTTP 401: Unauthorized",
     );
   });
 });
@@ -301,6 +334,260 @@ describe("renderRiskLine", () => {
   });
 });
 
+describe("renderReconciliationSummary", () => {
+  const NO_ORDERS = {
+    buysFilled: 0,
+    sellsFilled: 0,
+    kept: 0,
+    gone: 0,
+    replaced: 0,
+    resent: 0,
+    renewed: {},
+    unlisted: 0,
+  };
+
+  it("says a pending order closed on the exchange was placed anew", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({
+        ...NO_ORDERS,
+        renewed: { cancelled: 1, rejected: 2, replaced: 1 },
+      }),
+    );
+
+    // then
+    expect(output).toContain(
+      "1 pending order was cancelled on the exchange, a new one was placed",
+    );
+    expect(output).toContain(
+      "2 pending orders were rejected by the exchange, new ones were placed",
+    );
+    expect(output).toContain(
+      "1 pending order was replaced outside the bot, a new one was placed. The replacement isn't tracked: revx order open",
+    );
+    expect(output).not.toContain("sent again");
+    expect(output).not.toContain("No leftover orders");
+  });
+
+  it("says a saved order replaced outside the bot apart from orders gone", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({ ...NO_ORDERS, gone: 1, replaced: 2 }),
+    );
+
+    // then
+    expect(output).toContain(
+      "2 orders were replaced outside the bot. The replacements aren't tracked: revx order open",
+    );
+    expect(output).toContain("1 order expired/cancelled on exchange");
+  });
+
+  it("says no leftover orders only when nothing was found", () => {
+    expect(
+      stripVTControlCharacters(renderReconciliationSummary(NO_ORDERS)),
+    ).toContain("No leftover orders from previous session");
+  });
+
+  it("lists orders sent again apart from orders kept", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({ ...NO_ORDERS, kept: 1, resent: 2 }),
+    );
+
+    // then
+    expect(output).toContain("1 order kept from previous session");
+    expect(output).toContain("2 pending orders sent again");
+  });
+
+  it("uses the singular for one order sent again", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({ ...NO_ORDERS, resent: 1 }),
+    );
+
+    // then
+    expect(output).toContain("1 pending order sent again");
+    expect(output).not.toContain("kept from previous session");
+    expect(output).not.toContain("No leftover orders");
+  });
+
+  it("lists orders the exchange doesn't list yet apart from orders gone", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({ ...NO_ORDERS, gone: 1, unlisted: 2 }),
+    );
+
+    // then
+    expect(output).toContain(
+      "2 orders not listed by the exchange yet, looked up again",
+    );
+    expect(output).toContain("1 order expired/cancelled on exchange");
+  });
+
+  it("uses the singular for one order not listed yet", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({ ...NO_ORDERS, unlisted: 1 }),
+    );
+
+    // then
+    expect(output).toContain(
+      "1 order not listed by the exchange yet, looked up again",
+    );
+    expect(output).not.toContain("No leftover orders");
+  });
+});
+
+describe("renderDashboard notices", () => {
+  it("shows the check's warnings before lasting problems and counts both when cut", () => {
+    // given
+    const data = {
+      state: makeState(),
+      currentPrice: new Decimal("100"),
+      uptime: 1000,
+      tickCount: 1,
+      lastError: null,
+      attention: ["Buy @99 not placed: one", "Buy @98 not placed: two"],
+      warnings: [
+        "Sell @101 rejected, retrying (2/3)",
+        "Price below grid range",
+      ],
+      telegramConnections: 0,
+      intervalSec: 10,
+      telegramProblem: null,
+    };
+
+    // when
+    const output = stripVTControlCharacters(renderDashboard(data));
+
+    // then
+    const shown = [
+      "Sell @101 rejected, retrying (2/3)",
+      "Price below grid range",
+      "Buy @99 not placed: one",
+    ].map((notice) => output.indexOf(notice));
+    expect(shown.every((index) => index >= 0)).toBe(true);
+    expect([...shown].sort((a, b) => a - b)).toEqual(shown);
+    expect(output).not.toContain("Buy @98 not placed: two");
+    expect(output).toContain("...and 1 more");
+  });
+});
+
+describe("renderDashboard open buy fills", () => {
+  const data = {
+    state: makeState(),
+    currentPrice: new Decimal("100"),
+    uptime: 1000,
+    tickCount: 1,
+    lastError: null,
+    attention: [],
+    warnings: [],
+    telegramConnections: 0,
+    intervalSec: 10,
+    telegramProblem: null,
+  };
+
+  it("shows what open buys have already bought under the coins held", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderDashboard({ ...data, openBuyFills: new Decimal("0.04") }),
+    );
+
+    // then
+    expect(output).toMatch(/BTC Held\s+0\.00000000/);
+    expect(output).toMatch(/Open buy fills\s+0\.04000000/);
+  });
+
+  it("leaves the row out while open buys have bought nothing", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderDashboard({ ...data, openBuyFills: new Decimal("0") }),
+    );
+
+    // then
+    expect(output).not.toContain("Open buy fills");
+  });
+});
+
+describe("renderDashboard frame", () => {
+  function dashboardLines(state = makeState()): string[] {
+    return stripVTControlCharacters(
+      renderDashboard({
+        state,
+        currentPrice: new Decimal("100"),
+        uptime: 1000,
+        tickCount: 1,
+        lastError: null,
+        attention: [],
+        warnings: [],
+        telegramConnections: 0,
+        intervalSec: 10,
+        telegramProblem: null,
+      }),
+    ).split("\n");
+  }
+
+  it("draws every divider as wide as the box, with no gap when untitled", () => {
+    // when
+    const lines = dashboardLines();
+
+    // then
+    const width = [...lines[0]].length;
+    const dividers = lines.filter((line) => line.startsWith("\u2560"));
+    expect(dividers.length).toBeGreaterThan(1);
+    for (const divider of dividers) {
+      expect([...divider].length).toBe(width);
+    }
+    expect(dividers).toContainEqual(
+      `\u2560${"\u2550".repeat(width - 2)}\u2563`,
+    );
+  });
+
+  it("shows a whole outside-change line in an 80-column terminal", () => {
+    // given
+    const columns = process.stdout.columns;
+    process.stdout.columns = 80;
+    const notices = [
+      "2 orders cancelled outside the bot, placed again (last 17:18:53)",
+      "2 orders replaced outside the bot, placed again, replacements untracked",
+    ];
+
+    // when
+    const output = stripVTControlCharacters(
+      renderDashboard({
+        state: makeState(),
+        currentPrice: new Decimal("100"),
+        uptime: 1000,
+        tickCount: 1,
+        lastError: null,
+        attention: notices,
+        warnings: [],
+        telegramConnections: 0,
+        intervalSec: 10,
+        telegramProblem: null,
+      }),
+    );
+    process.stdout.columns = columns;
+
+    // then
+    for (const notice of notices) expect(output).toContain(notice);
+  });
+
+  it("shows the grid range from the lowest and highest levels", () => {
+    // given
+    const state = makeState();
+    state.levels = makeLevels(["93", "97", "101", "105", "108", "112"]);
+
+    // when
+    const range = dashboardLines(state).find((line) =>
+      line.includes("Grid Range"),
+    );
+
+    // then
+    expect(range).toContain("$93.00 \u2014 $112.00");
+  });
+});
+
 describe("renderDashboard trailing-up row", () => {
   function dashboard(state: GridState): string {
     return renderDashboard({
@@ -309,10 +596,11 @@ describe("renderDashboard trailing-up row", () => {
       uptime: 1000,
       tickCount: 1,
       lastError: null,
+      attention: [],
       warnings: [],
       telegramConnections: 0,
       intervalSec: 10,
-      lastNotifyOk: 0,
+      telegramProblem: null,
     });
   }
 
@@ -346,10 +634,11 @@ describe("renderDashboard large grids", () => {
       uptime: 1000,
       tickCount: 1,
       lastError: null,
+      attention: [],
       warnings: [],
       telegramConnections: 0,
       intervalSec: 10,
-      lastNotifyOk: 0,
+      telegramProblem: null,
     });
     const plainOutput = stripVTControlCharacters(output);
     const renderedLevelRows = plainOutput
@@ -382,10 +671,11 @@ describe("renderDashboard large grids", () => {
         uptime: 1000,
         tickCount: 1,
         lastError: null,
+        attention: [],
         warnings: [],
         telegramConnections: 0,
         intervalSec: 10,
-        lastNotifyOk: 0,
+        telegramProblem: null,
       }),
     );
     const levelRows = plainOutput.split("\n");
@@ -402,5 +692,30 @@ describe("renderDashboard large grids", () => {
     expect(level100.indexOf("$")).toBe(level99.indexOf("$"));
     expect(level100.indexOf("▒▒▒▒▒")).toBe(level99.indexOf("▒▒▒▒▒"));
     expect(level100.indexOf("BUY")).toBe(level99.indexOf("BUY"));
+  });
+});
+
+describe("renderShutdownSummary", () => {
+  it("prints the notes about what the stop left behind", () => {
+    // given
+    const note =
+      "\u26A0 1 order was replaced outside the bot. The replacement isn't tracked and wasn't cancelled. Check revx order open.";
+
+    // when
+    const output = stripVTControlCharacters(
+      renderShutdownSummary(makeState(), new Decimal("100"), [note]),
+    );
+
+    // then
+    expect(output).toContain(note);
+    expect(output).not.toContain("Clean exit.");
+  });
+
+  it("says the exit is clean when nothing was left behind", () => {
+    expect(
+      stripVTControlCharacters(
+        renderShutdownSummary(makeState(), new Decimal("100")),
+      ),
+    ).toContain("All orders cancelled. Clean exit.");
   });
 });
