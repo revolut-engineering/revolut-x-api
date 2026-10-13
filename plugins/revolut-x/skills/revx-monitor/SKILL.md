@@ -88,7 +88,11 @@ revx monitor atr-breakout BTC-USD --period 14 --multiplier 1.5
 revx monitor types
 ```
 
-**Common option:** `--interval <seconds>` (minimum 5, default 10)
+**Common option:** `--interval <seconds>` (whole seconds from 5 to 86400, default 10). A value outside that range is refused, not adjusted.
+
+**When an alert fires:** threshold monitors (price, RSI, Bollinger, spread, OBI and the others) alert as soon as the condition holds, also at start. `ema-cross` and `macd` only arm on the first check and alert on a fresh crossover, so a trend already in place at start sends nothing. A crossover alerts at most once per hourly candle, so a cross that flips back and forth within the hour sends one message. While a condition holds, later checks show a short "still met" line instead of a new alert, and a crossover that forms again within the hour shows "alerted this hour". "Notified" is shown only when at least one Telegram message was delivered, otherwise the line says the notification failed. If Revolut X refuses the API key (401 or 403), the monitor sends one message at once that names the masked key and how to fix it, keeps checking, and sends one more when the key works again. After a 401, fix the key with `revx configure` and start the monitor again. After a 403, fix the key's permissions in Revolut X and the monitor goes on by itself. After 5 minutes without data for any other reason it sends one message, and one more when data is back, saying how long it lasted.
+
+**Input checks:** every option is checked before the monitor starts, and a bad value stops it with the option's name. Numbers are decimals such as `100000` or `0.0000001`, also in exponent form such as `1e-7`, not `100k` or `100,000`. They must be below 1e15 with at most 18 decimal places. Periods are whole numbers up to 99, since a monitor reads the last 100 hourly candles. RSI, Bollinger and the MACD `--signal` need at least 2, and `--slow` plus `--signal` can be at most 100. A fast period must be below its slow period. Price and price-change thresholds are above 0, spread thresholds at least 0, RSI thresholds above 0 and below 100, OBI thresholds from -1 to 1, and multipliers above 0. The pair must be one Revolut X trades right now. A monitor that has too few candles for its period says so on every check.
 
 ## Monitor Defaults
 
@@ -104,19 +108,6 @@ revx monitor types
 | `obi` | direction: above, threshold: 0.3 |
 | `price-change` | direction: rise, threshold: 5.0, lookback: 24 |
 | `atr-breakout` | period: 14, multiplier: 1.5 |
-
----
-
-## Events (Alert History)
-
-View past alert triggers and notification events:
-
-```bash
-revx events                            # Last 50 events
-revx events --limit 10
-revx events --category alert_triggered
-revx events --json
-```
 
 ---
 

@@ -17,7 +17,10 @@
     "format": "prettier --write \"**/*.ts\"",
     "format:check": "prettier --check \"**/*.ts\"",
     "sync-skills": "bash scripts/sync-skills.sh",
-    "sync-skills:check": "bash scripts/sync-skills.sh check"
+    "sync-skills:check": "bash scripts/sync-skills.sh check",
+    "api-range": "node scripts/api-range.mjs write",
+    "api-range:check": "node scripts/api-range.mjs check",
+    "pack:check": "bash scripts/check-pack.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

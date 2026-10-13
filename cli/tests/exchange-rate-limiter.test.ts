@@ -32,6 +32,32 @@ describe("exchange rate limiter", () => {
     expect(calls).toBe(11);
   });
 
+  it("refuses a placement without using a slot", async () => {
+    // given
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const limiter = new ExchangeRateLimiter();
+    let calls = 0;
+    const refusal = new Error("stopping");
+
+    // when
+    const refused = Array.from({ length: 10 }, () =>
+      limiter
+        .place(
+          async () => ++calls,
+          () => refusal,
+        )
+        .catch((err: unknown) => err),
+    );
+    const sent = limiter.place(async () => ++calls);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // then
+    expect(await Promise.all(refused)).toEqual(Array(10).fill(refusal));
+    await expect(sent).resolves.toBe(1);
+    expect(calls).toBe(1);
+  });
+
   it("releases a full split grid in twenty seconds", async () => {
     // given
     vi.useFakeTimers();
@@ -70,6 +96,26 @@ describe("exchange rate limiter", () => {
 
     // then
     await assertion;
+  });
+
+  it("says in plain words when the daily order limit is reached", async () => {
+    // given
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const limiter = new ExchangeRateLimiter();
+    const placed = Array.from({ length: 1000 }, () =>
+      limiter.place(async () => 1),
+    );
+    await vi.advanceTimersByTimeAsync(100_000);
+    await Promise.all(placed);
+
+    // when
+    const extra = limiter.place(async () => 1);
+
+    // then
+    await expect(extra).rejects.toThrow(
+      "Daily limit of 1000 orders reached. New orders go out as earlier ones pass 24 hours.",
+    );
   });
 
   it("retries one short server rate limit using millisecond retry-after", async () => {

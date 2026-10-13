@@ -7,8 +7,9 @@ import {
 } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
+import { candleIntervalMinutes } from "../util/candle-intervals.js";
 import {
-  parseTimestamp,
+  resolveDateWindow,
   parsePositiveInt,
   parseIntInRange,
 } from "../util/parse.js";
@@ -21,6 +22,9 @@ import {
   LOCAL_TIME_NOTE,
   type ColumnDef,
 } from "../output/formatter.js";
+
+const DEFAULT_CANDLES = 100;
+const MAX_CANDLES = 50000;
 
 function printSectionHeader(title: string): void {
   console.log(chalk.cyan.bold(`\n❖ ${title}`));
@@ -44,12 +48,12 @@ Examples:
   $ revx market currencies                            List all currencies
   $ revx market currencies fiat                       List fiat currencies only
   $ revx market currencies crypto                     List crypto currencies only
-  $ revx market currencies --filter BTC,ETH           Get specific currencies by symbol
+  $ revx market currencies --filter BTC,USD           Get specific currencies by code
   $ revx market pairs                                 List all trading pairs
   $ revx market pairs --filter BTC-USD,ETH-USD        Filter by multiple pairs
   $ revx market tickers                               List all tickers
   $ revx market tickers BTC-USD                       Get BTC-USD ticker
-  $ revx market candles BTC-USD                       Get hourly candles
+  $ revx market candles BTC-USD                       Get the last 100 hourly candles
   $ revx market candles BTC-USD --interval 5m         Get 5-minute candles
   $ revx market candles BTC-USD --since 7d --until today
   $ revx market orderbook BTC-USD                     Get order book (50 levels per side)
@@ -60,7 +64,7 @@ Examples:
   market
     .command("currencies")
     .description(
-      "List supported currencies, optionally filtered by type (fiat|crypto) or symbols",
+      "List supported currencies, optionally filtered by type (fiat|crypto) or currency codes",
     )
     .argument("[type]", "Filter by asset type: fiat or crypto")
     .addHelpText(
@@ -70,12 +74,12 @@ Examples:
   $ revx market currencies                        List all currencies
   $ revx market currencies fiat                   List fiat currencies only
   $ revx market currencies crypto                 List crypto currencies only
-  $ revx market currencies --filter BTC,ETH       Get specific currencies by symbol
+  $ revx market currencies --filter BTC,USD       Get specific currencies by code
   $ revx market currencies --json                 Output as JSON`,
     )
     .option(
-      "-f, --filter <symbols>",
-      "Filter by specific symbols (comma-separated, e.g., BTC,ETH)",
+      "-f, --filter <codes>",
+      "Filter by currency codes (comma-separated, e.g., BTC,USD)",
     )
     .option("--json", "Output as JSON")
     .addOption(
@@ -93,6 +97,7 @@ Examples:
           const currencies = await client.getCurrencies();
 
           const CURRENCY_COLUMNS = [
+            { header: "Code", key: "code" as const },
             { header: "Symbol", key: "symbol" as const },
             { header: "Name", key: "name" as const },
             { header: "Type", key: "asset_type" as const },
@@ -106,13 +111,16 @@ Examples:
             );
             console.error(
               chalk.gray(
-                `  ↳ To search for a symbol, use the filter flag: --filter ${type}`,
+                `  ↳ To search for a currency, use the filter flag: --filter ${type}`,
               ),
             );
             process.exit(1);
           }
 
-          let rows = Object.values(currencies);
+          let rows = Object.entries(currencies).map(([code, currency]) => ({
+            code,
+            ...currency,
+          }));
           let title = "Currencies";
 
           if (type) {
@@ -126,7 +134,7 @@ Examples:
               .split(",")
               .map((s) => s.trim().toUpperCase());
             rows = rows.filter((c) =>
-              symbolsToMatch.includes(c.symbol.toUpperCase()),
+              symbolsToMatch.includes(c.code.toUpperCase()),
             );
 
             if (type) {
@@ -186,6 +194,16 @@ Examples:
             { header: "Pair", accessor: (r: { symbol: string }) => r.symbol },
             { header: "Base", key: "base" as const },
             { header: "Quote", key: "quote" as const },
+            {
+              header: "Size Step",
+              key: "base_step" as const,
+              align: "right" as const,
+            },
+            {
+              header: "Price Step",
+              key: "quote_step" as const,
+              align: "right" as const,
+            },
             {
               header: "Min Size",
               key: "min_order_size" as const,
@@ -327,15 +345,15 @@ Examples:
       "after",
       `
 Examples:
-  $ revx market candles BTC-USD                       Hourly candles (default)
+  $ revx market candles BTC-USD                       Last 100 hourly candles (default)
   $ revx market candles BTC-USD --interval 5m         5-minute candles by alias
   $ revx market candles BTC-USD --interval 5          Same, in minutes
   $ revx market candles BTC-USD --since 7d            Last 7 days
   $ revx market candles BTC-USD --since 7d --until yesterday
   $ revx market candles BTC-USD --json                Output as JSON
 
-At most 50000 candles are returned. A range that exceeds that, or that falls entirely
-outside the available history, is replaced by the most recent window.`,
+Without --since, the last 100 candles are shown. At most 50000 candles are returned,
+so a longer range keeps its end and starts later.`,
     )
     .option(
       "--interval <value>",
@@ -371,23 +389,8 @@ outside the available history, is replaced by the most recent window.`,
           const client = getClient({ requireAuth: true });
           const cleanSymbol = symbol.trim().toUpperCase();
 
-          const INTERVAL_ALIASES: Record<string, number> = {
-            "1m": 1,
-            "5m": 5,
-            "15m": 15,
-            "30m": 30,
-            "1h": 60,
-            "4h": 240,
-            "1d": 1440,
-            "2d": 2880,
-            "4d": 5760,
-            "1w": 10080,
-            "2w": 20160,
-            "4w": 40320,
-          };
-
           const intervalMinutes =
-            INTERVAL_ALIASES[opts.interval] ??
+            candleIntervalMinutes(opts.interval) ??
             parsePositiveInt(opts.interval, "interval");
 
           const candleOpts: {
@@ -398,38 +401,27 @@ outside the available history, is replaced by the most recent window.`,
 
           candleOpts.interval = intervalMinutes;
 
-          let startDate = opts.since ? parseTimestamp(opts.since) : undefined;
-          let endDate = opts.until ? parseTimestamp(opts.until) : undefined;
-
-          const now = Date.now();
           const intervalMs = intervalMinutes * 60 * 1000;
-          const maxHistoryMs = 50000 * intervalMs;
-          const oldestAvailableDate = now - maxHistoryMs;
-
-          const fetchEnd = endDate || now;
-
-          if (endDate && endDate < oldestAvailableDate) {
-            startDate = oldestAvailableDate;
-            endDate = now;
-          } else if (
-            !startDate ||
-            Math.ceil(
-              (fetchEnd - (startDate || oldestAvailableDate)) / intervalMs,
-            ) > 50000
-          ) {
-            startDate = oldestAvailableDate;
-            endDate = now;
-          }
-
-          if (startDate) candleOpts.startDate = startDate;
-          if (endDate) candleOpts.endDate = endDate;
+          const dates = resolveDateWindow(
+            opts.since,
+            opts.until,
+            DEFAULT_CANDLES * intervalMs,
+            ["--since", "--until"],
+          );
+          const earliestStart = dates.end - MAX_CANDLES * intervalMs;
+          const capped = dates.start < earliestStart;
+          candleOpts.startDate = capped ? earliestStart : dates.start;
+          candleOpts.endDate = dates.end;
+          const cappedNote = `Only the last ${MAX_CANDLES} candles of that range are shown.`;
 
           const result = await client.getCandles(cleanSymbol, candleOpts);
 
           if (isJsonOutput(opts)) {
             printJson(result);
+            if (capped) console.error(cappedNote);
           } else {
             printSectionHeader(`Candles: ${cleanSymbol} (${opts.interval})`);
+            if (capped) console.log(chalk.dim(`  ${cappedNote}`));
             const columns: ColumnDef<Candle>[] = [
               {
                 header: "Time",

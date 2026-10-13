@@ -3,7 +3,12 @@ import type {
   StatusMessageRef,
   StatusMessageRefs,
 } from "../db/store.js";
-import { editWithRetries, pinMessage, sendWithRetries } from "./notify.js";
+import {
+  editWithRetries,
+  pinMessage,
+  sendWithRetries,
+  type TelegramResult,
+} from "./notify.js";
 
 export type { StatusMessageRef, StatusMessageRefs };
 
@@ -13,6 +18,7 @@ interface ReporterOptions {
   minIntervalMs?: number;
   pin?: boolean;
   parseMode?: string;
+  onResult?: (connectionId: string, result: TelegramResult) => void;
 }
 
 const DEFAULT_MIN_INTERVAL_MS = 5000;
@@ -23,6 +29,10 @@ export class LiveStatusReporter {
   private readonly _minIntervalMs: number;
   private readonly _pin: boolean;
   private readonly _parseMode?: string;
+  private readonly _onResult?: (
+    connectionId: string,
+    result: TelegramResult,
+  ) => void;
   private readonly _lastText = new Map<string, string>();
   private readonly _pending = new Map<string, string>();
   private readonly _draining = new Map<string, Promise<void>>();
@@ -35,6 +45,7 @@ export class LiveStatusReporter {
     this._minIntervalMs = opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
     this._pin = opts.pin ?? false;
     this._parseMode = opts.parseMode;
+    this._onResult = opts.onResult;
   }
 
   update(text: string): void {
@@ -90,6 +101,7 @@ export class LiveStatusReporter {
         3,
         this._parseMode,
       );
+      if (!result.notFound) this._onResult?.(conn.id, result);
       if (result.success) {
         this._lastText.set(conn.id, text);
         return;
@@ -108,6 +120,7 @@ export class LiveStatusReporter {
       3,
       this._parseMode,
     );
+    this._onResult?.(conn.id, result);
     if (!result.success) return;
     if (result.messageId === undefined) {
       this._giveUp.add(conn.id);

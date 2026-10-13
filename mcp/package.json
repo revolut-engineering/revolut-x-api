@@ -7,8 +7,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify --loader:.md=text",
-    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --format=esm --minify --loader:.md=text",
+    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --minify --loader:.md=text",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --minify --loader:.md=text",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
@@ -23,7 +23,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "decimal.js": "^10.6.0",
-    "@revolut/revolut-x-api": "^1.0.0",
+    "@revolut/revolut-x-api": "^1.0.50",
     "zod": "^3.23.0"
   },
   "devDependencies": {

@@ -3,7 +3,17 @@ import { Decimal } from "decimal.js";
 import chalk from "chalk";
 import type { Candle } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
+import { handleError } from "../util/errors.js";
+import {
+  CANDLE_INTERVALS,
+  candleIntervalMs,
+} from "../util/candle-intervals.js";
 import { parsePositiveInt } from "../util/parse.js";
+import {
+  MAX_CHECK_INTERVAL_SEC,
+  MIN_CHECK_INTERVAL_SEC,
+  intervalOption,
+} from "../util/monitor-options.js";
 import {
   isJsonOutput,
   printJson,
@@ -11,22 +21,30 @@ import {
   printKeyValue,
 } from "../output/formatter.js";
 import {
+  annualizedReturnPct,
+  candleCoverage,
+  returnOverDrawdown,
   runBacktest,
   runBacktestBot,
   optimizeGridParams,
   type BacktestTickEvent,
+  type CandleCoverage,
 } from "../shared/backtest/index.js";
 import {
   ForegroundGridBot,
   type GridBotConfig,
   type GridBotTickEvent,
+  type GridStop,
 } from "../engine/grid-bot.js";
+import { acquireGridLock, type GridLock } from "../db/grid-lock.js";
 import {
   constraintsFromPair,
   createGridPlan,
   parseLevelsPerSide,
+  quotePerLevelFor,
   type GridOrderConstraints,
 } from "../engine/grid-plan.js";
+import { TAKER_FEE_RATE } from "../engine/grid-math.js";
 import {
   getCurrSymbol,
   fmtPrice,
@@ -50,24 +68,8 @@ import {
 
 const SYMBOL_PATTERN = /^[A-Z0-9]+-[A-Z0-9]+$/;
 
-const RESOLUTIONS = [
-  "1m",
-  "5m",
-  "15m",
-  "30m",
-  "1h",
-  "4h",
-  "1d",
-  "2d",
-  "4d",
-  "1w",
-  "2w",
-  "4w",
-] as const;
+const VALID_RESOLUTIONS = new Set<string>(CANDLE_INTERVALS);
 
-const VALID_RESOLUTIONS = new Set<string>(RESOLUTIONS);
-
-const MIN_POLL_INTERVAL_SEC = 5;
 const DEFAULT_POLL_INTERVAL_SEC = 10;
 
 type ParsedCandle = ScenarioCandle;
@@ -79,6 +81,53 @@ function printSectionHeader(title: string): void {
 
 function printError(msg: string): void {
   console.error(`${chalk.red.bold("✖ Error:")} ${chalk.white(msg)}`);
+}
+
+function withErrorHandling<A extends unknown[]>(
+  action: (...args: A) => Promise<void>,
+): (...args: A) => Promise<void> {
+  return (...args) => action(...args).catch(handleError);
+}
+
+function assertQuotePerLevel(
+  investment: Decimal,
+  levelsPerSide: number,
+  split: boolean,
+  constraints: GridOrderConstraints,
+): void {
+  try {
+    quotePerLevelFor({
+      investment,
+      buyLevels: levelsPerSide,
+      sellLevels: levelsPerSide,
+      split,
+      constraints,
+    });
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+function realCoverage(
+  spec: PriceSpec,
+  candles: ParsedCandle[],
+  interval: string,
+): CandleCoverage | null {
+  return isScenarioSpec(spec)
+    ? null
+    : candleCoverage(candles, candleIntervalMs(interval));
+}
+
+function annualizedFor(
+  returnPct: Decimal,
+  coverage: CandleCoverage | null,
+): Decimal | null {
+  return coverage === null ? null : annualizedReturnPct(returnPct, coverage);
+}
+
+function roundedPct(value: Decimal | null): number | null {
+  return value === null ? null : parseFloat(value.toFixed(2));
 }
 
 function printProgress(message: string, jsonOutput: boolean): void {
@@ -149,7 +198,6 @@ function parseDecimalArg(
 ): Decimal {
   try {
     const d = new Decimal(value);
-    // FIXED: Changed `d.isNeg()` to `d.isNegative()`
     if (d.isNegative() || (d.isZero() && !allowZero)) {
       printError(
         `${name} must be ${allowZero ? "non-negative" : "positive"}, got '${chalk.cyan(value)}'.`,
@@ -271,6 +319,14 @@ async function handleBacktest(
   const spec = parsePriceSpec(opts.prices);
   const traceEnabled = opts.trace === true;
   const jsonOutput = isJsonOutput(opts);
+  const useSplit = opts.split === true;
+  const useTrailingUp = opts.trailingUp === true;
+  const stopLossPrice = opts.stopLoss
+    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
+    : 0;
+
+  const constraints = await loadGridConstraints(pair);
+  assertQuotePerLevel(investment, levelsPerSide, useSplit, constraints);
 
   if (isScenarioSpec(spec)) {
     printProgress(
@@ -298,21 +354,6 @@ async function handleBacktest(
     chalk.gray(`  ↳ Running backtest on ${candles.length} candles...\n`),
     jsonOutput,
   );
-  const useSplit = opts.split === true;
-  const useTrailingUp = opts.trailingUp === true;
-  const stopLossPrice = opts.stopLoss
-    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
-    : 0;
-
-  let constraints: GridOrderConstraints;
-  try {
-    constraints = await loadGridConstraints(pair);
-  } catch (err) {
-    printError(
-      `Unable to validate grid order sizes: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    process.exit(1);
-  }
   const baseStep = constraints.baseStep;
   const quoteStep = constraints.quoteStep;
 
@@ -384,10 +425,12 @@ async function handleBacktest(
     const baseVal = result.finalBase.times(finalPrice);
     const totalVal = result.finalQuote.plus(baseVal);
     const netRet = totalVal.minus(investment);
-    const retPct = investment.isZero()
-      ? 0
-      : netRet.div(investment).times(100).toNumber();
-    const annualized = (Math.pow(1 + retPct / 100, 365 / days) - 1) * 100;
+    const returnPct = investment.isZero()
+      ? new Decimal(0)
+      : netRet.div(investment).times(100);
+    const annualized = roundedPct(
+      annualizedFor(returnPct, realCoverage(spec, candles, opts.interval)),
+    );
     printJson({
       pair,
       gridLevels: gridLevels / 2,
@@ -402,8 +445,8 @@ async function handleBacktest(
       finalBase: result.finalBase.toNumber(),
       finalQuote: result.finalQuote.toNumber(),
       maxDrawdown: result.maxDrawdown.times(100).toNumber(),
-      returnPct: retPct,
-      annualizedReturnPct: parseFloat(annualized.toFixed(2)),
+      returnPct: returnPct.toNumber(),
+      annualizedReturnPct: annualized,
     });
     return;
   }
@@ -418,6 +461,7 @@ async function handleBacktest(
     split: useSplit,
     stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
     constraints,
+    takerFeeRate: TAKER_FEE_RATE,
   });
   const lower = plan.levels[0].price;
   const upper = plan.levels[plan.levels.length - 1].price;
@@ -450,7 +494,8 @@ async function handleBacktest(
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
 
   const pad = (label: string, value: string) => {
-    const content = `   ${chalk.gray(label.padEnd(16))}${value}`;
+    const gap = label.length >= 16 ? " " : "";
+    const content = `   ${chalk.gray(label.padEnd(16))}${gap}${value}`;
     // eslint-disable-next-line no-control-regex
     const visible = content.replace(/\u001B\[[0-9;]*m/g, "").length;
     const right = Math.max(0, w - visible);
@@ -520,10 +565,21 @@ async function handleBacktest(
       chalk.red(`${result.maxDrawdown.times(100).toFixed(2)}%`),
     ),
   );
-  const annualizedPct =
-    (Math.pow(1 + returnPct.toNumber() / 100, 365 / days) - 1) * 100;
-  const annColor = annualizedPct >= 0 ? chalk.green : chalk.red;
-  console.log(pad("Annualized", annColor(`${annualizedPct.toFixed(2)}%`)));
+  if (!isScenarioSpec(spec)) {
+    const annualized = annualizedFor(
+      returnPct,
+      realCoverage(spec, candles, opts.interval),
+    );
+    const annColor = annualized?.gte(0) ? chalk.green : chalk.red;
+    console.log(
+      pad(
+        "Annualized",
+        annualized === null
+          ? chalk.dim("— (needs a year of data)")
+          : annColor(`${annualized.toFixed(2)}%`),
+      ),
+    );
+  }
   if (useTrailingUp) {
     console.log(
       pad("Trailing Up", chalk.cyan(`${result.trailingUpShifts} shifts`)),
@@ -533,8 +589,12 @@ async function handleBacktest(
     const slLabel = result.stopLossTriggered
       ? chalk.red("triggered")
       : chalk.green("not triggered");
-    const cs = getCurrSymbol(pair);
-    console.log(pad(`Stop-Loss (${cs}${stopLossPrice})`, slLabel));
+    console.log(
+      pad(
+        "Stop-Loss",
+        `${fmtPrice(new Decimal(stopLossPrice), cs)}  ${slLabel}`,
+      ),
+    );
   }
   console.log(`${dimV}${" ".repeat(w)}${dimV}`);
 
@@ -602,7 +662,7 @@ async function handleBacktest(
   }
   console.log(
     chalk.gray(
-      "\n  ↳ Note: Backtest does not model spread/slippage or post_only rejections.\n" +
+      "\n  ↳ Note: Backtest does not model spread/slippage or the taker fee on grid orders that fill at once.\n" +
         "    Live performance will differ, especially in illiquid or fast-moving markets.",
     ),
   );
@@ -652,7 +712,7 @@ async function handleOptimize(
     }
   } catch {
     printError(
-      "--levels must be comma-separated integers between 1 and 100 (per side).",
+      "--levels must be comma-separated whole numbers between 1 and 100 (per side).",
     );
     process.exit(1);
   }
@@ -682,6 +742,17 @@ async function handleOptimize(
 
   const spec = parsePriceSpec(opts.prices);
   const jsonOutput = isJsonOutput(opts);
+  const useSplit = opts.split === true;
+  const useTrailingUp = opts.trailingUp === true;
+  const stopLossPrice = opts.stopLoss
+    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
+    : 0;
+
+  const constraints = await loadGridConstraints(pair);
+  for (const levels of levelsList) {
+    assertQuotePerLevel(investment, levels / 2, useSplit, constraints);
+  }
+
   if (isScenarioSpec(spec)) {
     printProgress(
       chalk.gray(`\n  ↳ Loading scenario from ${describeSource(spec)}...`),
@@ -710,11 +781,6 @@ async function handleOptimize(
     ),
     jsonOutput,
   );
-  const useSplit = opts.split === true;
-  const useTrailingUp = opts.trailingUp === true;
-  const stopLossPrice = opts.stopLoss
-    ? parseDecimalArg(opts.stopLoss, "--stop-loss", true).toNumber()
-    : 0;
 
   if (stopLossPrice > 0) {
     const startPrice = candles[0].open;
@@ -727,22 +793,13 @@ async function handleOptimize(
     }
   }
 
-  let constraints: GridOrderConstraints;
-  try {
-    constraints = await loadGridConstraints(pair);
-  } catch (err) {
-    printError(
-      `Unable to validate grid order sizes: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    process.exit(1);
-  }
-
+  const coverage = realCoverage(spec, candles, opts.interval);
   const results = optimizeGridParams(
     candles,
     levelsList,
     rangesList,
     investment,
-    days,
+    coverage ?? undefined,
     useSplit,
     useTrailingUp,
     stopLossPrice,
@@ -754,8 +811,6 @@ async function handleOptimize(
   if (jsonOutput) {
     printJson(
       results.slice(0, topN).map((r) => {
-        const annualized =
-          (Math.pow(1 + r.returnPct.toNumber() / 100, 365 / days) - 1) * 100;
         return {
           rank: results.indexOf(r) + 1,
           gridLevels: r.gridLevels / 2,
@@ -763,11 +818,12 @@ async function handleOptimize(
           realizedPnl: r.realizedPnl.toNumber(),
           totalReturn: r.totalReturn.toNumber(),
           returnPct: r.returnPct.toNumber(),
-          annualizedReturnPct: parseFloat(annualized.toFixed(2)),
+          annualizedReturnPct: roundedPct(annualizedFor(r.returnPct, coverage)),
           totalTrades: r.totalTrades,
           maxDrawdown: r.maxDrawdown.times(100).toNumber(),
           profitPerTrade: r.profitPerTrade.toNumber(),
-          calmarApprox: r.calmarApprox.toNumber(),
+          calmarApprox:
+            r.calmarApprox === null ? null : r.calmarApprox.toNumber(),
         };
       }),
     );
@@ -817,8 +873,8 @@ async function handleOptimize(
   if (results.length > 0) {
     console.log("");
     const bestReturn = results[0];
-    const bestCalmar = results.reduce((b, r) =>
-      r.calmarApprox.gt(b.calmarApprox) ? r : b,
+    const bestRiskAdjusted = results.reduce((b, r) =>
+      returnOverDrawdown(r).gt(returnOverDrawdown(b)) ? r : b,
     );
     const lowestDd = results.reduce((b, r) =>
       r.maxDrawdown.lt(b.maxDrawdown) ? r : b,
@@ -831,7 +887,11 @@ async function handleOptimize(
       ],
       [
         "Best Risk-Adj",
-        `${chalk.white(bestCalmar.gridLevels / 2)} levels/side, ${chalk.white(bestCalmar.rangePct.times(100).toFixed(1) + "%")} range \u2192 ${chalk.cyan("Calmar " + bestCalmar.calmarApprox.toFixed(2))}`,
+        `${chalk.white(bestRiskAdjusted.gridLevels / 2)} levels/side, ${chalk.white(bestRiskAdjusted.rangePct.times(100).toFixed(1) + "%")} range \u2192 ${chalk.cyan(
+          bestRiskAdjusted.calmarApprox === null
+            ? `Return/DD ${returnOverDrawdown(bestRiskAdjusted).toFixed(2)}`
+            : `Calmar ${bestRiskAdjusted.calmarApprox.toFixed(2)}`,
+        )}`,
       ],
       [
         "Lowest Drawdown",
@@ -859,6 +919,14 @@ async function handleRun(
   },
 ): Promise<void> {
   pair = validatePair(pair);
+  if (opts.json && !opts.trace) {
+    printError(
+      opts.dryRun
+        ? "grid run has no JSON output."
+        : "grid run has no JSON output. Read the grid's orders with: revx order open --json",
+    );
+    process.exit(1);
+  }
 
   let levelsPerSide: number;
   try {
@@ -871,10 +939,13 @@ async function handleRun(
 
   const rangePct = parseDecimalArg(opts.range, "--range").div(100);
   const investment = parseDecimalArg(opts.investment, "--investment");
-  const intervalSec = Math.max(
-    MIN_POLL_INTERVAL_SEC,
-    parsePositiveInt(opts.interval, "--interval"),
-  );
+  let intervalSec: number;
+  try {
+    intervalSec = intervalOption(opts.interval);
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   const spec = parsePriceSpec(opts.prices);
   const isDryRun = opts.dryRun === true;
 
@@ -921,25 +992,63 @@ async function handleRun(
       }
     : undefined;
 
+  getClient({ requireAuth: true });
+
+  let lock: GridLock;
+  try {
+    lock = await acquireGridLock(pair);
+  } catch (err) {
+    printError(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   const suppressDashboard = traceEnabled;
   const humanOutput = traceJson ? process.stderr : process.stdout;
-  const bot = new ForegroundGridBot(config, {
-    priceSource,
-    onTick,
-    suppressDashboard,
-    humanOutput,
-  });
+  let bot: ForegroundGridBot;
+  try {
+    bot = new ForegroundGridBot(config, {
+      priceSource,
+      onTick,
+      suppressDashboard,
+      humanOutput,
+    });
+  } catch (err) {
+    lock.release();
+    handleError(err);
+  }
 
-  const shutdown = async () => {
+  let shuttingDown = false;
+  const shutdown = async (stop: GridStop) => {
     humanOutput.write(chalk.yellow("\n  ↳ Shutting down grid bot...\n"));
     bot.stop();
-    await bot.shutdown();
-    process.exit(0);
+    let failed = false;
+    try {
+      await bot.shutdown(stop);
+    } catch (err) {
+      failed = true;
+      printError(err instanceof Error ? err.message : String(err));
+    } finally {
+      lock.release();
+    }
+    process.exit(failed ? 1 : 0);
   };
-  const requestShutdown = () => void shutdown();
+  const requestShutdown = (stop: GridStop) => {
+    if (shuttingDown) {
+      humanOutput.write(
+        chalk.yellow(
+          "\n  ↳ Still shutting down. The grid's orders are being cancelled.\n",
+        ),
+      );
+      return;
+    }
+    shuttingDown = true;
+    void shutdown(stop);
+  };
+  const endGrid = () => requestShutdown("end");
+  const pauseGrid = () => requestShutdown("pause");
 
-  process.on("SIGINT", requestShutdown);
-  process.on("SIGTERM", requestShutdown);
+  process.on("SIGINT", endGrid);
+  process.on("SIGTERM", pauseGrid);
 
   try {
     await bot.run();
@@ -947,11 +1056,18 @@ async function handleRun(
       await bot.shutdown();
     }
   } catch (err) {
-    printError(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    if (shuttingDown) {
+      printError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    lock.release();
+    handleError(err);
   } finally {
-    process.off("SIGINT", requestShutdown);
-    process.off("SIGTERM", requestShutdown);
+    if (!shuttingDown) {
+      lock.release();
+      process.off("SIGINT", endGrid);
+      process.off("SIGTERM", pauseGrid);
+    }
   }
 }
 
@@ -975,9 +1091,7 @@ Examples:
   $ revx strategy grid run BTC-USD --levels 3 --range 2 --investment 100 --dry-run
 
 Note: --interval means candle resolution for backtest and optimize (1m, 1h, 1d, ...),
-but ticker polling seconds for run.
-
-Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-prices.md`,
+but ticker polling seconds for run.`,
     );
 
   const grid = strategy
@@ -1000,38 +1114,27 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--days <n>", "Days of historical data", "3")
     .addOption(
       new Option("--interval <res>", "Candle resolution")
-        .choices([...RESOLUTIONS])
+        .choices([...CANDLE_INTERVALS])
         .default("1m"),
     )
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
-      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary",
+      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary, once the grid holds no coins",
     )
     .option(
       "--stop-loss <price>",
       "Stop when price reaches this absolute value (must be below the lowest grid level)",
     )
-    .option(
-      "--prices <spec>",
-      "Drive the backtest with a synthetic price sequence (for scenario testing) instead of fetching real candles. " +
-        "Sources: api (default — real candles), file:<path> (CSV/JSON), stdin (piped), " +
-        "inline:<csv> (e.g. inline:100,102,98), gen:<type>?<params> (linear, sine, walk, steps). " +
-        "See grid-mock-prices.md.",
-      "api",
-    )
-    .option(
-      "--trace",
-      "Emit a per-tick trace of strategy reaction (price, fills, position, P&L). " +
-        "With --json, emits NDJSON to stdout. Useful for inspecting how the strategy reacts to each candle in a test scenario.",
-    )
+    .addOption(new Option("--prices <spec>").default("api").hideHelp())
+    .addOption(new Option("--trace").hideHelp())
     .option("--json", "Output as JSON")
     .addOption(
       new Option("-o, --output <format>", "Output format")
         .choices(["table", "json"])
         .default("table"),
     )
-    .action(handleBacktest);
+    .action(withErrorHandling(handleBacktest));
 
   grid
     .command("optimize")
@@ -1041,7 +1144,7 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--days <n>", "Days of historical data", "3")
     .addOption(
       new Option("--interval <res>", "Candle resolution")
-        .choices([...RESOLUTIONS])
+        .choices([...CANDLE_INTERVALS])
         .default("1m"),
     )
     .option(
@@ -1058,26 +1161,20 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
-      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary",
+      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary, once the grid holds no coins",
     )
     .option(
       "--stop-loss <price>",
       "Stop when price reaches this absolute value (must be below the lowest grid level)",
     )
-    .option(
-      "--prices <spec>",
-      "Sweep parameters against a synthetic price sequence (for scenario testing) instead of fetching real candles. " +
-        "Sources: api (default), file:<path>, stdin, inline:<csv>, gen:<type>?<params>. " +
-        "See grid-mock-prices.md.",
-      "api",
-    )
+    .addOption(new Option("--prices <spec>").default("api").hideHelp())
     .option("--json", "Output as JSON")
     .addOption(
       new Option("-o, --output <format>", "Output format")
         .choices(["table", "json"])
         .default("table"),
     )
-    .action(handleOptimize);
+    .action(withErrorHandling(handleOptimize));
 
   grid
     .command("run")
@@ -1096,34 +1193,24 @@ Advanced: scenario-driven mock prices (--prices / --trace) — see grid-mock-pri
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--interval <sec>",
-      `Ticker polling interval in seconds (min ${MIN_POLL_INTERVAL_SEC})`,
+      `Ticker polling interval in seconds (${MIN_CHECK_INTERVAL_SEC} to ${MAX_CHECK_INTERVAL_SEC})`,
       String(DEFAULT_POLL_INTERVAL_SEC),
     )
     .option("--dry-run", "Simulate without placing real orders")
-    .option("--reset", "Discard saved state and start a fresh grid")
+    .option(
+      "--reset",
+      "Cancel the saved grid's orders and start a fresh grid. The old grid's coins stay in the wallet",
+    )
     .option(
       "--trailing-up",
-      "Rebuild grid after price reaches the second geometric level above the upper boundary for 3 consecutive ticks",
+      "Rebuild grid after price reaches the second geometric level above the upper boundary for 3 consecutive ticks, once the grid holds no coins",
     )
     .option(
       "--stop-loss <price>",
       "Stop bot immediately when price reaches or falls below this absolute value (must be below the lowest grid level)",
     )
-    .option(
-      "--prices <spec>",
-      "[Dry-run only] Drive the bot with a synthetic price sequence (for scenario testing) instead of polling the live ticker. " +
-        "Sources: api (default), file:<path>, stdin, inline:<csv>, gen:<type>?<params>, interactive (prompt for each tick). " +
-        "Rejected unless --dry-run is also set — real orders always use the live market. See grid-mock-prices.md.",
-      "api",
-    )
-    .option(
-      "--trace",
-      "[Dry-run only] Per-tick trace of the bot's reaction (price, fills, position, open orders, P&L). " +
-        "With --json, emits NDJSON. The TUI dashboard is suppressed while trace runs so lines aren't wiped.",
-    )
-    .option(
-      "--json",
-      "Output as JSON. Combined with --trace, emits NDJSON per-tick records.",
-    )
-    .action(handleRun);
+    .addOption(new Option("--prices <spec>").default("api").hideHelp())
+    .addOption(new Option("--trace").hideHelp())
+    .addOption(new Option("--json").hideHelp())
+    .action(withErrorHandling(handleRun));
 }

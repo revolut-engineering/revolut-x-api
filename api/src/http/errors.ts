@@ -64,9 +64,19 @@ export class ServerError extends RevolutXError {
 }
 
 export class NetworkError extends RevolutXError {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, undefined, options);
+  readonly mayHaveReachedServer: boolean;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { mayHaveReachedServer?: boolean },
+  ) {
+    super(
+      message,
+      undefined,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = "NetworkError";
+    this.mayHaveReachedServer = options?.mayHaveReachedServer ?? true;
   }
 }
 
@@ -77,6 +87,31 @@ export class AuthNotConfiguredError extends RevolutXError {
   ) {
     super(message, undefined, options);
     this.name = "AuthNotConfiguredError";
+  }
+}
+
+export interface CredentialsIssue {
+  file: "config" | "private_key";
+  fault: "missing" | "unreadable" | "not_a_file" | "malformed";
+  path: string;
+  problem: string;
+  code?: string;
+}
+
+export class InvalidCredentialsError extends AuthNotConfiguredError {
+  readonly issue: CredentialsIssue;
+
+  constructor(issue: CredentialsIssue, options?: ErrorOptions) {
+    super(issue.problem, options);
+    this.name = "InvalidCredentialsError";
+    this.issue = issue;
+  }
+}
+
+export class ConfigurationError extends RevolutXError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, undefined, options);
+    this.name = "ConfigurationError";
   }
 }
 
@@ -99,4 +134,10 @@ export class ValidationError extends RevolutXError {
     super(message, 400, options);
     this.name = "ValidationError";
   }
+}
+
+export function isDuplicateClientOrderIdError(err: unknown): boolean {
+  return (
+    err instanceof BadRequestError && /already been placed/i.test(err.message)
+  );
 }

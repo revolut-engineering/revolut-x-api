@@ -9,7 +9,9 @@ import {
   RateLimitError,
   ServerError,
   ConflictError,
+  NetworkError,
 } from "../../src/http/errors.js";
+import { toNetworkError } from "../../src/http/request.js";
 
 beforeAll(() => {
   nock.disableNetConnect();
@@ -442,14 +444,334 @@ describe("Error Handling", () => {
   });
 
   describe("Network errors", () => {
+    function failure(code: string, message = code): Error {
+      return Object.assign(new Error(message), { code });
+    }
+
     it("throws network errors immediately without retry", async () => {
       const client = createTestClient({ maxRetries: 1, timeout: 100 });
       nock(BASE_URL)
         .get("/api/1.0/balances")
         .replyWithError(new TypeError("fetch failed"));
 
-      await expect(client.getBalances()).rejects.toThrow(TypeError);
+      const error = await client.getBalances().catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(NetworkError);
+      expect((error as NetworkError).cause).toBeInstanceOf(TypeError);
       expect(nock.pendingMocks()).toHaveLength(0);
+    });
+
+    it("says a reply lost after sending may have reached the exchange", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .post("/api/1.0/orders")
+        .replyWithError(failure("UND_ERR_SOCKET", "other side closed"));
+
+      const error = await client
+        .placeOrder({
+          symbol: "BTC-USD",
+          side: "buy",
+          clientOrderId: "c-1",
+          limit: { price: "90000", baseSize: "0.001" },
+        })
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(NetworkError);
+      expect((error as NetworkError).message).toBe(
+        "No reply from the exchange: UND_ERR_SOCKET.",
+      );
+      expect((error as NetworkError).mayHaveReachedServer).toBe(true);
+    });
+
+    it.each(["ECONNREFUSED", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT"])(
+      "says a request that failed with %s never reached the exchange",
+      async (code) => {
+        const client = createTestClient();
+        nock(BASE_URL).get("/api/1.0/balances").replyWithError(failure(code));
+
+        const error = await client.getBalances().catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(NetworkError);
+        expect((error as NetworkError).message).toBe(
+          `Could not reach the exchange: ${code}.`,
+        );
+        expect((error as NetworkError).mayHaveReachedServer).toBe(false);
+      },
+    );
+
+    it("reads the code undici puts on the cause of a fetch failure", () => {
+      const error = toNetworkError(
+        new TypeError("fetch failed", { cause: failure("ECONNREFUSED") }),
+        30_000,
+      );
+
+      expect(error?.message).toBe(
+        "Could not reach the exchange: ECONNREFUSED.",
+      );
+      expect(error?.mayHaveReachedServer).toBe(false);
+    });
+
+    it("keeps the server error in view when the retry after it times out", () => {
+      const error = toNetworkError(
+        new DOMException("The operation timed out.", "TimeoutError"),
+        30_000,
+        true,
+      );
+
+      expect(error?.message).toBe(
+        "The exchange answered with a server error, and the retry got no reply within 30 s.",
+      );
+      expect(error?.mayHaveReachedServer).toBe(true);
+    });
+
+    it("treats a timeout as a reply that may have been lost", () => {
+      const error = toNetworkError(
+        new DOMException(
+          "The operation was aborted due to timeout",
+          "TimeoutError",
+        ),
+        30_000,
+      );
+
+      expect(error?.message).toBe("No reply from the exchange within 30 s.");
+      expect(error?.mayHaveReachedServer).toBe(true);
+    });
+
+    it("leaves errors that are not network failures alone", () => {
+      expect(
+        toNetworkError(new SyntaxError("Unexpected token"), 30_000),
+      ).toBeNull();
+      expect(toNetworkError(new TypeError("Invalid URL"), 30_000)).toBeNull();
+      expect(
+        toNetworkError(new ServerError("Server error", 500), 30_000),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["a TLS handshake failure", failure("ERR_SSL_WRONG_VERSION_NUMBER")],
+      ["an invalid address", failure("ERR_INVALID_URL")],
+      [
+        "a blocked port",
+        new TypeError("fetch failed", { cause: new Error("bad port") }),
+      ],
+      [
+        "a host unreachable while connecting",
+        new TypeError("fetch failed", {
+          cause: Object.assign(failure("EHOSTUNREACH"), { syscall: "connect" }),
+        }),
+      ],
+      [
+        "an unreachable network on every address",
+        new TypeError("fetch failed", {
+          cause: Object.assign(
+            new AggregateError([
+              Object.assign(failure("ENETUNREACH"), { syscall: "connect" }),
+              Object.assign(failure("ENETUNREACH"), { syscall: "connect" }),
+            ]),
+            { code: "ENETUNREACH" },
+          ),
+        }),
+      ],
+    ])("says %s never reached the exchange", (_name, error) => {
+      expect(toNetworkError(error, 30_000)?.mayHaveReachedServer).toBe(false);
+    });
+
+    it.each([
+      [
+        "a TLS record error on an open connection",
+        failure("ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC"),
+      ],
+      [
+        "a host unreachable after connecting",
+        new TypeError("fetch failed", {
+          cause: Object.assign(failure("EHOSTUNREACH"), { syscall: "read" }),
+        }),
+      ],
+      ["a host unreachable with no step named", failure("ENETDOWN")],
+      [
+        "an unreachable network on only some addresses",
+        new TypeError("fetch failed", {
+          cause: Object.assign(
+            new AggregateError([
+              Object.assign(failure("ENETUNREACH"), { syscall: "connect" }),
+              Object.assign(failure("ENETUNREACH"), { syscall: "write" }),
+            ]),
+            { code: "ENETUNREACH" },
+          ),
+        }),
+      ],
+      [
+        "an unreachable network with no inner errors",
+        new TypeError("fetch failed", {
+          cause: Object.assign(new AggregateError([]), { code: "ENETUNREACH" }),
+        }),
+      ],
+    ])("says %s may have reached the exchange", (_name, error) => {
+      expect(toNetworkError(error, 30_000)?.mayHaveReachedServer).toBe(true);
+    });
+
+    it("sets no cause on a network error built without one", () => {
+      const error = new NetworkError("No reply from the exchange.");
+
+      expect(error.cause).toBeUndefined();
+      expect("cause" in error).toBe(false);
+    });
+
+    function placeOrder(client: ReturnType<typeof createTestClient>) {
+      return client
+        .placeOrder({
+          symbol: "BTC-USD",
+          side: "buy",
+          clientOrderId: "c-1",
+          limit: { price: "90000", baseSize: "0.001" },
+        })
+        .catch((err: unknown) => err);
+    }
+
+    it("keeps an order uncertain when the retry after a server error can't connect", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL)
+        .post("/api/1.0/orders")
+        .reply(503, { message: "Unavailable" })
+        .post("/api/1.0/orders")
+        .replyWithError(failure("ECONNREFUSED"));
+
+      const error = await placeOrder(client);
+
+      expect(error).toBeInstanceOf(NetworkError);
+      expect((error as NetworkError).mayHaveReachedServer).toBe(true);
+      expect((error as NetworkError).message).toBe(
+        "The exchange answered with a server error, and the retry failed: ECONNREFUSED.",
+      );
+    });
+
+    it("keeps an order uncertain when the retry after a server error is refused", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL)
+        .post("/api/1.0/orders")
+        .reply(503, { message: "Unavailable" })
+        .post("/api/1.0/orders")
+        .reply(429, { message: "Too many requests" });
+
+      const error = await placeOrder(client);
+
+      expect(error).toBeInstanceOf(ServerError);
+      expect((error as ServerError).cause).toBeInstanceOf(RateLimitError);
+    });
+
+    it("passes on the duplicate-id answer to a retry after a server error", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL)
+        .post("/api/1.0/orders")
+        .reply(503, { message: "Unavailable" })
+        .post("/api/1.0/orders")
+        .reply(400, {
+          message:
+            "An order with the client_order_id 'c-1' has already been placed",
+        });
+
+      const error = await placeOrder(client);
+
+      expect(error).toBeInstanceOf(BadRequestError);
+      expect((error as BadRequestError).cause).toBeInstanceOf(ServerError);
+    });
+
+    it("passes on a duplicate-id answer with no server error before it without a cause", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL).post("/api/1.0/orders").reply(400, {
+        message:
+          "An order with the client_order_id 'c-1' has already been placed",
+      });
+
+      const error = await placeOrder(client);
+
+      expect(error).toBeInstanceOf(BadRequestError);
+      expect((error as BadRequestError).cause).toBeUndefined();
+    });
+
+    it("keeps a cancel uncertain when the retry after a server error finds no order", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL)
+        .delete("/api/1.0/orders/o-1")
+        .reply(503, { message: "Unavailable" })
+        .delete("/api/1.0/orders/o-1")
+        .reply(404, { message: "Order not found" });
+
+      const error = await client
+        .cancelOrder("o-1")
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(ServerError);
+      expect((error as ServerError).cause).toBeInstanceOf(NotFoundError);
+    });
+
+    it("keeps a replace uncertain when the retry after a server error finds no order", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL)
+        .put("/api/1.0/orders/o-1")
+        .reply(503, { message: "Unavailable" })
+        .put("/api/1.0/orders/o-1")
+        .reply(404, { message: "Order not found" });
+
+      const error = await client
+        .replaceOrder("o-1", { clientOrderId: "c-2", price: "91000" })
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(ServerError);
+      expect((error as ServerError).cause).toBeInstanceOf(NotFoundError);
+    });
+
+    it("leaves a read that failed after a server error as it is", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      nock(BASE_URL)
+        .get("/api/1.0/balances")
+        .reply(503, { message: "Unavailable" })
+        .get("/api/1.0/balances")
+        .reply(404, { message: "Not found" });
+
+      const error = await client.getBalances().catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(NotFoundError);
+    });
+
+    it("treats an unreadable reply as one that may have reached the exchange", async () => {
+      const client = createTestClient();
+      nock(BASE_URL).post("/api/1.0/orders").reply(200, '{"data": {"venue');
+
+      const error = await placeOrder(client);
+
+      expect(error).toBeInstanceOf(NetworkError);
+      expect((error as NetworkError).mayHaveReachedServer).toBe(true);
+      expect((error as NetworkError).message).toMatch(
+        /^The exchange's reply couldn't be read: [^.]+[^.]\.$/,
+      );
+    });
+
+    it("keeps the same client order id when an order is retried after a server error", async () => {
+      const client = createTestClient({ maxRetries: 1 });
+      const bodies: Record<string, unknown>[] = [];
+      nock(BASE_URL)
+        .post("/api/1.0/orders", (body) => {
+          bodies.push(body);
+          return true;
+        })
+        .reply(500, { message: "Internal error" })
+        .post("/api/1.0/orders", (body) => {
+          bodies.push(body);
+          return true;
+        })
+        .reply(200, {
+          data: { venue_order_id: "v-1", client_order_id: "c-1", state: "new" },
+        });
+
+      await client.placeOrder({
+        symbol: "BTC-USD",
+        side: "buy",
+        limit: { price: "90000", baseSize: "0.001" },
+      });
+
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1].client_order_id).toBe(bodies[0].client_order_id);
     });
   });
 });

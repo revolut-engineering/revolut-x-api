@@ -105,7 +105,7 @@
     },
     {
       "name": "grid_backtest",
-      "description": "Run a grid trading backtest on historical candle data from Revolut X. Simulates a grid strategy with geometrically spaced price levels. Returns total trades, realized P&L, net return, max drawdown, and annualized return."
+      "description": "Run a grid trading backtest on historical candle data from Revolut X. Simulates a grid strategy with geometrically spaced price levels. Returns total trades, realized P&L, net return, max drawdown, and the annualized return when the data covers a year."
     },
     {
       "name": "grid_optimize",
@@ -148,7 +148,7 @@
       "linux"
     ],
     "runtimes": {
-      "node": ">=18"
+      "node": ">=20"
     }
   }
 }

@@ -131,11 +131,6 @@ revx connector telegram add --token <token> --chat-id <id> --test
 revx connector telegram list
 revx connector telegram test <id>
 revx connector telegram delete <id>
-
-# Events
-revx events                                                 # Show recent alert events
-revx events --limit 10                                      # Show last 10 events
-revx events --category alert_triggered                      # Filter by category
 ```
 
 ---

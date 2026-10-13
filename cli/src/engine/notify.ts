@@ -1,8 +1,10 @@
 import type { Decimal } from "decimal.js";
 import type { EvalResult } from "../shared/indicators/evaluators.js";
+import { maskSecret } from "../util/mask.js";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const SEND_TIMEOUT = 10_000;
+const ERROR_LENGTH = 300;
 
 export interface TelegramResult {
   success: boolean;
@@ -13,7 +15,35 @@ export interface TelegramResult {
   notFound?: boolean;
 }
 
+function telegramDescription(body: string): string | null {
+  try {
+    const description = (JSON.parse(body) as { description?: unknown })
+      .description;
+    return typeof description === "string" ? description : null;
+  } catch {
+    return null;
+  }
+}
+
+function readableError(error: string, botToken: string): string {
+  const hidden = botToken
+    ? error.split(botToken).join(maskSecret(botToken))
+    : error;
+  return hidden.replace(/\s+/g, " ").trim().slice(0, ERROR_LENGTH);
+}
+
 async function callApi(
+  botToken: string,
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<TelegramResult> {
+  const result = await request(botToken, method, payload);
+  return result.error === undefined
+    ? result
+    : { ...result, error: readableError(result.error, botToken) };
+}
+
+async function request(
   botToken: string,
   method: string,
   payload: Record<string, unknown>,
@@ -58,7 +88,7 @@ async function callApi(
     }
     return {
       success: false,
-      error: `HTTP ${response.status}: ${body}`,
+      error: `HTTP ${response.status}: ${telegramDescription(body) ?? body}`,
       retryAfter,
     };
   } catch (err) {
@@ -69,11 +99,17 @@ async function callApi(
       return { success: false, error: "Request timed out" };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    return { success: false, error: msg.slice(0, 200) };
+    const cause = (err as { cause?: { code?: unknown; message?: unknown } })
+      ?.cause;
+    const detail = cause?.code ?? cause?.message;
+    return {
+      success: false,
+      error: detail ? `${msg} (${String(detail)})` : msg,
+    };
   }
 }
 
-function sendMessage(
+export function sendMessage(
   botToken: string,
   chatId: string,
   text: string,
@@ -184,6 +220,8 @@ export function formatNotification(
   const label = TYPE_LABELS[alertType] ?? `\u{1f4ca} ${alertType} Alert`;
   const lines = [`${label}: ${pair}`];
   if (result.detail) lines.push(result.detail);
-  if (alertType !== "price") lines.push(`\u{1f4b0} Price: ${price}`);
+  if (alertType !== "price") {
+    lines.push(`\u{1f4b0} Price: ${price.toFixed()}`);
+  }
   return lines.join("\n");
 }

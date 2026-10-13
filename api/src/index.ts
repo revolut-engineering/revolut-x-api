@@ -7,8 +7,16 @@ export {
   generateKeypair,
   loadPrivateKey,
   getPublicKeyPem,
+  moveKeypairAside,
+  publicKeyFileFor,
+  inspectCredentials,
+  inspectPrivateKey,
+  resolvePrivateKeyFile,
   loadCredentials,
   type Credentials,
+  type CredentialsCheck,
+  type InvalidCredentials,
+  type PrivateKeyCheck,
 } from "./auth/index.js";
 
 export {
@@ -23,6 +31,9 @@ export {
   setPermissions,
   assertSecurePermissions,
   assertKeyStillSecure,
+  redactHome,
+  isMissing,
+  writeFileAtomic,
   type RevolutXConfig,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_RETRIES,
@@ -42,7 +53,11 @@ export {
   ServerError,
   NetworkError,
   AuthNotConfiguredError,
+  InvalidCredentialsError,
+  ConfigurationError,
   InsecureKeyPermissionsError,
+  isDuplicateClientOrderIdError,
+  type CredentialsIssue,
 } from "./http/index.js";
 
 export {

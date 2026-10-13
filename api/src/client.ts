@@ -3,16 +3,24 @@ import { randomUUID } from "node:crypto";
 import { makeRequest, type RequestOptions } from "./http/index.js";
 import {
   AuthNotConfiguredError,
+  InvalidCredentialsError,
   InsecureKeyPermissionsError,
+  NetworkError,
   ValidationError,
+  type CredentialsIssue,
 } from "./http/errors.js";
 import { loadPrivateKey } from "./auth/keypair.js";
-import { loadCredentials } from "./auth/index.js";
+import { inspectCredentials } from "./auth/index.js";
+import { normalizeBaseUrl } from "./config/base-url.js";
 import { DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS } from "./config/settings.js";
 import { MAKER_FEE_RATE, TAKER_FEE_RATE } from "./config/fees.js";
 import { ORDER_BOOK_DEFAULT_DEPTH } from "./pagination/constants.js";
 import { type LogCallback, Logger } from "./logging/logger.js";
-import { placeOrderSchema, replaceOrderSchema } from "./validation/schemas.js";
+import {
+  placementReplySchema,
+  placeOrderSchema,
+  replaceOrderSchema,
+} from "./validation/schemas.js";
 import type { AccountBalance } from "./types/account.js";
 import type { CurrencyMap, CurrencyPairMap } from "./types/config.js";
 import {
@@ -55,6 +63,8 @@ import type {
   PaginatedResponse,
 } from "./types/common.js";
 
+const DEFAULT_BASE_URL = "https://revx.revolut.com";
+
 const RESOLUTION_MAP: Record<string, number> = {
   "1m": 1,
   "5m": 5,
@@ -86,6 +96,7 @@ export interface RevolutXClientOptions {
 export class RevolutXClient {
   private readonly requestOptions: RequestOptions;
   private readonly logger: Logger;
+  readonly credentialsIssue: CredentialsIssue | undefined;
 
   constructor(options: RevolutXClientOptions = {}) {
     let apiKey = options.apiKey;
@@ -96,14 +107,18 @@ export class RevolutXClient {
       privateKey = loadPrivateKey(options.privateKeyPath);
     }
 
+    let credentialsIssue: CredentialsIssue | undefined;
     if (!apiKey && !privateKey && options.autoLoadCredentials !== false) {
-      const credentials = loadCredentials();
-      if (credentials) {
-        apiKey = credentials.apiKey;
-        privateKey = credentials.privateKey;
-        privateKeyPath = credentials.privateKeyPath;
+      const check = inspectCredentials();
+      if (check.status === "ready") {
+        apiKey = check.credentials.apiKey;
+        privateKey = check.credentials.privateKey;
+        privateKeyPath = check.credentials.privateKeyPath;
+      } else if (check.status === "invalid") {
+        credentialsIssue = check.issue;
       }
     }
+    this.credentialsIssue = credentialsIssue;
 
     if (options.enforceKeyPermissions && privateKey && !privateKeyPath) {
       throw new InsecureKeyPermissionsError(
@@ -114,9 +129,12 @@ export class RevolutXClient {
     this.logger = new Logger(options.logger);
 
     this.requestOptions = {
-      baseUrl:
-        options.baseUrl ??
-        (process.env.REVOLUTX_API_URL || "https://revx.revolut.com"),
+      baseUrl: options.baseUrl
+        ? normalizeBaseUrl(options.baseUrl, "The baseUrl option")
+        : normalizeBaseUrl(
+            process.env.REVOLUTX_API_URL?.trim() || DEFAULT_BASE_URL,
+            "The API URL (REVOLUTX_API_URL)",
+          ),
       apiKey,
       privateKey,
       privateKeyPath,
@@ -134,10 +152,12 @@ export class RevolutXClient {
     );
   }
 
-  private requireAuth(): void {
-    if (!this.isAuthenticated) {
-      throw new AuthNotConfiguredError();
+  assertAuthenticated(): void {
+    if (this.isAuthenticated) return;
+    if (this.credentialsIssue) {
+      throw new InvalidCredentialsError(this.credentialsIssue);
     }
+    throw new AuthNotConfiguredError();
   }
 
   private async request<T>(
@@ -156,17 +176,17 @@ export class RevolutXClient {
   }
 
   async getBalances(): Promise<AccountBalance[]> {
-    this.requireAuth();
+    this.assertAuthenticated();
     return this.request<AccountBalance[]>("GET", "/balances");
   }
 
   async getCurrencies(): Promise<CurrencyMap> {
-    this.requireAuth();
+    this.assertAuthenticated();
     return this.request<CurrencyMap>("GET", "/configuration/currencies");
   }
 
   async getCurrencyPairs(): Promise<CurrencyPairMap> {
-    this.requireAuth();
+    this.assertAuthenticated();
     return this.request<CurrencyPairMap>("GET", "/configuration/pairs");
   }
 
@@ -181,7 +201,7 @@ export class RevolutXClient {
   async getTickers(
     opts?: TickersOptions,
   ): Promise<{ data: Ticker[]; metadata: { timestamp: number } }> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.symbols?.length) params.symbols = opts.symbols.join(",");
     return this.request<{ data: Ticker[]; metadata: { timestamp: number } }>(
@@ -195,7 +215,7 @@ export class RevolutXClient {
     symbol: string,
     opts?: CandlesOptions,
   ): Promise<DataArrayResponse<Candle>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.interval !== undefined) {
       params.interval =
@@ -219,7 +239,7 @@ export class RevolutXClient {
     data: OrderBook<OrderBookLevel>;
     metadata: { timestamp: number };
   }> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     params.limit = opts?.limit ?? ORDER_BOOK_DEFAULT_DEPTH;
     const raw = await this.request<{
@@ -238,7 +258,7 @@ export class RevolutXClient {
   async placeOrder(
     params: PlaceOrderParams,
   ): Promise<DataResponse<OrderPlacementResult>> {
-    this.requireAuth();
+    this.assertAuthenticated();
 
     const validation = placeOrderSchema.safeParse(params);
     if (!validation.success) {
@@ -275,18 +295,13 @@ export class RevolutXClient {
       body.order_configuration = { market: marketConfig };
     }
 
-    return this.request<DataResponse<OrderPlacementResult>>(
-      "POST",
-      "/orders",
-      undefined,
-      body,
-    );
+    return this.sendPlacement("POST", "/orders", body);
   }
 
   async getActiveOrders(
     opts?: ActiveOrdersOptions,
   ): Promise<PaginatedResponse<Order>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.symbols?.length) params.symbols = opts.symbols.join(",");
     if (opts?.orderStates?.length)
@@ -306,7 +321,7 @@ export class RevolutXClient {
   async getHistoricalOrders(
     opts?: HistoricalOrdersOptions,
   ): Promise<PaginatedResponse<Order>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.symbols?.length) params.symbols = opts.symbols.join(",");
 
@@ -367,7 +382,7 @@ export class RevolutXClient {
   }
 
   async getOrder(venueOrderId: string): Promise<DataResponse<OrderDetails>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const response = await this.request<DataResponse<OrderDetails>>(
       "GET",
       `/orders/${venueOrderId}`,
@@ -389,7 +404,7 @@ export class RevolutXClient {
     venueOrderId: string,
     params: ReplaceOrderParams,
   ): Promise<DataResponse<OrderPlacementResult>> {
-    this.requireAuth();
+    this.assertAuthenticated();
 
     const validation = replaceOrderSchema.safeParse(params);
     if (!validation.success) {
@@ -411,26 +426,37 @@ export class RevolutXClient {
       body.execution_instructions = params.executionInstructions;
     }
 
-    return this.request<DataResponse<OrderPlacementResult>>(
-      "PUT",
-      `/orders/${venueOrderId}`,
-      undefined,
-      body,
-    );
+    return this.sendPlacement("PUT", `/orders/${venueOrderId}`, body);
+  }
+
+  private async sendPlacement(
+    method: "POST" | "PUT",
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<DataResponse<OrderPlacementResult>> {
+    const reply = await this.request<unknown>(method, path, undefined, body);
+    const checked = placementReplySchema.safeParse(reply);
+    if (!checked.success) {
+      throw new NetworkError(
+        "The exchange's reply didn't include the order's details.",
+        { cause: checked.error, mayHaveReachedServer: true },
+      );
+    }
+    return reply as DataResponse<OrderPlacementResult>;
   }
 
   async cancelOrder(venueOrderId: string): Promise<void> {
-    this.requireAuth();
+    this.assertAuthenticated();
     await this.request("DELETE", `/orders/${venueOrderId}`);
   }
 
   async cancelAllOrders(): Promise<void> {
-    this.requireAuth();
+    this.assertAuthenticated();
     await this.request("DELETE", "/orders");
   }
 
   async getOrderFills(venueOrderId: string): Promise<DataArrayResponse<Trade>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const raw = await this.request<DataArrayResponse<WireTrade>>(
       "GET",
       `/orders/fills/${venueOrderId}`,
@@ -445,7 +471,7 @@ export class RevolutXClient {
     symbol: string,
     opts?: TradesOptions,
   ): Promise<PaginatedResponse<PublicTrade>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.startDate !== undefined) params.start_date = opts.startDate;
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
@@ -466,7 +492,7 @@ export class RevolutXClient {
     symbol: string,
     opts?: TradesOptions,
   ): Promise<PaginatedResponse<Trade>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.startDate !== undefined) params.start_date = opts.startDate;
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
@@ -486,7 +512,7 @@ export class RevolutXClient {
   async getTransactions(
     opts?: TransactionsOptions,
   ): Promise<PaginatedResponse<Transaction>> {
-    this.requireAuth();
+    this.assertAuthenticated();
     const params: Record<string, unknown> = {};
     if (opts?.startDate !== undefined) params.start_date = opts.startDate;
     if (opts?.endDate !== undefined) params.end_date = opts.endDate;
@@ -503,7 +529,7 @@ export class RevolutXClient {
   }
 
   async getTransaction(transactionId: string): Promise<TransactionDetails> {
-    this.requireAuth();
+    this.assertAuthenticated();
     return this.request<TransactionDetails>(
       "GET",
       `/transactions/${transactionId}`,

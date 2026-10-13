@@ -17,7 +17,21 @@ const MOCK_CANDLES = Array.from({ length: 5 }, (_, i) => ({
   volume: "1",
 }));
 
-const mockClient = { getCandles: vi.fn() };
+const BTC_USD = {
+  base: "BTC",
+  quote: "USD",
+  base_step: "0.00001",
+  quote_step: "0.01",
+  min_order_size: "0.00001",
+  max_order_size: "10",
+  min_order_size_quote: "1",
+  status: "active",
+};
+
+const mockClient = {
+  getCandles: vi.fn(),
+  getCurrencyPairs: vi.fn(async () => ({ "BTC/USD": BTC_USD })),
+};
 
 vi.mock("../../src/server.js", () => ({
   getRevolutXClient: vi.fn(() => mockClient),

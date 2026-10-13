@@ -23,11 +23,19 @@ describe("getRevolutXClient", () => {
     });
   });
 
-  it("returns the same instance on subsequent calls", () => {
+  it("returns the same instance while it is signed in", () => {
+    mockRevolutXClient.mockImplementation(() => ({ isAuthenticated: true }));
     const first = getRevolutXClient();
     const second = getRevolutXClient();
     expect(first).toBe(second);
     expect(mockRevolutXClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds a new client while the cached one is not signed in", () => {
+    mockRevolutXClient.mockImplementation(() => ({ isAuthenticated: false }));
+    getRevolutXClient();
+    getRevolutXClient();
+    expect(mockRevolutXClient).toHaveBeenCalledTimes(2);
   });
 
   it("creates a new instance after reset", () => {

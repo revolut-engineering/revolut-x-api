@@ -1,18 +1,26 @@
 import { Decimal } from "decimal.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Candle } from "@revolut/revolut-x-api";
+import type { Candle, CurrencyPair } from "@revolut/revolut-x-api";
 import {
   textResult,
+  errorResult,
   validateSymbol,
   validateResolution,
   handleApiError,
 } from "../shared/_helpers.js";
 import {
-  createGrid,
+  annualizedReturnPct,
+  candleCoverage,
+  returnOverDrawdown,
+  constraintsFromPair,
+  createGridPlan,
+  quotePerLevelFor,
+  TAKER_FEE_RATE,
   runBacktest,
   optimizeGridParams,
   type BacktestResult,
+  type GridOrderConstraints,
   type OptimizationResult,
 } from "../shared/backtest/index.js";
 import { RESOLUTIONS_MAP } from "../shared/common.js";
@@ -71,7 +79,8 @@ function parseDecimal(
   }
 }
 
-interface ParsedCandle extends Record<string, Decimal> {
+interface ParsedCandle {
+  start: number;
   open: Decimal;
   high: Decimal;
   low: Decimal;
@@ -85,6 +94,7 @@ function parseCandles(candles: Candle[]): ParsedCandle[] {
       parsed.push({
         ts: c.start,
         candle: {
+          start: c.start,
           open: new Decimal(c.open),
           high: new Decimal(c.high),
           low: new Decimal(c.low),
@@ -146,13 +156,49 @@ async function fetchBacktestCandles(
 
   if (!candles.length) {
     return {
-      error: textResult(
+      error: errorResult(
         `No candle data found for ${symbol} (${resolution}). Try get more recent data`,
       ),
     };
   }
 
   return { candles, actualDays, llmNotice };
+}
+
+async function loadGridConstraints(
+  symbol: string,
+  getCurrencyPairs: () => Promise<Record<string, CurrencyPair>>,
+  setupGuide: string,
+): Promise<
+  | { constraints: GridOrderConstraints }
+  | { error: ReturnType<typeof textResult> }
+> {
+  let pairs: Record<string, CurrencyPair>;
+  try {
+    pairs = await getCurrencyPairs();
+  } catch (err) {
+    const handled = await handleApiError(err, setupGuide);
+    return {
+      error:
+        handled ??
+        errorResult(
+          `Unable to validate grid order sizes: ${errorMessage(err)}`,
+        ),
+    };
+  }
+  const pairInfo = pairs[symbol.replace("-", "/")];
+  if (!pairInfo) {
+    return {
+      error: errorResult(
+        `Unable to validate grid order sizes: Pair configuration not found for ${symbol}.`,
+      ),
+    };
+  }
+  return { constraints: constraintsFromPair(pairInfo) };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function formatBacktestResult(
@@ -164,12 +210,24 @@ function formatBacktestResult(
   rangePct: Decimal,
   investment: Decimal,
   days: number,
-  split = false,
-  quoteStep = new Decimal("0.01"),
+  split: boolean,
+  trailingUp: boolean,
+  stopLossPrice: number,
+  constraints: GridOrderConstraints,
 ): string {
   const startPrice = candles[0].open;
-  const lower = startPrice.times(new Decimal(1).minus(rangePct));
-  const upper = startPrice.times(new Decimal(1).plus(rangePct));
+  const plan = createGridPlan({
+    startPrice,
+    totalLevels: gridLevels,
+    rangePct,
+    investment,
+    split,
+    stopLoss: stopLossPrice > 0 ? new Decimal(stopLossPrice) : undefined,
+    constraints,
+    takerFeeRate: TAKER_FEE_RATE,
+  });
+  const lower = plan.levels[0].price;
+  const upper = plan.levels[plan.levels.length - 1].price;
   const finalPrice = candles[candles.length - 1].close;
   const baseValue = result.finalBase.times(finalPrice);
   const totalValue = result.finalQuote.plus(baseValue);
@@ -178,16 +236,14 @@ function formatBacktestResult(
     ? new Decimal(0)
     : netReturn.div(investment).times(100);
 
-  const quoteDp = quoteStep.decimalPlaces() ?? 2;
-  const levels = createGrid(startPrice, gridLevels, rangePct, quoteDp);
-  const buyLevels = levels.filter((lv) => lv.buyCount > 0).length;
-  const sellLevels = split
-    ? levels.filter((lv) => lv.price.gt(startPrice)).length
-    : 0;
-  const totalCapitalLevels = split ? buyLevels + sellLevels : buyLevels;
-  const quotePerLevel = investment
-    .div(Math.max(totalCapitalLevels, 1))
-    .toDecimalPlaces(2);
+  const buyLevels = plan.buyLevelIndices.length;
+  const quotePerLevel = plan.quotePerLevel;
+  const cycleReturns = plan.buyLevelIndices.map((index) =>
+    plan.levels[index + 1].price.div(plan.levels[index].price).minus(1),
+  );
+  const averageCycleReturn = cycleReturns
+    .reduce((sum, value) => sum.plus(value), new Decimal(0))
+    .div(cycleReturns.length);
 
   const [base, quote] = symbol.split("-");
   const cs = getCurrSymbol(symbol);
@@ -201,9 +257,10 @@ function formatBacktestResult(
     candles[0].high,
   );
 
-  const rawReturn = returnPct.toNumber() / 100;
-  const annualizedPct =
-    rawReturn > -1 ? (Math.pow(1 + rawReturn, 365 / days) - 1) * 100 : -100;
+  const annualized = annualizedReturnPct(
+    returnPct,
+    candleCoverage(candles, RESOLUTIONS_MAP[resolution]),
+  );
 
   const lines = [
     `Grid Backtest Results for ${symbol}`,
@@ -212,13 +269,8 @@ function formatBacktestResult(
     `Price range: ${fmtPrice(priceLow, cs)} - ${fmtPrice(priceHigh, cs)}`,
     `Start price: ${fmtPrice(startPrice, cs)}`,
     `Grid range: ${fmtPrice(lower, cs)} - ${fmtPrice(upper, cs)} (±${rangePct.times(100).toFixed(1)}%)`,
-    `Grid levels: ${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell) | ${quote}/level: ${cs}${quotePerLevel}`,
-    (() => {
-      const ratio = upper.div(lower).pow(new Decimal(1).div(gridLevels - 1));
-      const profitPct = ratio.minus(1).times(100);
-      const profitDollar = quotePerLevel.times(ratio.minus(1));
-      return `Profit/grid: ${cs}${profitDollar.toFixed(2)} (${profitPct.toFixed(2)}%)`;
-    })(),
+    `Grid levels: ${gridLevels / 2} per side (${buyLevels} buy, ${gridLevels - buyLevels} sell) | ${quote}/level: ${cs}${quotePerLevel.toFixed(constraints.quoteStep.decimalPlaces())}`,
+    `Profit/grid: ${cs}${quotePerLevel.times(averageCycleReturn).toFixed(2)} (${averageCycleReturn.times(100).toFixed(2)}%)`,
     "",
     "Performance",
     "-".repeat(50),
@@ -230,8 +282,18 @@ function formatBacktestResult(
     `Total P&L: ${cs}${netReturn.toFixed(2)}`,
     `ROI: ${returnPct.toFixed(2)}%`,
     `Max drawdown: ${result.maxDrawdown.times(100).toFixed(2)}%`,
-    `Annualized return: ${annualizedPct.toFixed(2)}%`,
+    annualized === null
+      ? "Annualized return: not shown, needs a year of data"
+      : `Annualized return: ${annualized.toFixed(2)}%`,
   ];
+  if (trailingUp) {
+    lines.push(`Trailing up: ${result.trailingUpShifts} shifts`);
+  }
+  if (stopLossPrice > 0) {
+    lines.push(
+      `Stop-loss (${fmtPrice(new Decimal(stopLossPrice), cs)}): ${result.stopLossTriggered ? "triggered" : "not triggered"}`,
+    );
+  }
 
   if (result.tradeLog.length) {
     lines.push("");
@@ -300,12 +362,16 @@ function formatOptimizationResults(
       `Realized: ${cs}${bestReturn.realizedPnl.toFixed(2)} | Total: ${cs}${bestReturn.totalReturn.toFixed(2)}`,
   );
 
-  const bestCalmar = results.reduce((best, r) =>
-    r.calmarApprox.gt(best.calmarApprox) ? r : best,
+  const bestRiskAdjusted = results.reduce((best, r) =>
+    returnOverDrawdown(r).gt(returnOverDrawdown(best)) ? r : best,
   );
   lines.push(
-    `  Best Risk-Adj:   ${bestCalmar.gridLevels / 2} levels/side, ` +
-      `${bestCalmar.rangePct.times(100).toFixed(1)}% range -> Calmar ${bestCalmar.calmarApprox.toFixed(2)}`,
+    `  Best Risk-Adj:   ${bestRiskAdjusted.gridLevels / 2} levels/side, ` +
+      `${bestRiskAdjusted.rangePct.times(100).toFixed(1)}% range -> ${
+        bestRiskAdjusted.calmarApprox === null
+          ? `Return/DD ${returnOverDrawdown(bestRiskAdjusted).toFixed(2)}`
+          : `Calmar ${bestRiskAdjusted.calmarApprox.toFixed(2)}`
+      }`,
   );
 
   const mostTrades = results.reduce((best, r) =>
@@ -347,7 +413,7 @@ export function registerBacktestTools(server: McpServer): void {
           .number()
           .default(5)
           .describe(
-            "Grid levels per side (default 5, range 1-25). Total orders = 2 × levels.",
+            "Grid levels per side (default 5, range 1-100). Total orders = 2 × levels.",
           ),
         range_pct: z
           .string()
@@ -379,7 +445,7 @@ export function registerBacktestTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe(
-            "Simulate trailing up: rebuild the grid when price exits the upper boundary. Best for trending markets.",
+            "Simulate trailing up: rebuild the grid when a candle's high reaches the second grid level above the upper boundary, once the grid holds no coins. Best for trending markets.",
           ),
         stop_loss_price: z
           .number()
@@ -410,11 +476,15 @@ export function registerBacktestTools(server: McpServer): void {
 
       symbol = symbol.trim().toUpperCase();
       const error = validateSymbol(symbol);
-      if (error) return textResult(error);
+      if (error) return errorResult(error);
 
-      if (grid_levels < 1 || grid_levels > 25) {
-        return textResult(
-          `grid_levels must be between 1 and 25 (per side), got ${grid_levels}.`,
+      if (
+        !Number.isInteger(grid_levels) ||
+        grid_levels < 1 ||
+        grid_levels > 100
+      ) {
+        return errorResult(
+          `grid_levels must be a whole number between 1 and 100 (per side), got ${grid_levels}.`,
         );
       }
       const totalLevels = grid_levels * 2;
@@ -423,14 +493,34 @@ export function registerBacktestTools(server: McpServer): void {
       if (resError) return resError;
 
       const [rawRange, rangeErr] = parseDecimal(range_pct, "range_pct");
-      if (rangeErr) return textResult(rangeErr);
+      if (rangeErr) return errorResult(rangeErr);
       const rangeDec = rawRange!.div(100);
 
       const [investDec, err2] = parseDecimal(investment, "investment");
-      if (err2) return textResult(err2);
+      if (err2) return errorResult(err2);
 
       if (days < 1 || days > 365) {
-        return textResult(`days must be between 1 and 365, got ${days}.`);
+        return errorResult(`days must be between 1 and 365, got ${days}.`);
+      }
+
+      const loaded = await loadGridConstraints(
+        symbol,
+        () => getRevolutXClient().getCurrencyPairs(),
+        SETUP_GUIDE,
+      );
+      if ("error" in loaded) return loaded.error;
+      const { constraints } = loaded;
+
+      try {
+        quotePerLevelFor({
+          investment: investDec!,
+          buyLevels: grid_levels,
+          sellLevels: grid_levels,
+          split: split_investment,
+          constraints,
+        });
+      } catch (err) {
+        return errorResult(`Unable to run the backtest: ${errorMessage(err)}`);
       }
 
       const fetchResult = await fetchBacktestCandles(
@@ -447,7 +537,7 @@ export function registerBacktestTools(server: McpServer): void {
         const startPrice = candles[0].open;
         const lowestLevel = startPrice.times(new Decimal(1).minus(rangeDec));
         if (new Decimal(stop_loss_price).gte(lowestLevel)) {
-          return textResult(
+          return errorResult(
             `stop_loss_price ${stop_loss_price} must be strictly below the lowest grid level ` +
               `(~${fmtPrice(lowestLevel, getCurrSymbol(symbol))} for ±${rangeDec.times(100).toFixed(1)}% range around ` +
               `start price ${fmtPrice(startPrice, getCurrSymbol(symbol))}). Try a lower value.`,
@@ -455,46 +545,39 @@ export function registerBacktestTools(server: McpServer): void {
         }
       }
 
-      let baseStep = new Decimal("0.00001");
-      let quoteStep = new Decimal("0.01");
       try {
-        const pairs = await getRevolutXClient().getCurrencyPairs();
-        const slashSymbol = symbol.replace("-", "/");
-        const pairInfo = pairs[slashSymbol];
-        if (pairInfo) {
-          baseStep = new Decimal(pairInfo.base_step);
-          quoteStep = new Decimal(pairInfo.quote_step);
-        }
-      } catch {
-        // use defaults
-      }
-
-      const result = runBacktest(
-        candles,
-        totalLevels,
-        rangeDec,
-        investDec!,
-        split_investment,
-        trailing_up,
-        stop_loss_price,
-        baseStep,
-        quoteStep,
-      );
-
-      return textResult(
-        formatBacktestResult(
-          result,
-          symbol,
+        const result = runBacktest(
           candles,
-          resolution,
           totalLevels,
           rangeDec,
           investDec!,
-          actualDays,
           split_investment,
-          quoteStep,
-        ) + llmNotice,
-      );
+          trailing_up,
+          stop_loss_price,
+          undefined,
+          constraints.baseStep,
+          constraints.quoteStep,
+          constraints,
+        );
+        return textResult(
+          formatBacktestResult(
+            result,
+            symbol,
+            candles,
+            resolution,
+            totalLevels,
+            rangeDec,
+            investDec!,
+            actualDays,
+            split_investment,
+            trailing_up,
+            stop_loss_price,
+            constraints,
+          ) + llmNotice,
+        );
+      } catch (err) {
+        return errorResult(`Unable to run the backtest: ${errorMessage(err)}`);
+      }
     },
   );
 
@@ -529,7 +612,7 @@ export function registerBacktestTools(server: McpServer): void {
           .string()
           .default("3,5,8,10,15")
           .describe(
-            "Comma-separated grid levels per side to test (each 2-25).",
+            "Comma-separated grid levels per side to test (each 1-100).",
           ),
         range_pct_options: z
           .string()
@@ -549,7 +632,7 @@ export function registerBacktestTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe(
-            "Simulate trailing up: rebuild grid when price exits upper boundary. Best for trending markets.",
+            "Simulate trailing up: rebuild the grid when a candle's high reaches the second grid level above the upper boundary, once the grid holds no coins. Best for trending markets.",
           ),
         stop_loss_price: z
           .number()
@@ -581,16 +664,16 @@ export function registerBacktestTools(server: McpServer): void {
 
       symbol = symbol.trim().toUpperCase();
       const symError = validateSymbol(symbol);
-      if (symError) return textResult(symError);
+      if (symError) return errorResult(symError);
 
       const resError = validateResolution(resolution);
       if (resError) return resError;
 
       const [investDec, err1] = parseDecimal(investment, "investment");
-      if (err1) return textResult(err1);
+      if (err1) return errorResult(err1);
 
       if (days < 1 || days > 365) {
-        return textResult(`days must be between 1 and 365, got ${days}.`);
+        return errorResult(`days must be between 1 and 365, got ${days}.`);
       }
 
       let levelsList: number[];
@@ -600,13 +683,14 @@ export function registerBacktestTools(server: McpServer): void {
           .map((x) => x.trim())
           .filter((x) => x)
           .map((x) => {
-            const n = parseInt(x, 10);
-            if (isNaN(n) || n < 1 || n > 25) throw new Error();
+            const n = /^\d+$/.test(x) ? Number(x) : NaN;
+            if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error();
             return n * 2;
           });
+        if (levelsList.length === 0) throw new Error();
       } catch {
-        return textResult(
-          "grid_levels_options must be comma-separated integers between 1 and 25 (per side).",
+        return errorResult(
+          "grid_levels_options must be comma-separated whole numbers between 1 and 100 (per side).",
         );
       }
 
@@ -618,25 +702,49 @@ export function registerBacktestTools(server: McpServer): void {
           .filter((x) => x)
           .map((x) => new Decimal(x).div(100));
       } catch {
-        return textResult(
+        return errorResult(
           "range_pct_options must be comma-separated numbers, e.g. '3,5,10'.",
         );
       }
       for (const rp of rangesList) {
         if (rp.lte(0)) {
-          return textResult("Each range_pct must be positive.");
+          return errorResult("Each range_pct must be positive.");
         }
       }
 
       const totalCombos = levelsList.length * rangesList.length;
       if (totalCombos > 200) {
-        return textResult(
+        return errorResult(
           `Too many combinations (${totalCombos}). ` +
             "Max 200. Reduce grid_levels_options or range_pct_options.",
         );
       }
 
       top_n = Math.max(1, Math.min(top_n, 50));
+
+      const loaded = await loadGridConstraints(
+        symbol,
+        () => getRevolutXClient().getCurrencyPairs(),
+        SETUP_GUIDE,
+      );
+      if ("error" in loaded) return loaded.error;
+      const { constraints } = loaded;
+
+      try {
+        for (const levels of levelsList) {
+          quotePerLevelFor({
+            investment: investDec!,
+            buyLevels: levels / 2,
+            sellLevels: levels / 2,
+            split: split_investment,
+            constraints,
+          });
+        }
+      } catch (err) {
+        return errorResult(
+          `Unable to run the optimization: ${errorMessage(err)}`,
+        );
+      }
 
       const fetchResult = await fetchBacktestCandles(
         symbol,
@@ -651,39 +759,33 @@ export function registerBacktestTools(server: McpServer): void {
       if (stop_loss_price > 0) {
         const startPrice = candles[0].open;
         if (new Decimal(stop_loss_price).gte(startPrice)) {
-          return textResult(
+          return errorResult(
             `stop_loss_price ${stop_loss_price} must be below the backtest start price ` +
               `(${fmtPrice(startPrice, getCurrSymbol(symbol))}). Try a lower value.`,
           );
         }
       }
 
-      let optBaseStep = new Decimal("0.00001");
-      let optQuoteStep = new Decimal("0.01");
+      let results: OptimizationResult[];
       try {
-        const pairs = await getRevolutXClient().getCurrencyPairs();
-        const slashSymbol = symbol.replace("-", "/");
-        const pairInfo = pairs[slashSymbol];
-        if (pairInfo) {
-          optBaseStep = new Decimal(pairInfo.base_step);
-          optQuoteStep = new Decimal(pairInfo.quote_step);
-        }
-      } catch {
-        // use defaults
+        results = optimizeGridParams(
+          candles,
+          levelsList,
+          rangesList,
+          investDec!,
+          candleCoverage(candles, RESOLUTIONS_MAP[resolution]),
+          split_investment,
+          trailing_up,
+          stop_loss_price,
+          constraints.baseStep,
+          constraints.quoteStep,
+          constraints,
+        );
+      } catch (err) {
+        return errorResult(
+          `Unable to run the optimization: ${errorMessage(err)}`,
+        );
       }
-
-      const results = optimizeGridParams(
-        candles,
-        levelsList,
-        rangesList,
-        investDec!,
-        actualDays,
-        split_investment,
-        trailing_up,
-        stop_loss_price,
-        optBaseStep,
-        optQuoteStep,
-      );
 
       return textResult(
         formatOptimizationResults(

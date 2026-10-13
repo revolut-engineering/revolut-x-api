@@ -1,3 +1,13 @@
+import { OutageWatch, exchangeFault } from "./outage-watch.js";
+import {
+  noDataMessage,
+  recoveryMessage,
+  refusedKeyMessage,
+  refusedKeyNotice,
+  savedKeyLabel,
+} from "./exchange-alerts.js";
+import { MONITOR_CANDLES } from "../util/monitor-options.js";
+import { groupedNumber, parseDecimal } from "../util/decimal-input.js";
 import { Decimal } from "decimal.js";
 import {
   RevolutXClient,
@@ -26,13 +36,48 @@ export interface MonitorSpec {
   intervalSec: number;
 }
 
+export interface DeliveryProblem {
+  error: string;
+  connectionId: string;
+}
+
 export interface TickResult {
   timestamp: Date;
   price: Decimal | undefined;
   evalResult: EvalResult | null;
   triggered: boolean;
+  holding?: boolean;
+  alertedThisCandle?: boolean;
   notified: boolean;
+  deliveryFailures?: number;
+  deliveryProblem?: DeliveryProblem;
+  armedWhileMet?: boolean;
   error?: string;
+}
+
+const CROSSOVER_ALERT_TYPES = new Set(["ema_cross", "macd"]);
+const HOUR_MS = 60 * 60 * 1000;
+
+export function proximity(
+  alertType: string,
+  current: number,
+  threshold: number,
+  direction: string,
+): number | null {
+  const falling = direction === "below" || direction === "fall";
+  if (alertType === "obi") {
+    const position = (current + 1) / 2;
+    const target = (threshold + 1) / 2;
+    if (falling) return target >= 1 ? null : (1 - position) / (1 - target);
+    return target <= 0 ? null : position / target;
+  }
+  if (alertType === "price_change_pct") {
+    if (threshold <= 0) return null;
+    return Math.max(0, (falling ? -current : current) / threshold);
+  }
+  if (threshold <= 0) return null;
+  if (current <= 0) return falling ? 1 : 0;
+  return falling ? threshold / current : current / threshold;
 }
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -47,15 +92,6 @@ export const TYPE_LABELS: Record<string, string> = {
   price_change_pct: "Price Change %",
   atr_breakout: "ATR Breakout",
 };
-
-const BAR_ALERT_TYPES = new Set([
-  "price",
-  "rsi",
-  "spread",
-  "obi",
-  "price_change_pct",
-  "volume_spike",
-]);
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: "$",
@@ -72,7 +108,13 @@ export class ForegroundMonitor {
   private _timer: ReturnType<typeof setTimeout> | null = null;
   private _candleCache = new CandleCache();
   private _client: RevolutXClient | null = null;
+  private _keyLabel: string | null = null;
   private _triggered = false;
+  private _checkedOnce = false;
+  private _armedHold = false;
+  private _alertedCandle: number | undefined = undefined;
+  private readonly _pendingEvents: string[] = [];
+  private readonly _outage = new OutageWatch();
   private _prevPrice: Decimal | null = null;
   private _tickCount = 0;
   private _currSymbol: string;
@@ -98,11 +140,8 @@ export class ForegroundMonitor {
       generatedBy: "CLI",
       enforceKeyPermissions: true,
     });
-    if (!this._client.isAuthenticated) {
-      throw new Error(
-        "API credentials not configured. Run 'revx configure' first.",
-      );
-    }
+    this._keyLabel = savedKeyLabel();
+    this._client.assertAuthenticated();
     await this._loop();
   }
 
@@ -159,6 +198,7 @@ export class ForegroundMonitor {
     } catch (err) {
       rethrowIfInsecureKey(err);
       result.error = `Failed to fetch ticker: ${err instanceof Error ? err.message : String(err)}`;
+      await this._noteExchangeFailure(result.error, err);
       return result;
     }
 
@@ -169,6 +209,7 @@ export class ForegroundMonitor {
 
     if (result.price == null) {
       result.error = `No price data for ${pair}`;
+      await this._noteExchangeFailure(result.error);
       return result;
     }
 
@@ -181,12 +222,17 @@ export class ForegroundMonitor {
     if (CANDLE_ALERT_TYPES.has(alertType)) {
       if (this._candleCache.needsRefresh(pair)) {
         try {
-          const resp = await client.getCandles(pair, { interval: 60 });
+          const hourStart = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
+          const resp = await client.getCandles(pair, {
+            interval: 60,
+            startDate: hourStart - (MONITOR_CANDLES + 1) * HOUR_MS,
+          });
           const candles = ForegroundMonitor.parseCandles(resp.data);
           this._candleCache.put(pair, candles);
         } catch (err) {
           rethrowIfInsecureKey(err);
           result.error = `Failed to fetch candles: ${err instanceof Error ? err.message : String(err)}`;
+          await this._noteExchangeFailure(result.error, err);
           return result;
         }
       }
@@ -196,23 +242,38 @@ export class ForegroundMonitor {
     if (ORDERBOOK_ALERT_TYPES.has(alertType)) {
       try {
         const resp = await client.getOrderBook(pair, { limit: 20 });
-        snapshot.orderBook = {
-          bids: resp.data.bids as unknown as Record<string, unknown>[],
-          asks: resp.data.asks as unknown as Record<string, unknown>[],
-        };
+        snapshot.orderBook = resp.data;
       } catch (err) {
         rethrowIfInsecureKey(err);
         result.error = `Failed to fetch order book: ${err instanceof Error ? err.message : String(err)}`;
+        await this._noteExchangeFailure(result.error, err);
         return result;
       }
     }
+    await this._noteExchangeBack();
 
     const alertRecord = {
       alert_type: alertType,
       config_json: JSON.stringify(config),
     };
     const evalResult = evaluateAlert(alertRecord, snapshot);
+    if (evalResult.error) {
+      result.error = `Could not evaluate ${alertType}: ${evalResult.error}`;
+      return result;
+    }
     result.evalResult = evalResult;
+
+    const firstCheck = !this._checkedOnce;
+    this._checkedOnce = true;
+    if (firstCheck && CROSSOVER_ALERT_TYPES.has(alertType)) {
+      this._armedHold = evalResult.conditionMet;
+      result.armedWhileMet = evalResult.conditionMet;
+      return result;
+    }
+    if (this._armedHold) {
+      if (evalResult.conditionMet) return result;
+      this._armedHold = false;
+    }
 
     if (!evalResult.conditionMet) {
       if (this._triggered) {
@@ -222,22 +283,115 @@ export class ForegroundMonitor {
     }
 
     if (this._triggered) {
-      result.triggered = true;
+      result.holding = true;
       return result;
+    }
+
+    if (CROSSOVER_ALERT_TYPES.has(alertType)) {
+      const candle = snapshot.candles?.at(-1)?.timestamp as number | undefined;
+      if (candle !== undefined && candle === this._alertedCandle) {
+        this._triggered = true;
+        result.holding = true;
+        result.alertedThisCandle = true;
+        return result;
+      }
+      this._alertedCandle = candle;
     }
 
     this._triggered = true;
     result.triggered = true;
 
     if (this._connections.length > 0) {
-      const msg = formatNotification(alertType, pair, result.price, evalResult);
-      for (const tc of this._connections) {
-        await sendWithRetries(tc.bot_token, tc.chat_id, msg);
-      }
-      result.notified = true;
+      const sent = await this._send(
+        formatNotification(alertType, pair, result.price, evalResult),
+      );
+      result.notified = sent.delivered > 0;
+      result.deliveryFailures = this._connections.length - sent.delivered;
+      result.deliveryProblem = sent.problem ?? undefined;
     }
 
     return result;
+  }
+
+  private async _send(
+    message: string,
+  ): Promise<{ delivered: number; problem: DeliveryProblem | null }> {
+    let delivered = 0;
+    let problem: DeliveryProblem | null = null;
+    for (const tc of this._connections) {
+      const sent = await sendWithRetries(tc.bot_token, tc.chat_id, message);
+      if (sent.success) {
+        delivered++;
+      } else {
+        problem ??= {
+          error: (sent.error ?? "not delivered").replace(/\.+$/, ""),
+          connectionId: tc.id,
+        };
+      }
+    }
+    return { delivered, problem };
+  }
+
+  private _lost(delivered: number): boolean {
+    return this._connections.length > 0 && delivered === 0;
+  }
+
+  private async _noteExchangeFailure(
+    error: string,
+    cause?: unknown,
+  ): Promise<void> {
+    const alert = this._outage.failed(exchangeFault(cause));
+    if (!alert) return;
+    const refused = alert.fault === "refused";
+    if (!alert.retry) {
+      this._printEvent(
+        chalk.yellow(
+          refused
+            ? `${refusedKeyNotice(cause, "monitor")} Still trying.`
+            : `No data from Revolut X for ${alert.minutes} minutes. Still trying.`,
+        ),
+      );
+    }
+    const sent = await this._send(
+      refused
+        ? refusedKeyMessage(this._title(), cause, {
+            user: "monitor",
+            keyLabel: this._keyLabel,
+          })
+        : noDataMessage(this._title(), alert.minutes, error),
+    );
+    if (this._lost(sent.delivered)) this._outage.undelivered(alert);
+  }
+
+  private async _noteExchangeBack(): Promise<void> {
+    const alert = this._outage.recovered();
+    if (!alert) return;
+    if (!alert.retry) {
+      this._printEvent(
+        chalk.green(
+          alert.fault === "refused"
+            ? "Revolut X accepts the API key again."
+            : "Data from Revolut X is back.",
+        ),
+      );
+    }
+    const sent = await this._send(recoveryMessage(this._title(), alert));
+    if (this._lost(sent.delivered)) this._outage.undelivered(alert);
+  }
+
+  private _title(): string {
+    const type = TYPE_LABELS[this._spec.alertType] ?? this._spec.alertType;
+    return `Monitor ${type} ${this._spec.pair}`;
+  }
+
+  private _printEvent(text: string): void {
+    this._pendingEvents.push(text);
+  }
+
+  private _flushEvents(time: string): void {
+    for (const event of this._pendingEvents.splice(0)) {
+      console.log(`  ${chalk.dim(time)}  ${event}`);
+    }
   }
 
   private _printTick(result: TickResult): void {
@@ -249,10 +403,12 @@ export class ForegroundMonitor {
       console.log(
         `  ${chalk.dim(time)}  ${chalk.red("\u2717")} ${chalk.yellow(result.error)}`,
       );
+      this._flushEvents(time);
       this._tickCount++;
       return;
     }
 
+    this._flushEvents(time);
     const priceStr = result.price ? this._formatPrice(result.price) : "";
 
     let deltaStr = "";
@@ -267,10 +423,14 @@ export class ForegroundMonitor {
     const barStr = this._proximityBar(result.evalResult);
 
     if (result.triggered && result.notified) {
+      const total = this._connections.length;
+      const delivered = total - (result.deliveryFailures ?? 0);
       const connLabel =
-        this._connections.length === 1
-          ? "1 connection"
-          : `${this._connections.length} connections`;
+        delivered === total
+          ? total === 1
+            ? "1 connection"
+            : `${total} connections`
+          : `${delivered} of ${total} connections`;
       const line1 = `  ${chalk.dim(time)}  ${chalk.bold.cyan(this._spec.pair)}  ${chalk.white.bold(priceStr)}  ${deltaStr}`;
       const line2 = "";
       const line3Left = `  ${chalk.red.bold("\u25C6 TRIGGERED")}`;
@@ -292,7 +452,11 @@ export class ForegroundMonitor {
     } else if (result.triggered) {
       const line1 = `  ${chalk.dim(time)}  ${chalk.bold.cyan(this._spec.pair)}  ${chalk.white.bold(priceStr)}  ${deltaStr}`;
       const line2 = "";
-      const line3 = `  ${chalk.red.bold("\u25C6 TRIGGERED")}`;
+      const line3 =
+        `  ${chalk.red.bold("\u25C6 TRIGGERED")}` +
+        (result.deliveryFailures
+          ? `  ${chalk.red("\u2717 Notification failed")}`
+          : "");
       const cleanDetail = result.evalResult?.detail
         ? result.evalResult.detail
             .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
@@ -311,12 +475,36 @@ export class ForegroundMonitor {
       const parts = [`  ${chalk.dim(time)}  ${priceStr}  ${deltaStr}`];
       if (indicatorStr) parts.push(`${chalk.dim("\u2502")}  ${indicatorStr}`);
       if (barStr) parts.push(barStr);
-      parts.push(chalk.dim("\u25CB"));
+      parts.push(
+        result.alertedThisCandle
+          ? chalk.red("\u25C6 alerted this hour")
+          : result.holding
+            ? chalk.red("\u25C6 still met")
+            : chalk.dim("\u25CB"),
+      );
       console.log(parts.join("  "));
+      if (result.armedWhileMet) {
+        console.log(
+          chalk.dim(
+            "  The trend is already in place. Waiting for a fresh crossover.",
+          ),
+        );
+      }
     }
 
+    this._printDeliveryProblem(result.deliveryProblem);
     if (result.price) this._prevPrice = result.price;
     this._tickCount++;
+  }
+
+  private _printDeliveryProblem(problem: DeliveryProblem | undefined): void {
+    if (!problem) return;
+    console.log(`  ${chalk.red(`\u2717 Telegram: ${problem.error}`)}`);
+    console.log(
+      chalk.dim(
+        `    Test it with: revx connector telegram test ${problem.connectionId}`,
+      ),
+    );
   }
 
   private _formatPrice(price: Decimal): string {
@@ -334,20 +522,22 @@ export class ForegroundMonitor {
   }
 
   private _proximityBar(evalResult: EvalResult | null): string {
-    if (!evalResult?.current) return "";
-    if (!BAR_ALERT_TYPES.has(this._spec.alertType)) return "";
-
-    const rawValue = evalResult.current.value.replace(/[^0-9.\u002D]/g, "");
-    const currentNum = parseFloat(rawValue);
-    if (isNaN(currentNum)) return "";
+    const amount = evalResult?.current?.amount;
+    if (!evalResult || !amount) return "";
 
     const cfg = this._spec.config;
     const thresholdRaw = cfg.threshold ?? cfg.multiplier;
     if (thresholdRaw == null) return "";
-    const thresholdNum = parseFloat(String(thresholdRaw));
-    if (isNaN(thresholdNum) || thresholdNum === 0) return "";
+    const threshold = parseDecimal(String(thresholdRaw));
+    if (!threshold) return "";
 
-    const ratio = Math.abs(currentNum) / Math.abs(thresholdNum);
+    const ratio = proximity(
+      this._spec.alertType,
+      amount.toNumber(),
+      threshold.toNumber(),
+      String(cfg.direction ?? "above"),
+    );
+    if (ratio === null) return "";
     const filled = Math.min(20, Math.max(0, Math.round(ratio * 20)));
     const bar = "\u2588".repeat(filled) + "\u2591".repeat(20 - filled);
 
@@ -402,11 +592,8 @@ export class ForegroundMonitor {
     currSymbol: string,
   ): string {
     const fmt = (n: unknown) => {
-      const num = Number(n);
-      if (isNaN(num)) return String(n);
-      return num < 1
-        ? `${currSymbol}${num}`
-        : `${currSymbol}${num.toLocaleString("en-US")}`;
+      const number = parseDecimal(String(n));
+      return number ? `${currSymbol}${groupedNumber(number)}` : String(n);
     };
 
     switch (alertType) {

@@ -42,6 +42,9 @@ jobs:
             (cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
           done
 
+          # cli and mcp require the api of the same release
+          node scripts/api-range.mjs write
+
           # JSON config files with "version" field
           VERSION="$VERSION" node -e "
             const fs = require('fs');
@@ -102,6 +105,9 @@ jobs:
       - name: Pack CLI tarball
         run: cd cli && npm pack
 
+      - name: Install the packed CLI like a client
+        run: npm run pack:check
+
       - name: Build MCPB archive
         run: cd mcp && bash scripts/build-mcpb.sh
 
@@ -121,6 +127,11 @@ jobs:
           cd api
           npm publish --provenance --access public 2>&1 || {
             if npm view @revolut/revolut-x-api@"$VERSION" version >/dev/null 2>&1; then
+              PUBLISHED_FROM="$(npm view @revolut/revolut-x-api@"$VERSION" gitHead)"
+              if [ "$PUBLISHED_FROM" != "$(git rev-parse HEAD)" ]; then
+                echo "@revolut/revolut-x-api@$VERSION was published from commit $PUBLISHED_FROM, not this one" >&2
+                exit 1
+              fi
               echo "@revolut/revolut-x-api@$VERSION already published, skipping"
             else
               exit 1
@@ -132,6 +143,11 @@ jobs:
           cd cli
           npm publish --provenance --access public 2>&1 || {
             if npm view @revolut/revolut-x-cli@"$VERSION" version >/dev/null 2>&1; then
+              PUBLISHED_FROM="$(npm view @revolut/revolut-x-cli@"$VERSION" gitHead)"
+              if [ "$PUBLISHED_FROM" != "$(git rev-parse HEAD)" ]; then
+                echo "@revolut/revolut-x-cli@$VERSION was published from commit $PUBLISHED_FROM, not this one" >&2
+                exit 1
+              fi
               echo "@revolut/revolut-x-cli@$VERSION already published, skipping"
             else
               exit 1

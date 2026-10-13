@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Decimal } from "decimal.js";
 import {
   optimizeGridParams,
@@ -7,6 +7,11 @@ import {
   type BacktestCandle,
 } from "../../src/shared/backtest/engine.js";
 import type { GridOrderConstraints } from "../../src/engine/grid-plan.js";
+
+vi.mock("../../src/db/store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/db/store.js")>()),
+  loadConnections: vi.fn(() => []),
+}));
 
 const CANDLES: BacktestCandle[] = [
   {
@@ -69,7 +74,7 @@ describe("backtest grid validation", () => {
         [4, 200],
         [new Decimal("0.1")],
         new Decimal("100"),
-        1,
+        { days: 1, intervalDays: 1 / 24 },
         true,
         false,
         0,
@@ -88,7 +93,7 @@ describe("backtest grid validation", () => {
         [4],
         [new Decimal("0.05"), new Decimal("0.2")],
         new Decimal("1000"),
-        1,
+        { days: 1, intervalDays: 1 / 24 },
         false,
         false,
         85,

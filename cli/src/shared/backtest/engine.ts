@@ -11,6 +11,7 @@ import {
   trailUpTriggerFromBounds,
 } from "../../engine/grid-math.js";
 import {
+  ceilToStep,
   createGridPlan,
   createGridPrices,
   floorToStep,
@@ -61,8 +62,50 @@ interface BacktestResult {
 }
 
 const MAX_BACKTEST_LEVEL_EVALUATIONS = 30_000_000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MIN_ANNUALIZED_DAYS = 365;
+
+export interface CandleCoverage {
+  days: number;
+  intervalDays: number;
+}
+
+export function candleCoverage(
+  candles: ReadonlyArray<{ start: number }>,
+  intervalMs: number,
+): CandleCoverage {
+  const intervalDays = intervalMs / DAY_MS;
+  if (candles.length === 0) return { days: 0, intervalDays };
+  const first = candles[0].start;
+  const last = candles[candles.length - 1].start;
+  return { days: (last + intervalMs - first) / DAY_MS, intervalDays };
+}
+
+export function annualizedReturnPct(
+  returnPct: Decimal,
+  coverage: CandleCoverage,
+): Decimal | null {
+  if (coverage.days <= 0) return null;
+  if (coverage.days + coverage.intervalDays < MIN_ANNUALIZED_DAYS) return null;
+  const growth = returnPct.div(100).plus(1);
+  if (growth.lte(0)) return new Decimal(-100);
+  return growth.pow(new Decimal(365).div(coverage.days)).minus(1).times(100);
+}
+
+export function returnOverDrawdown(result: {
+  returnPct: Decimal;
+  maxDrawdown: Decimal;
+}): Decimal {
+  const fraction = result.returnPct.div(100);
+  return result.maxDrawdown.gt(0) ? fraction.div(result.maxDrawdown) : fraction;
+}
+
 const PASSTHROUGH_RATE_LIMITER: GridExchangeRateLimiter = {
-  place: (operation) => operation(),
+  place: (operation, refuse) => {
+    const refusal = refuse?.();
+    return refusal ? Promise.reject(refusal) : operation();
+  },
   cancel: (operation) => operation(),
   query: (operation) => operation(),
 };
@@ -117,7 +160,7 @@ interface OptimizationResult {
   totalTrades: number;
   maxDrawdown: Decimal;
   profitPerTrade: Decimal;
-  calmarApprox: Decimal;
+  calmarApprox: Decimal | null;
 }
 
 function createEmptyResult(): BacktestResult {
@@ -236,17 +279,19 @@ function runBuyPass(
   investment: Decimal,
   tickFills: BacktestFill[],
   baseStep: Decimal,
+  quoteStep: Decimal,
 ): Decimal {
   for (const level of levels) {
     if (level.buyCount > 0 && low.lte(level.price)) {
       const baseBought = floorToStep(quotePerLevel.div(level.price), baseStep);
+      const cost = ceilToStep(baseBought.times(level.price), quoteStep);
 
       for (let i = 0; i < level.buyCount; i++) {
         level.positions.push({
           baseHeld: baseBought,
-          costBasis: quotePerLevel,
+          costBasis: cost,
         });
-        quoteBalance = quoteBalance.minus(quotePerLevel);
+        quoteBalance = quoteBalance.minus(cost);
         result.totalBuys += 1;
         result.totalTrades += 1;
 
@@ -258,7 +303,7 @@ function runBuyPass(
           : totalPnl.div(investment).times(100);
 
         result.tradeLog.push(
-          `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${quotePerLevel} | ` +
+          `#${result.totalTrades}  BUY  @ ${level.price} | qty ${baseBought} | -${cost} | ` +
             `realized=${fmtPnl(result.realizedPnl)} | total=${fmtPnl(totalPnl)} | ROI=${fmtPnl(roiPct)}%`,
         );
         result.trades.push({
@@ -267,7 +312,7 @@ function runBuyPass(
           trigger: "grid",
           price: level.price,
           quantity: baseBought,
-          quoteValue: quotePerLevel,
+          quoteValue: cost,
           realizedPnl: result.realizedPnl,
           roiPct,
         });
@@ -275,7 +320,7 @@ function runBuyPass(
           side: "buy",
           price: level.price,
           quantity: baseBought,
-          quoteValue: quotePerLevel,
+          quoteValue: cost,
           trigger: "grid",
         });
       }
@@ -389,6 +434,7 @@ function simulateCandle(
       investment,
       tickFills,
       baseStep,
+      quoteStep,
     );
   } else {
     quoteBalance = runBuyPass(
@@ -400,6 +446,7 @@ function simulateCandle(
       investment,
       tickFills,
       baseStep,
+      quoteStep,
     );
     quoteBalance = runSellPass(
       levels,
@@ -516,7 +563,7 @@ export function runBacktest(
           result.totalSells++;
           result.totalTrades++;
           result.tradeLog.push(
-            `#${result.totalTrades}  STOP-LOSS SELL @ ${fixedSlPrice.toFixed(2)} | qty ${baseHeld.toFixed(5)} | ` +
+            `#${result.totalTrades}  STOP-LOSS SELL @ ${fixedSlPrice.toFixed()} | qty ${baseHeld.toFixed(5)} | ` +
               `+${quoteReceived.toFixed(2)} | profit=${profit.toFixed(2)}`,
           );
           {
@@ -646,7 +693,7 @@ export function runBacktest(
 
         result.trailingUpShifts++;
         result.tradeLog.push(
-          `TRAILING UP: Grid rebuilt around ${rebuildPrice.toFixed(2)} (shift #${result.trailingUpShifts})`,
+          `TRAILING UP: Grid rebuilt around ${rebuildPrice.toFixed()} (shift #${result.trailingUpShifts})`,
         );
       }
     }
@@ -683,7 +730,7 @@ export function optimizeGridParams(
   gridLevelsRange?: number[],
   rangePctRange?: Decimal[],
   investment: Decimal = new Decimal(1000),
-  days: number = 30,
+  coverage: CandleCoverage = { days: 0, intervalDays: 0 },
   split = false,
   trailingUp = false,
   stopLossPrice = 0,
@@ -768,10 +815,13 @@ export function optimizeGridParams(
       const profitPerTrade =
         bt.totalSells > 0 ? bt.realizedPnl.div(bt.totalSells) : new Decimal(0);
 
-      const annualizedReturn = returnPct.div(100).times(365).div(days);
-      const calmar = bt.maxDrawdown.gt(0)
-        ? annualizedReturn.div(bt.maxDrawdown)
-        : annualizedReturn;
+      const annualized = annualizedReturnPct(returnPct, coverage);
+      const calmar =
+        annualized === null
+          ? null
+          : bt.maxDrawdown.gt(0)
+            ? annualized.div(100).div(bt.maxDrawdown)
+            : annualized.div(100);
 
       results.push({
         gridLevels: levels,
@@ -1178,7 +1228,7 @@ export async function runBacktestBot(
 
     if (shiftDelta > 0) {
       result.tradeLog.push(
-        `TRAILING UP: Grid rebuilt around ${candle.close.toFixed(2)} (shift #${newShiftCount})`,
+        `TRAILING UP: Grid rebuilt around ${candle.close.toFixed()} (shift #${newShiftCount})`,
       );
     }
 

@@ -21,11 +21,11 @@ Symbols use `BASE-QUOTE` format with a dash: `BTC-USD`, `ETH-EUR`, `SOL-USD`. Us
 ## Currencies & Pairs
 
 ```bash
-revx market currencies                 # All currencies (symbol, name, type, scale, status)
+revx market currencies                 # All currencies (code, symbol, name, type, scale, status)
 revx market currencies fiat            # Fiat currencies only
 revx market currencies crypto          # Crypto currencies only
-revx market currencies --filter BTC,ETH  # Filter by specific symbols
-revx market pairs                      # All pairs (base, quote, min/max size, status)
+revx market currencies --filter BTC,USD  # Filter by currency codes
+revx market pairs                      # All pairs (base, quote, size and price steps, min/max size, status)
 revx market pairs --filter BTC-USD,ETH-USD  # Filter by specific pairs
 ```
 
@@ -54,9 +54,9 @@ revx market candles ETH-USD --interval 4h --since 30d
 
 **Intervals:** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `2d`, `4d`, `1w`, `2w`, `4w` (or raw minutes)
 
-**Time formats:** Relative (`7d`, `1w`, `4h`, `30m`, `5m`, `today`, `yesterday`), ISO date (`2025-04-14`), Unix epoch ms
+**Time formats:** Relative (`7d`, `1w`, `4h`, `30m`, `5m`, `today`, `yesterday`), a local date (`2025-04-14`) or date-time (`2025-04-14T09:30`), an ISO date-time with a zone (`2025-04-14T09:30:00Z`), or Unix epoch milliseconds. Impossible dates such as `2025-02-30` are refused, and so is a start after the end.
 
-**Default behavior:** When `--since` and `--until` are omitted, fetches the maximum available history for the given interval (up to 50,000 candles).
+**Default behavior:** Without `--since`, shows the last 100 candles before `--until` or now. A range is capped at 50,000 candles, keeping its end.
 
 ---
 

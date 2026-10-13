@@ -65,7 +65,7 @@ HOW TO SET UP
 Step 1 — Install Claude Code (if not already installed):
   https://claude.ai/code
 
-Step 2 — Install the Revolut X trading plugin (requires Node.js 18+):
+Step 2 — Install the Revolut X trading plugin (requires Node.js 20+):
   claude plugin marketplace add https://github.com/revolut-engineering/revolut-x-api.git
   claude plugin install revolut-x@revolut-x-plugins
 

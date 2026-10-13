@@ -1,19 +1,22 @@
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  unlinkSync,
-} from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { getConfigDir, ensureConfigDir } from "@revolut/revolut-x-api";
+import { Decimal } from "decimal.js";
+import {
+  getConfigDir,
+  ensureConfigDir,
+  isMissing,
+  redactHome,
+  writeFileAtomic,
+} from "@revolut/revolut-x-api";
 import type { StatusMessageRefs } from "./store.js";
+import { unreadableFileAdvice } from "../util/file-advice.js";
 
 export interface GridLevelPosition {
   id: string;
   baseHeld: string;
   fillCost: string;
   sellOrderId: string | null;
+  slotQuote?: string;
   sellBaseSize?: string;
   sellClientOrderId?: string;
 }
@@ -27,6 +30,7 @@ export interface GridLevelState {
   pendingBuyClientOrderIds?: string[];
   pendingBuyQuoteSizes?: Record<string, string>;
   buyOrderQuoteSizes?: Record<string, string>;
+  buyClientOrderIds?: Record<string, string>;
 }
 
 export interface GridTradeEntry {
@@ -37,6 +41,15 @@ export interface GridTradeEntry {
   profit?: string;
   fee?: string;
   orderId: string;
+}
+
+export type GridHaltReason = "stop-loss" | "rejected-orders";
+
+export interface GridHalt {
+  reason: GridHaltReason;
+  triggerPrice?: string;
+  clientOrderId?: string;
+  orderId?: string;
 }
 
 export interface GridState {
@@ -60,12 +73,14 @@ export interface GridState {
   splitOrderId?: string;
   splitClientOrderId?: string;
   splitOrderQuoteSize?: string;
+  missingSince?: Record<string, string>;
   splitRemainingQuote?: string;
   splitAccumulatedBase?: string;
   splitAccumulatedAmount?: string;
   splitAccumulatedFee?: string;
   splitAccountingApplied?: boolean;
-  stopLossClientOrderId?: string;
+  halt?: GridHalt;
+  stopped?: boolean;
   shiftCount?: number;
   gridPrice: string;
   quotePrecision: string;
@@ -85,12 +100,19 @@ export interface GridState {
 const STATE_PREFIX = "grid_state_";
 const MAX_TRADE_LOG = 500;
 
-function stateFileName(pair: string): string {
-  return `${STATE_PREFIX}${pair.replace(/[^a-zA-Z0-9-]/g, "_")}.json`;
+function gridFileStem(pair: string): string {
+  return join(
+    getConfigDir(),
+    `${STATE_PREFIX}${pair.replace(/[^a-zA-Z0-9-]/g, "_")}`,
+  );
 }
 
 function stateFilePath(pair: string): string {
-  return join(getConfigDir(), stateFileName(pair));
+  return `${gridFileStem(pair)}.json`;
+}
+
+export function gridLockFilePath(pair: string): string {
+  return `${gridFileStem(pair)}.lock`;
 }
 
 // Migrate saved state from the old single-slot format (buyOrderId / sellOrderId /
@@ -154,34 +176,155 @@ export function saveGridState(state: GridState): void {
   if (state.tradeLog.length > MAX_TRADE_LOG) {
     state.tradeLog = state.tradeLog.slice(-MAX_TRADE_LOG);
   }
-  const path = stateFilePath(state.pair);
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
-  renameSync(tmp, path);
+  writeFileAtomic(stateFilePath(state.pair), JSON.stringify(state, null, 2));
+}
+
+function adoptLegacyStopLoss(raw: Record<string, unknown>): void {
+  if (!("stopLossClientOrderId" in raw)) return;
+  const clientOrderId = raw.stopLossClientOrderId;
+  delete raw.stopLossClientOrderId;
+  if (raw.halt || typeof clientOrderId !== "string" || !clientOrderId) return;
+  raw.halt = { reason: "stop-loss", clientOrderId };
+}
+
+function assignLeftoverSlots(state: GridState): void {
+  for (const level of state.levels) {
+    const unslotted = level.positions.filter(
+      (position) => position.slotQuote === undefined,
+    );
+    if (unslotted.length === 0) continue;
+    const perLevel = new Decimal(state.quotePerLevel);
+    const leftovers = [
+      ...level.buyOrderIds.map((id) => level.buyOrderQuoteSizes?.[id]),
+      ...(level.pendingBuyClientOrderIds ?? []).map(
+        (id) => level.pendingBuyQuoteSizes?.[id],
+      ),
+    ]
+      .filter((size): size is string => size !== undefined)
+      .map((size) => new Decimal(size))
+      .filter((size) => size.lt(perLevel));
+    const costed: Array<{ position: GridLevelPosition; cost: Decimal }> = [];
+    for (const position of unslotted) {
+      const cost = positiveDecimal(position.fillCost);
+      if (cost) costed.push({ position, cost });
+      else position.slotQuote = perLevel.toString();
+    }
+    costed.sort((a, b) => b.cost.comparedTo(a.cost));
+    const held = [...costed.map((entry) => entry.cost), ...leftovers].reduce(
+      (sum, amount) => sum.plus(amount),
+      new Decimal(0),
+    );
+    if (costed.length > 0 && held.lte(perLevel)) {
+      const [largest, ...others] = costed;
+      const othersCost = others.reduce(
+        (sum, entry) => sum.plus(entry.cost),
+        new Decimal(0),
+      );
+      const leftoverTotal = leftovers.reduce(
+        (sum, amount) => sum.plus(amount),
+        new Decimal(0),
+      );
+      largest.position.slotQuote = perLevel
+        .minus(othersCost)
+        .minus(leftoverTotal)
+        .toString();
+      for (const { position, cost } of others) {
+        position.slotQuote = cost.toString();
+      }
+      continue;
+    }
+    leftovers.sort((a, b) => b.comparedTo(a));
+    for (const { position, cost } of costed) {
+      const index = leftovers.findIndex((leftover) =>
+        cost.plus(leftover).lte(perLevel),
+      );
+      const leftover =
+        index >= 0 ? leftovers.splice(index, 1)[0] : new Decimal(0);
+      position.slotQuote = perLevel.minus(leftover).toString();
+    }
+  }
+}
+
+function positiveDecimal(value: string | undefined): Decimal | null {
+  try {
+    const amount = new Decimal(value ?? "");
+    return amount.gt(0) ? amount : null;
+  } catch {
+    return null;
+  }
+}
+
+export class GridStateDamagedError extends Error {
+  constructor(
+    readonly path: string,
+    readonly reason: string,
+  ) {
+    super(`The saved grid file ${redactHome(path)} is damaged (${reason})`);
+    this.name = "GridStateDamagedError";
+  }
+}
+
+export class GridStateUnreadableError extends Error {
+  constructor(
+    readonly path: string,
+    readonly code: string,
+  ) {
+    super(
+      code === "EISDIR"
+        ? `The saved grid file ${redactHome(path)} is a folder, not a file. Nothing was started. Move it aside, then run again.`
+        : `The saved grid file ${redactHome(path)} can't be read (${code}). Nothing was started. ${unreadableFileAdvice(path, code)} Then run again.`,
+    );
+    this.name = "GridStateUnreadableError";
+  }
 }
 
 export function loadGridState(pair: string): GridState | null {
   const path = stateFilePath(pair);
-  if (!existsSync(path)) return null;
+  if (isMissing(path)) return null;
+  let text: string;
   try {
-    const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
-    if (data && typeof data === "object" && "id" in data) {
-      const raw = data as Record<string, unknown>;
-      // Legacy field name migration
-      if (!raw.quotePerLevel && raw.usdPerLevel) {
-        raw.quotePerLevel = raw.usdPerLevel;
-      }
-      const state = raw as unknown as GridState;
-      if (state.stats && state.stats.totalFees == null) {
-        state.stats.totalFees = "0";
-      }
-      migrateStateIfNeeded(raw);
-      return state;
-    }
-    return null;
-  } catch {
-    return null;
+    text = readFileSync(path, "utf-8");
+  } catch (err) {
+    throw new GridStateUnreadableError(
+      path,
+      (err as NodeJS.ErrnoException).code ?? "read error",
+    );
   }
+  try {
+    const data: unknown = JSON.parse(text);
+    if (
+      !data ||
+      typeof data !== "object" ||
+      !("id" in data) ||
+      !Array.isArray((data as Record<string, unknown>).levels)
+    ) {
+      throw new Error("it is not a grid save file");
+    }
+    const raw = data as Record<string, unknown>;
+    if (!raw.quotePerLevel && raw.usdPerLevel) {
+      raw.quotePerLevel = raw.usdPerLevel;
+    }
+    const state = raw as unknown as GridState;
+    if (state.stats && state.stats.totalFees == null) {
+      state.stats.totalFees = "0";
+    }
+    migrateStateIfNeeded(raw);
+    adoptLegacyStopLoss(raw);
+    assignLeftoverSlots(state);
+    return state;
+  } catch (err) {
+    throw new GridStateDamagedError(
+      path,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+export function setAsideGridState(pair: string): string {
+  const path = stateFilePath(pair);
+  const target = `${path}.damaged-${Date.now()}`;
+  renameSync(path, target);
+  return target;
 }
 
 export function deleteGridState(pair: string): boolean {

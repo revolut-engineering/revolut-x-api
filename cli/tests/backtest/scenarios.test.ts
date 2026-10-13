@@ -59,7 +59,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
 
     expect(r.totalBuys).toBe(3);
     expect(r.totalSells).toBe(3);
-    expect(r.realizedPnl.toFixed(2)).toBe("18.18");
+    expect(r.realizedPnl.toFixed(2)).toBe("20.48");
     expect(r.stopLossTriggered).toBe(false);
     expect(r.trailingUpShifts).toBe(0);
   });
@@ -91,7 +91,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
 
     expect(r.totalBuys).toBe(3); // 1 (C1) + 2 (C3)
     expect(r.totalSells).toBe(4); // 2 (C2) + 2 (C4)
-    expect(r.realizedPnl.toFixed(2)).toBe("10.24");
+    expect(r.realizedPnl.toFixed(2)).toBe("11.35");
     expect(r.tradeLog.some((l) => l.startsWith("SPLIT:"))).toBe(true);
   });
 
@@ -106,7 +106,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
     expect(r.stopLossTriggered).toBe(true);
     expect(r.totalSells).toBe(3);
     expect(r.finalBase.isZero()).toBe(true);
-    expect(r.realizedPnl.toFixed(2)).toBe("-156.98");
+    expect(r.realizedPnl.toFixed(2)).toBe("-154.68");
     expect(r.tradeLog.some((l) => l.includes("STOP-LOSS"))).toBe(true);
     expect(r.trailingUpShifts).toBe(0);
   });
@@ -140,7 +140,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
 
     expect(r.totalBuys).toBe(7);
     expect(r.totalSells).toBe(4);
-    expect(r.realizedPnl.toFixed(2)).toBe("16.86");
+    expect(r.realizedPnl.toFixed(2)).toBe("17.23");
     expect(r.trailingUpShifts).toBe(1);
     expect(r.stopLossTriggered).toBe(false);
     expect(r.tradeLog.some((l) => l.includes("TRAILING UP:"))).toBe(true);
@@ -158,7 +158,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
     expect(r.tradeLog.some((l) => l.startsWith("SPLIT:"))).toBe(true);
     expect(r.stopLossTriggered).toBe(true);
     expect(r.finalBase.isZero()).toBe(true);
-    expect(r.realizedPnl.toFixed(2)).toBe("-163.84");
+    expect(r.realizedPnl.toFixed(2)).toBe("-161.81");
     expect(r.tradeLog.some((l) => l.includes("STOP-LOSS"))).toBe(true);
     expect(r.trailingUpShifts).toBe(0);
     expect(r.totalSells).toBeGreaterThan(2);
@@ -180,7 +180,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
     expect(r.tradeLog.some((l) => l.startsWith("SPLIT:"))).toBe(true);
     expect(r.trailingUpShifts).toBe(1);
     expect(r.stopLossTriggered).toBe(false);
-    expect(r.realizedPnl.toFixed(2)).toBe("16.86");
+    expect(r.realizedPnl.toFixed(2)).toBe("17.23");
     expect(r.tradeLog.some((l) => l.includes("TRAILING UP:"))).toBe(true);
     expect(r.totalBuys).toBeGreaterThan(0);
   });
@@ -203,7 +203,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
     expect(r.trailingUpShifts).toBe(1);
     expect(r.stopLossTriggered).toBe(true);
     expect(r.finalBase.isZero()).toBe(true);
-    expect(r.realizedPnl.toFixed(2)).toBe("-276.44");
+    expect(r.realizedPnl.toFixed(2)).toBe("-273.73");
     expect(r.tradeLog.some((l) => l.includes("TRAILING UP:"))).toBe(true);
     expect(r.tradeLog.some((l) => l.includes("STOP-LOSS"))).toBe(true);
   });
@@ -226,7 +226,7 @@ describe("Grid bot scenarios (runBacktest)", () => {
     expect(r.trailingUpShifts).toBe(1);
     expect(r.stopLossTriggered).toBe(true);
     expect(r.finalBase.isZero()).toBe(true);
-    expect(r.realizedPnl.toFixed(2)).toBe("-268.43");
+    expect(r.realizedPnl.toFixed(2)).toBe("-265.29");
     expect(r.tradeLog.some((l) => l.includes("TRAILING UP:"))).toBe(true);
     expect(r.tradeLog.some((l) => l.includes("STOP-LOSS"))).toBe(true);
   });

@@ -1,17 +1,14 @@
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  statSync,
-} from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
 import {
   getConfigDir,
   ensureConfigDir,
+  isMissing,
+  redactHome,
   setPermissions,
+  writeFileAtomic,
 } from "@revolut/revolut-x-api";
 
 export interface TelegramConnection {
@@ -32,13 +29,6 @@ export interface StatusMessageRef {
 
 export type StatusMessageRefs = Record<string, StatusMessageRef>;
 
-interface Event {
-  id: string;
-  ts: string;
-  category: string;
-  details: Record<string, unknown>;
-}
-
 function filePath(filename: string): string {
   return join(getConfigDir(), filename);
 }
@@ -46,7 +36,9 @@ function filePath(filename: string): string {
 function healPermissions(path: string): void {
   if (platform() === "win32") return;
   try {
-    const mode = statSync(path).mode & 0o777;
+    const stats = statSync(path);
+    if (!stats.isFile()) return;
+    const mode = stats.mode & 0o777;
     if ((mode & 0o077) !== 0) {
       setPermissions(path, 0o600);
     }
@@ -55,26 +47,39 @@ function healPermissions(path: string): void {
 
 function loadArray<T>(filename: string): T[] {
   const path = filePath(filename);
-  if (!existsSync(path)) return [];
+  if (isMissing(path)) return [];
   healPermissions(path);
+  let text: string;
   try {
-    const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
-    return Array.isArray(data) ? (data as T[]) : [];
-  } catch {
-    return [];
+    text = readFileSync(path, "utf-8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? "read error";
+    throw new Error(
+      code === "EISDIR"
+        ? `${redactHome(path)} is a folder, not a file. Move it aside.`
+        : `${redactHome(path)} can't be read (${code}). Make sure the file and its folder belong to you and you can read them.`,
+      { cause: err },
+    );
   }
+  const json = text.replace(/^\uFEFF/, "");
+  if (json.trim() === "") return [];
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    data = null;
+  }
+  if (!Array.isArray(data)) {
+    throw new Error(
+      `${redactHome(path)} is damaged, it is not a JSON list. Fix it or move it aside, then add the connections again.`,
+    );
+  }
+  return data as T[];
 }
 
 function saveArray<T>(filename: string, data: T[]): void {
   ensureConfigDir();
-  const path = filePath(filename);
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(data, null, 2), {
-    mode: 0o600,
-    encoding: "utf-8",
-  });
-  renameSync(tmp, path);
-  setPermissions(path, 0o600);
+  writeFileAtomic(filePath(filename), JSON.stringify(data, null, 2));
 }
 
 const TELEGRAM_FILE = "telegram.json";
@@ -135,20 +140,4 @@ export function deleteConnection(id: string): boolean {
   connections.splice(idx, 1);
   saveConnections(connections);
   return true;
-}
-
-const EVENTS_FILE = "events.json";
-
-export function loadEvents(opts?: {
-  category?: string;
-  limit?: number;
-}): Event[] {
-  let events = loadArray<Event>(EVENTS_FILE);
-  if (opts?.category) {
-    events = events.filter((e) => e.category === opts.category);
-  }
-  if (opts?.limit) {
-    events = events.slice(-opts.limit);
-  }
-  return events;
 }

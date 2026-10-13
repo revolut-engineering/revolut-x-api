@@ -1,19 +1,5 @@
 import { Decimal } from "decimal.js";
-
-function decimalSqrt(value: Decimal, precision: number = 20): Decimal {
-  if (value.isNegative()) {
-    throw new Error("Cannot compute sqrt of negative number");
-  }
-  if (value.isZero()) {
-    return new Decimal(0);
-  }
-
-  let x = value;
-  for (let i = 0; i < precision; i++) {
-    x = x.plus(value.div(x)).div(2);
-  }
-  return x;
-}
+import type { OrderBookLevel } from "@revolut/revolut-x-api";
 
 export function computeEma(values: Decimal[], period: number): Decimal | null {
   if (values.length < period || period < 1) {
@@ -82,7 +68,7 @@ export function computeRsi(
   const rsi = new Decimal(100).minus(
     new Decimal(100).div(new Decimal(1).plus(rs)),
   );
-  return rsi.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return rsi;
 }
 
 export function computeMacd(
@@ -150,9 +136,9 @@ export function computeMacd(
   const histogram = macdLine.minus(signalEma);
 
   return {
-    macd: macdLine.toDecimalPlaces(4, Decimal.ROUND_HALF_UP),
-    signal: signalEma.toDecimalPlaces(4, Decimal.ROUND_HALF_UP),
-    histogram: histogram.toDecimalPlaces(4, Decimal.ROUND_HALF_UP),
+    macd: macdLine,
+    signal: signalEma,
+    histogram,
   };
 }
 
@@ -177,15 +163,15 @@ export function computeBollinger(
     variance = variance.plus(x.minus(middle).pow(2));
   }
   variance = variance.div(period);
-  const stdDev = decimalSqrt(variance);
+  const stdDev = variance.sqrt();
 
   const upper = middle.plus(stdMult.times(stdDev));
   const lower = middle.minus(stdMult.times(stdDev));
 
   return {
-    upper: upper.toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
-    middle: middle.toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
-    lower: lower.toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+    upper,
+    middle,
+    lower,
   };
 }
 
@@ -232,7 +218,7 @@ export function computeAtr(
       .div(period);
   }
 
-  return atr.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return atr;
 }
 
 export function computeVolumeRatio(
@@ -255,29 +241,26 @@ export function computeVolumeRatio(
   }
 
   const current = volumes[volumes.length - 1];
-  return current.div(avg).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return current.div(avg);
 }
 
 export function computeObi(
-  bids: Array<Record<string, unknown>>,
-  asks: Array<Record<string, unknown>>,
-): Decimal {
-  let bidVol = new Decimal(0);
-  for (const b of bids) {
-    bidVol = bidVol.plus(new Decimal(String(b.q ?? 0)));
-  }
-  let askVol = new Decimal(0);
-  for (const a of asks) {
-    askVol = askVol.plus(new Decimal(String(a.q ?? 0)));
-  }
+  bids: readonly OrderBookLevel[],
+  asks: readonly OrderBookLevel[],
+): Decimal | null {
+  const bidVol = bids.reduce(
+    (sum, level) => sum.plus(level.quantity),
+    new Decimal(0),
+  );
+  const askVol = asks.reduce(
+    (sum, level) => sum.plus(level.quantity),
+    new Decimal(0),
+  );
   const total = bidVol.plus(askVol);
   if (total.isZero()) {
-    return new Decimal(0);
+    return null;
   }
-  return bidVol
-    .minus(askVol)
-    .div(total)
-    .toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+  return bidVol.minus(askVol).div(total);
 }
 
 export function computeSpreadPct(bid: Decimal, ask: Decimal): Decimal {
@@ -285,11 +268,7 @@ export function computeSpreadPct(bid: Decimal, ask: Decimal): Decimal {
   if (mid.isZero()) {
     return new Decimal(0);
   }
-  return ask
-    .minus(bid)
-    .div(mid)
-    .times(100)
-    .toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+  return ask.minus(bid).div(mid).times(100);
 }
 
 export function computePriceChangePct(
@@ -299,9 +278,5 @@ export function computePriceChangePct(
   if (previous.isZero()) {
     return new Decimal(0);
   }
-  return current
-    .minus(previous)
-    .div(previous)
-    .times(100)
-    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return current.minus(previous).div(previous).times(100);
 }

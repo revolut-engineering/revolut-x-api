@@ -14,7 +14,7 @@ export const SETUP_GUIDE =
 let _client: RevolutXClient | null = null;
 
 export function getRevolutXClient(): RevolutXClient {
-  if (_client === null) {
+  if (_client === null || !_client.isAuthenticated) {
     _client = new RevolutXClient({
       generatedBy: "MCP",
       enforceKeyPermissions: true,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  formatLocalDateTime,
   isJsonOutput,
   printJson,
   printTable,
@@ -87,5 +88,11 @@ describe("printKeyValue", () => {
       ["Price", "95000"],
     ]);
     expect(logSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("formatLocalDateTime", () => {
+  it("shows a dash for a date it can't read", () => {
+    expect(formatLocalDateTime("not a date")).toBe("-");
   });
 });

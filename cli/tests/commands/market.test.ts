@@ -70,6 +70,8 @@ const samplePairs = {
   "BTC/USD": {
     base: "BTC",
     quote: "USD",
+    base_step: "0.00000001",
+    quote_step: "0.01",
     min_order_size: "0.0001",
     max_order_size: "10",
     slippage: "0.01",
@@ -143,6 +145,51 @@ describe("market currencies", () => {
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  const fiatWithSigns = {
+    USD: {
+      symbol: "$",
+      name: "US Dollar",
+      asset_type: "fiat",
+      scale: 2,
+      status: "active",
+    },
+    GBP: {
+      symbol: "£",
+      name: "British Pound",
+      asset_type: "fiat",
+      scale: 2,
+      status: "active",
+    },
+  };
+
+  it("shows the currency code even when the symbol is a sign", async () => {
+    mockGetCurrencies.mockResolvedValue(fiatWithSigns);
+
+    await program.parseAsync(["node", "revx", "market", "currencies", "fiat"]);
+
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("USD");
+    expect(output).toContain("GBP");
+  });
+
+  it("filters by currency code, in any case", async () => {
+    mockGetCurrencies.mockResolvedValue(fiatWithSigns);
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "currencies",
+      "--filter",
+      "usd",
+      "--json",
+    ]);
+
+    expect(JSON.parse(logSpy.mock.calls.flat().join(" "))).toEqual([
+      { code: "USD", ...fiatWithSigns.USD },
+    ]);
   });
 
   it("lists all currencies", async () => {
@@ -253,6 +300,16 @@ describe("market pairs", () => {
     const output = logSpy.mock.calls.flat().join(" ");
     expect(output).toContain("BTC");
     expect(output).toContain("USD");
+  });
+
+  it("shows the size and price steps", async () => {
+    await program.parseAsync(["node", "revx", "market", "pairs"]);
+
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Size Step");
+    expect(output).toContain("Price Step");
+    expect(output).toContain("0.00000001");
+    expect(output).toContain("0.01");
   });
 
   it("outputs JSON when --json is set", async () => {
@@ -408,18 +465,164 @@ describe("market candles", () => {
     exitSpy.mockRestore();
   });
 
-  it("trims range when no start date provided (more than 50,000 candles)", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const HOUR = 60 * 60 * 1000;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reads the last 100 candles when no --since is given", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Date.now();
+
     await program.parseAsync(["node", "revx", "market", "candles", "BTC-USD"]);
-    expect(mockGetCandles).toHaveBeenCalledWith(
+
+    expect(mockGetCandles).toHaveBeenCalledWith("BTC-USD", {
+      interval: 60,
+      startDate: now - 100 * HOUR,
+      endDate: now,
+    });
+  });
+
+  it("ends a future --until at now", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Date.now();
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "candles",
       "BTC-USD",
-      expect.objectContaining({
-        interval: 60,
-        startDate: expect.any(Number),
-        endDate: expect.any(Number),
-      }),
+      "--since",
+      "7d",
+      "--until",
+      String(now + 30 * 24 * HOUR),
+    ]);
+
+    expect(mockGetCandles).toHaveBeenCalledWith("BTC-USD", {
+      interval: 60,
+      startDate: now - 7 * 24 * HOUR,
+      endDate: now,
+    });
+  });
+
+  it("keeps exactly 50,000 candles without a note", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const until = Date.now() - HOUR;
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "candles",
+      "BTC-USD",
+      "--interval",
+      "1m",
+      "--since",
+      String(until - 50_000 * 60_000),
+      "--until",
+      String(until),
+    ]);
+
+    expect(mockGetCandles).toHaveBeenCalledWith("BTC-USD", {
+      interval: 1,
+      startDate: until - 50_000 * 60_000,
+      endDate: until,
+    });
+    expect(logSpy.mock.calls.flat().join(" ")).not.toContain("Only the last");
+  });
+
+  it("reads the 100 candles before --until when only --until is given", async () => {
+    const until = 1_780_000_000_000;
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "candles",
+      "BTC-USD",
+      "--until",
+      String(until),
+    ]);
+
+    expect(mockGetCandles).toHaveBeenCalledWith("BTC-USD", {
+      interval: 60,
+      startDate: until - 100 * HOUR,
+      endDate: until,
+    });
+  });
+
+  it("refuses a --since in the future", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "market",
+        "candles",
+        "BTC-USD",
+        "--since",
+        "2999-01-01",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "--since is in the future.",
     );
-    warnSpy.mockRestore();
+    expect(mockGetCandles).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("says on stderr when JSON output was capped", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const until = 1_780_000_000_000;
+
+    await program.parseAsync([
+      "node",
+      "revx",
+      "market",
+      "candles",
+      "BTC-USD",
+      "--interval",
+      "1m",
+      "--since",
+      String(until - 60 * 24 * HOUR),
+      "--until",
+      String(until),
+      "--json",
+    ]);
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "Only the last 50000 candles of that range are shown.",
+    );
+    expect(() => JSON.parse(logSpy.mock.calls.flat().join(" "))).not.toThrow();
+    errSpy.mockRestore();
+  });
+
+  it("refuses --since after --until", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "revx",
+        "market",
+        "candles",
+        "BTC-USD",
+        "--since",
+        "1d",
+        "--until",
+        "7d",
+      ]),
+    ).rejects.toThrow("process.exit");
+
+    expect(errSpy.mock.calls.flat().join(" ")).toContain(
+      "--since must be before --until.",
+    );
+    expect(mockGetCandles).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 
   it("fetches candles with default 1h interval (60 minutes)", async () => {
@@ -516,10 +719,9 @@ describe("market candles", () => {
     warnSpy.mockRestore();
   });
 
-  it("trims to last 50,000 candles when requested range is too large", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const now = Date.now();
-    const twoMonthsAgo = now - 60 * 24 * 60 * 60 * 1000;
+  it("keeps the end of a range longer than 50,000 candles and says so", async () => {
+    const until = 1_780_000_000_000;
+    const twoMonthsEarlier = until - 60 * 24 * HOUR;
 
     await program.parseAsync([
       "node",
@@ -530,11 +732,19 @@ describe("market candles", () => {
       "--interval",
       "1m",
       "--since",
-      String(twoMonthsAgo),
+      String(twoMonthsEarlier),
       "--until",
-      String(now),
+      String(until),
     ]);
-    warnSpy.mockRestore();
+
+    expect(mockGetCandles).toHaveBeenCalledWith("BTC-USD", {
+      interval: 1,
+      startDate: until - 50_000 * 60_000,
+      endDate: until,
+    });
+    expect(logSpy.mock.calls.flat().join(" ")).toContain(
+      "Only the last 50000 candles of that range are shown.",
+    );
   });
 });
 

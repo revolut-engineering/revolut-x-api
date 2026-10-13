@@ -1,11 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import { Decimal } from "decimal.js";
 import {
+  annualizedReturnPct,
+  candleCoverage,
   runBacktest,
   runBacktestBot,
   optimizeGridParams,
 } from "../../src/shared/backtest/engine.js";
+import { quotePerLevelFor } from "../../src/engine/grid-plan.js";
 import {
+  annualizedReturnPct as annualizedReturnPctMcp,
+  candleCoverage as candleCoverageMcp,
+  quotePerLevelFor as quotePerLevelForMcp,
   runBacktest as runBacktestMcp,
   optimizeGridParams as optimizeGridParamsMcp,
 } from "../../../mcp/src/shared/backtest/index.js";
@@ -136,8 +142,8 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
   // A.2: stop-loss fires on same candle
   //
   // C1 88k: 3 buys (L0, L1, L2); C2 80k: 80k ≤ SL=82k → SL fires.
-  // runBacktest counts 3 individual SL sells; runBacktestBot fires _triggerStopLoss
-  // which liquidates all positions as one aggregate order → bot.totalSells=1.
+  // runBacktest counts 3 individual SL sells; runBacktestBot runs the bot's
+  // liquidation, which sells all positions as one aggregate order → bot.totalSells=1.
   // The meaningful consistency check is that both engines flag stopLossTriggered on
   // the same candle and agree on pre-SL buy count.
   it("A.2: stop-loss: both engines trigger on same candle", async () => {
@@ -162,6 +168,10 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
     expect(bot.stopLossTriggered).toBe(true);
     expect(bot.totalBuys).toBe(bt.totalBuys);
     expect(bot.totalSells).toBeGreaterThan(0);
+    expect(bot.trades.some((trade) => trade.trigger === "stop-loss")).toBe(
+      true,
+    );
+    expect(bot.finalBase.isZero()).toBe(true);
   });
 
   // A.3: stop-loss does NOT fire when price stays above threshold
@@ -320,19 +330,16 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
   it("B.2: optimizeGridParams returns identical top result", () => {
     const ranges = [d("0.05"), d("0.08")];
     const levelsList = [6, 8];
-    const cliResults = optimizeGridParams(
-      candles,
-      levelsList,
-      ranges,
-      INVEST,
-      1,
-    );
+    const cliResults = optimizeGridParams(candles, levelsList, ranges, INVEST, {
+      days: 1,
+      intervalDays: 1 / 24,
+    });
     const mcpResults = optimizeGridParamsMcp(
       candles,
       levelsList,
       ranges,
       INVEST,
-      1,
+      { days: 1, intervalDays: 1 / 24 },
     );
 
     expect(cliResults.length).toBe(mcpResults.length);
@@ -409,6 +416,36 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
     expect(cli.tradeLog).toEqual(mcp.tradeLog);
   });
 
+  it("both wait with trailing up while the grid holds coins, then rebuild", () => {
+    // given
+    const reachesTriggerThenBuys = {
+      open: d(110_000),
+      high: d(110_000),
+      low: d(98_000),
+      close: d(98_500),
+    };
+    const sellsThenReachesTrigger = {
+      open: d(98_500),
+      high: d(110_000),
+      low: d(98_500),
+      close: d(110_000),
+    };
+    const held = [flat(100_000), reachesTriggerThenBuys];
+    const sold = [...held, sellsThenReachesTrigger];
+
+    // when
+    const results = [runBacktest, runBacktestMcp].flatMap((run) => [
+      run(held, LEVELS, RANGE, INVEST, false, true, 0),
+      run(sold, LEVELS, RANGE, INVEST, false, true, 0),
+    ]);
+
+    // then
+    expect(results.map((result) => result.trailingUpShifts)).toEqual([
+      0, 1, 0, 1,
+    ]);
+    expect(results[0].finalBase.gt(0)).toBe(true);
+  });
+
   it("keeps CLI and MCP large-jump rebuilds bounded and identical", () => {
     // given
     const quoteStep = new Decimal("0.00000001");
@@ -447,6 +484,7 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
       false,
       true,
       0,
+      undefined,
       baseStep,
       quoteStep,
     );
@@ -484,7 +522,10 @@ describe("C — runBacktest ↔ optimizeGridParams consistency", () => {
       flat(100_000),
       flat(93_000),
     ];
-    const results = optimizeGridParams(candles, [LEVELS], [RANGE], INVEST, 1);
+    const results = optimizeGridParams(candles, [LEVELS], [RANGE], INVEST, {
+      days: 1,
+      intervalDays: 1 / 24,
+    });
     expect(results).toHaveLength(1);
 
     const opt = results[0];
@@ -497,5 +538,399 @@ describe("C — runBacktest ↔ optimizeGridParams consistency", () => {
     expect(opt.realizedPnl.eq(bt.realizedPnl)).toBe(true);
     expect(opt.totalTrades).toBe(bt.totalTrades);
     expect(opt.totalReturn.eq(computedTotalReturn)).toBe(true);
+  });
+});
+
+describe("B — CLI ↔ MCP with real pair steps and limits", () => {
+  const candles = [
+    flat(100_000),
+    flat(98_500),
+    flat(101_000),
+    flat(103_000),
+    flat(100_000),
+    flat(97_000),
+    flat(102_000),
+  ];
+
+  for (const [baseStep, quoteStep] of [
+    ["0.00001", "0.05"],
+    ["0.001", "1"],
+    ["0.00001", "0.0001"],
+  ]) {
+    it(`gives identical results with a ${quoteStep} price step`, () => {
+      const cli = runBacktest(
+        candles,
+        LEVELS,
+        RANGE,
+        INVEST,
+        true,
+        false,
+        0,
+        undefined,
+        d(baseStep),
+        d(quoteStep),
+      );
+      const mcp = runBacktestMcp(
+        candles,
+        LEVELS,
+        RANGE,
+        INVEST,
+        true,
+        false,
+        0,
+        undefined,
+        d(baseStep),
+        d(quoteStep),
+      );
+
+      expect(cli.totalTrades).toBeGreaterThan(0);
+      expect(mcp.totalTrades).toBe(cli.totalTrades);
+      expect(mcp.realizedPnl.toString()).toBe(cli.realizedPnl.toString());
+      expect(mcp.finalBase.toString()).toBe(cli.finalBase.toString());
+      expect(mcp.finalQuote.toString()).toBe(cli.finalQuote.toString());
+    });
+  }
+
+  it("both log a stop-loss sale on a low-priced pair at its full price", () => {
+    const lowCandles = [flat(0.0015), flat(0.00143), flat(0.0013)];
+    const run = (engine: typeof runBacktest) =>
+      engine(
+        lowCandles,
+        LEVELS,
+        RANGE,
+        INVEST,
+        false,
+        false,
+        0.0014,
+        undefined,
+        d("0.01"),
+        d("0.0000001"),
+      ).tradeLog.find((entry) => entry.includes("STOP-LOSS SELL"));
+
+    const cli = run(runBacktest);
+    const mcp = run(runBacktestMcp as typeof runBacktest);
+
+    expect(cli).toContain("STOP-LOSS SELL @ 0.0014 |");
+    expect(mcp).toBe(cli);
+  });
+
+  it("both log a trailing-up rebuild on a low-priced pair at its full price", () => {
+    const rising = [flat(0.0015), flat(0.0016), flat(0.0018)];
+    const run = (engine: typeof runBacktest) =>
+      engine(
+        rising,
+        LEVELS,
+        RANGE,
+        INVEST,
+        false,
+        true,
+        0,
+        undefined,
+        d("0.01"),
+        d("0.0000001"),
+      ).tradeLog.find((entry) => entry.includes("TRAILING UP"));
+
+    const cli = run(runBacktest);
+    const mcp = run(runBacktestMcp as typeof runBacktest);
+
+    expect(cli).toMatch(/TRAILING UP: Grid rebuilt around 0\.001\d+ \(shift/);
+    expect(mcp).toBe(cli);
+  });
+
+  it("logs a bot-backtest trailing-up rebuild on a low-priced pair at its full price", async () => {
+    const rising = [
+      flat(0.0015),
+      flat(0.0018),
+      flat(0.0018),
+      flat(0.0018),
+      flat(0.0018),
+    ];
+
+    const bot = await runBacktestBot(
+      rising,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      true,
+      0,
+      undefined,
+      d("0.01"),
+      d("0.0000001"),
+    );
+
+    expect(
+      bot.tradeLog.find((entry) => entry.includes("TRAILING UP")),
+    ).toContain("Grid rebuilt around 0.0018 (shift");
+  });
+
+  it("both charge a simulated buy what its coins cost on a coarse size step", () => {
+    const cycling = [flat(2000), flat(1950), flat(1900), flat(2050)];
+    const run = (engine: typeof runBacktest) =>
+      engine(
+        cycling,
+        LEVELS,
+        RANGE,
+        INVEST,
+        false,
+        false,
+        0,
+        undefined,
+        d("0.01"),
+        d("0.01"),
+      );
+
+    const cli = run(runBacktest);
+    const mcp = run(runBacktestMcp as typeof runBacktest);
+
+    const buys = cli.trades.filter((trade) => trade.side === "buy");
+    expect(buys.length).toBeGreaterThan(1);
+    for (const buy of buys) {
+      expect(buy.quoteValue.toString()).toBe(
+        buy.quantity
+          .times(buy.price)
+          .div("0.01")
+          .ceil()
+          .times("0.01")
+          .toString(),
+      );
+    }
+    const spent = cli.trades
+      .filter((trade) => trade.side === "buy")
+      .reduce((sum, trade) => sum.plus(trade.quoteValue), d(0));
+    const received = cli.trades
+      .filter((trade) => trade.side === "sell")
+      .reduce((sum, trade) => sum.plus(trade.quoteValue), d(0));
+    expect(cli.finalQuote.toString()).toBe(
+      INVEST.minus(spent).plus(received).toString(),
+    );
+    expect(mcp.finalQuote.toString()).toBe(cli.finalQuote.toString());
+    expect(mcp.realizedPnl.toString()).toBe(cli.realizedPnl.toString());
+  });
+
+  it("all three charge the split buy its full amount, as the exchange does for a market buy", async () => {
+    const quiet = [flat(2000), flat(2000)];
+    const run = (engine: typeof runBacktest) =>
+      engine(
+        quiet,
+        LEVELS,
+        RANGE,
+        INVEST,
+        true,
+        false,
+        0,
+        undefined,
+        d("0.01"),
+        d("0.01"),
+      );
+    let botCash = d(0);
+
+    const cli = run(runBacktest);
+    const mcp = run(runBacktestMcp as typeof runBacktest);
+    await runBacktestBot(
+      quiet,
+      LEVELS,
+      RANGE,
+      INVEST,
+      true,
+      false,
+      0,
+      (event) => {
+        botCash = event.cash;
+      },
+      d("0.01"),
+      d("0.01"),
+    );
+
+    const quotePerLevel = INVEST.div(LEVELS).div("0.01").floor().times("0.01");
+    expect(cli.finalQuote.toString()).toBe(
+      INVEST.minus(quotePerLevel.times(3)).toString(),
+    );
+    expect(mcp.finalQuote.toString()).toBe(cli.finalQuote.toString());
+    expect(botCash.toString()).toBe(cli.finalQuote.toString());
+  });
+
+  it("charges a bot-backtest buy what its coins cost on a coarse size step", async () => {
+    const buys: Array<{
+      quantity: Decimal;
+      price: Decimal;
+      quoteValue: Decimal;
+    }> = [];
+    let lastCash = d(0);
+
+    await runBacktestBot(
+      [flat(2000), flat(1960), flat(1960)],
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      false,
+      0,
+      (event) => {
+        buys.push(...event.fills.filter((fill) => fill.side === "buy"));
+        lastCash = event.cash;
+      },
+      d("0.01"),
+      d("0.01"),
+    );
+
+    expect(buys.length).toBeGreaterThan(0);
+    for (const buy of buys) {
+      expect(buy.quoteValue.toString()).toBe(
+        buy.quantity
+          .times(buy.price)
+          .div("0.01")
+          .ceil()
+          .times("0.01")
+          .toString(),
+      );
+    }
+    expect(lastCash.toString()).toBe(
+      INVEST.minus(
+        buys.reduce((sum, buy) => sum.plus(buy.quoteValue), d(0)),
+      ).toString(),
+    );
+  });
+
+  it("both refuse a grid whose orders fall below the pair's minimum", () => {
+    const constraints = {
+      baseStep: d("0.00001"),
+      quoteStep: d("0.01"),
+      minBase: d("0.00001"),
+      maxBase: d("10"),
+      minQuote: d("500"),
+    };
+    const run = (engine: typeof runBacktest) => () =>
+      engine(
+        candles,
+        LEVELS,
+        RANGE,
+        INVEST,
+        true,
+        false,
+        0,
+        undefined,
+        d("0.00001"),
+        d("0.01"),
+        constraints,
+      );
+
+    expect(run(runBacktest)).toThrow(/below the minimum/);
+    expect(run(runBacktestMcp as typeof runBacktest)).toThrow(
+      /below the minimum/,
+    );
+  });
+
+  it("both stop an optimize sweep when the stop-loss sits inside one of its grids", () => {
+    const sweep = (engine: typeof optimizeGridParams) => () =>
+      engine(
+        candles,
+        [6],
+        [d("0.03"), d("0.2")],
+        INVEST,
+        3,
+        false,
+        false,
+        90_000,
+      );
+
+    expect(sweep(optimizeGridParams)).toThrow(/[Ss]top-loss/);
+    expect(sweep(optimizeGridParamsMcp as typeof optimizeGridParams)).toThrow(
+      /[Ss]top-loss/,
+    );
+  });
+});
+
+describe("annualized return", () => {
+  it.each([
+    [7, 1, null],
+    [357, 7, null],
+    [364, 1, "48.16"],
+    [364, 7, "48.16"],
+    [365, 1, "48.00"],
+    [730, 1, "21.66"],
+  ])(
+    "over %s days of candles of %s days each is %s for a 48%% return",
+    (days, intervalDays, expected) => {
+      // when
+      const coverage = { days, intervalDays };
+      const cli = annualizedReturnPct(new Decimal(48), coverage);
+      const mcp = annualizedReturnPctMcp(new Decimal(48), coverage);
+
+      // then
+      expect(cli?.toFixed(2) ?? null).toBe(expected);
+      expect(mcp?.toFixed(2) ?? null).toBe(expected);
+    },
+  );
+
+  it("never reports a loss beyond everything invested", () => {
+    const coverage = { days: 400, intervalDays: 1 };
+    expect(annualizedReturnPct(new Decimal(-150), coverage)?.toString()).toBe(
+      "-100",
+    );
+    expect(
+      annualizedReturnPctMcp(new Decimal(-150), coverage)?.toString(),
+    ).toBe("-100");
+  });
+
+  it("measures the days the candles cover, last candle included", () => {
+    // given
+    const day = 24 * 60 * 60 * 1000;
+    const candles = [0, 1, 2].map((index) => ({ start: index * day }));
+
+    // then
+    expect(candleCoverage(candles, day)).toEqual({ days: 3, intervalDays: 1 });
+    expect(candleCoverageMcp(candles, day)).toEqual({
+      days: 3,
+      intervalDays: 1,
+    });
+    expect(candleCoverage([], day)).toEqual({ days: 0, intervalDays: 1 });
+  });
+});
+
+describe("quote per level", () => {
+  const constraints = {
+    baseStep: new Decimal("0.001"),
+    quoteStep: new Decimal("0.1"),
+    minBase: new Decimal("0.001"),
+    maxBase: new Decimal("100"),
+    minQuote: new Decimal("1"),
+  };
+
+  it("splits the investment over the levels that hold money, rounded down to the quote step", () => {
+    for (const quotePerLevel of [quotePerLevelFor, quotePerLevelForMcp]) {
+      expect(
+        quotePerLevel({
+          investment: new Decimal(10),
+          buyLevels: 3,
+          sellLevels: 3,
+          split: false,
+          constraints,
+        }).toString(),
+      ).toBe("3.3");
+      expect(
+        quotePerLevel({
+          investment: new Decimal(10),
+          buyLevels: 3,
+          sellLevels: 3,
+          split: true,
+          constraints,
+        }).toString(),
+      ).toBe("1.6");
+    }
+  });
+
+  it("refuses an amount below the pair minimum", () => {
+    for (const quotePerLevel of [quotePerLevelFor, quotePerLevelForMcp]) {
+      expect(() =>
+        quotePerLevel({
+          investment: new Decimal(2),
+          buyLevels: 3,
+          sellLevels: 3,
+          split: false,
+          constraints,
+        }),
+      ).toThrow("Quote per level 0.6 is below the minimum quote order size 1.");
+    }
   });
 });

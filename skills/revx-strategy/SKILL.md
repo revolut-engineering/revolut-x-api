@@ -37,7 +37,7 @@ revx strategy grid backtest BTC-USD --json
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
-| `--trailing-up` | off | Rebuild when a candle high reaches the second geometric level above the upper boundary |
+| `--trailing-up` | off | Rebuild when a candle high reaches the second geometric level above the upper boundary, once the grid holds no coins |
 | `--stop-loss <price>` | off | Stop backtest when price reaches this absolute value (must be below the lowest grid level) |
 | `--json` | off | Output as JSON |
 
@@ -50,7 +50,7 @@ revx strategy grid backtest BTC-USD --json
 
 Limitation: real intra-candle price action may be more complex (e.g. multiple touches of high/low), which the backtest does not reproduce.
 
-Backtests confirm trailing-up from a single qualifying candle high and rebuild from that candle's close. Stop-loss also remains immediate because historical candles do not contain live tick sequences.
+Backtests confirm trailing-up from a single qualifying candle high, once the grid holds no coins, and rebuild from that candle's close. Stop-loss also remains immediate because historical candles do not contain live tick sequences.
 
 **Not long-running** — completes and returns results. Run normally via the `Bash` tool.
 
@@ -79,8 +79,8 @@ revx strategy grid optimize BTC-USD --trailing-up --stop-loss 85000
 | `--days <n>` | 3 | Historical data period |
 | `--interval <res>` | 1m | Candle resolution |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above start price) |
-| `--trailing-up` | off | Rebuild when a candle high reaches the second geometric level above the upper boundary |
-| `--stop-loss <price>` | off | Skip combinations where the stop-loss sits inside the grid; stop each backtest run when price reaches this absolute value |
+| `--trailing-up` | off | Rebuild when a candle high reaches the second geometric level above the upper boundary, once the grid holds no coins |
+| `--stop-loss <price>` | off | Stop each backtest run when price reaches this absolute value. It must be below the lowest level of every combination, otherwise optimize fails before running |
 | `--json` | off | Output as JSON |
 
 Max 200 parameter combinations. Every combination is validated before any backtest runs. If any combination violates pair constraints or stop-loss placement, the entire optimize command fails; invalid combinations are not skipped. **Not long-running** — completes and returns results.
@@ -164,21 +164,35 @@ revx strategy grid run BTC-USD --investment 1000 --trailing-up --stop-loss 85000
 | `--levels <n>` | 5 | Grid levels per side (1-100) |
 | `--range <pct>` | 5 | Grid range +/- % from mid |
 | `--split` | off | Split investment across buy and sell levels (market-buy base for levels above current price) |
-| `--interval <sec>` | 10 | Polling interval in seconds |
+| `--interval <sec>` | 10 | Polling interval in seconds, 5 to 86400 |
 | `--dry-run` | off | Simulate without real orders |
-| `--reset` | off | Discard saved state, start fresh |
-| `--trailing-up` | off | Rebuild after 3 consecutive ticks reach the second geometric level above the upper boundary |
-| `--stop-loss <price>` | off | Stop immediately when price reaches this absolute value (must be below the lowest grid level) |
+| `--reset` | off | Cancel the saved grid's orders and start fresh. The old grid's coins stay in the wallet |
+| `--trailing-up` | off | Rebuild after 3 consecutive ticks reach the second geometric level above the upper boundary, once the grid holds no coins |
+| `--stop-loss <price>` | off | Sell everything and stop when price reaches this absolute value (must be below the lowest grid level) |
 
-Ctrl+C for graceful shutdown (cancels open orders, prints summary).
+Ctrl+C ends the grid: it cancels open orders, keeps the coins in the wallet and prints a summary. The next start begins a new grid. If an order isn't confirmed closed, the next start checks it first. A stop signal (`kill`, `docker stop`, a system shutdown) cancels the orders and keeps the grid while it holds coins or an order isn't confirmed. After that or a crash, the next start resumes it.
 
-Live and dry-run trailing-up requires three consecutive qualifying prices. A price below the threshold resets confirmation. Stop-loss remains immediate on the first qualifying price.
+If an order can't be placed, for example because coins or cash were moved out of the account after a fill, the dashboard shows a line for it with the reason on every check until it goes out. Orders of one level waiting for the same reason share a line, and an order the bot sent but couldn't confirm shows as not confirmed yet. A sell the bot hasn't sent yet shows as not placed yet. An order the exchange hasn't listed for a minute shows as not listed yet. The Open buy fills row shows what open buys have bought so far. Warnings about the current check, such as a rejected order, come first. Telegram gets one message for that order if it still isn't out at the end of the check, so a retry that works within the same check sends nothing. A sell is retried on every check. A buy is retried once a minute, as soon as there is cash for it. Neither sends further messages until that order was placed and later fails again. Buys skipped for lack of cash show as one line with how many wait, the free cash and the total they need. A level is refilled by the money it is missing, so a lost leftover is topped up by its own amount, and the bot places what the free cash allows. If the reply to a buy is lost, the bot looks it up by its ID once a minute and tracks it. If two lookups miss it, the bot sends it again with the same ID, which the exchange refuses if the order already exists. If it turns out cancelled or rejected, the bot places it again at the same amount. A leftover below the exchange minimum is not placed. It stays in its position's budget and is bought back when that position is sold, unless that re-buy is also below the minimum. The same happens to a leftover buy cancelled on Ctrl+C or found cancelled at start-up. With `--split`, the start-up size check counts the 0.09% fee the market buy pays in coins, so a grid at the exchange minimum is refused before it buys.
 
-All grid limit orders are post-only. If the exchange reports `POST_ONLY_IMMEDIATE_MATCH`, the bot stops the current run, accounts any reported fill without placing a replacement, and uses the normal shutdown flow to cancel tracked orders. Failed cancellations or remaining inventory keep the saved state for normal reconciliation on the next startup.
+`--reset` starts a new grid even when the old one holds coins or has a pending sell-off. It first cancels the old grid's orders, one sent with a lost reply included, then deletes the save. The sell-off is dropped, and any coins the old grid bought and didn't sell stay in the wallet, outside the new grid. If a cancel isn't confirmed or the orders can't be listed, the save is kept, so run it again. An order the exchange doesn't list is named with its ID. A split buy or sale sent just before may still trade for a few minutes.
+
+If the saved grid file is damaged, the bot refuses to start, so the old grid's orders and coins are not left untracked. A new grid can't take them over, so first cancel the old grid's open orders in the Revolut X app and decide what to do with its coins. Then running with `--reset` renames the damaged file to `<name>.damaged-<time>` (it is never deleted) and starts a new grid. A file the bot isn't allowed to read is reported as a read error, not as damaged.
+
+Live and dry-run trailing-up requires three consecutive qualifying prices. A price below the threshold resets confirmation. When the third price arrives, the grid must also hold no coins and have no unresolved order placement. Otherwise the rebuild waits, and the next price at or above the threshold tries again. Stop-loss remains immediate on the first qualifying price.
+
+Grid orders are plain limit orders (`allow_taker`). An order the market has already passed, such as a sell below the price after a fast rise or a buy above it after a fast drop, fills at once at its price or better and pays the 0.09% taker fee. Orders that wait on the book pay the 0% maker fee. The grid stays tied to its levels. A buy's sell goes one level up for the coins received, rounded down to the exchange's size step. A leftover too small to sell is closed with that sale and its cost is charged to it. A filled sell re-buys the level its coins were bought on for the amount that slot held, which is the full per-level amount, or its share after partial fills. An empty buy level below the grid's centre price gets its buy back even when the price is already below it, and that buy fills at once. If the exchange answers a new grid order with `state: "rejected"`, whatever the reject reason, that counts as one rejection for its buy level or position. The bot then looks the order up for up to 5 seconds, books anything it traded, and sends the rest again right away with a new client order ID. An order it can't look up yet stays tracked and is checked on later checks. If it still can't be found a minute later, it is treated as rejected with nothing traded and placed again. After a restart it is treated like any other order the exchange doesn't list yet. A tracked order that the exchange later reports as rejected counts the same way. The count carries over between checks but not across a restart. Other errors in between don't reset it, and neither does an accepted re-send. It starts again only once a later order of that level or position is seen on the book or filled. The third rejection sells everything and stops the bot (emergency stop, see below), and the sell-off books anything that last order traded if the exchange shows it within 5 seconds. Rejections found during a sell-off are not counted, and trailing up starts every count again. Other errors are not re-sent right away. They are retried on later checks. An order the exchange doesn't list yet, at startup or while running, stays tracked and is looked up again. Once it has been missing for 5 minutes it is sent again under its own client order ID, so the exchange can't place it twice. Its cancel isn't counted as done until then either. An order from an older save whose client order ID the bot can't find is not sent again. The bot sends a message, and only once it has been missing for 24 hours does it place a new order, with one more message. Trailing up waits until then. On startup, a buy or sell that was sent but never confirmed is looked up by its client order ID across the grid's order history. An open or filled order is adopted, and a rejected or cancelled one with no fill is placed again with a new ID, a buy at its own amount. A rejected one counts toward the three rejections. An order that can't be found is re-sent with its original ID. If that send fails, startup goes on with an alert. A buy is then retried once a minute when there is cash for it, and a sell on every check. If the exchange answers that the ID was already used, the bot only looks it up from then on. A send that fails while restoring the buys or split sells of an interrupted first placement doesn't stop startup either. While running, the same lookup runs once a minute for unconfirmed buys, and for a sell whose re-send the exchange refuses as already placed. It reads the order history from a day before the order was first sent. A split market buy whose reply was lost is looked up the same way at startup before it is sent again. If the exchange has it but doesn't list it yet, startup stops and asks to start again in a few minutes.
+
+**Fees in the grid:** the fee is taken from what each order receives. A grid buy pays its fee in coins, so the position holds the coins that actually arrived and its cost is the quote actually spent. The sell for that position is sized to those net coins. A grid sell pays its fee in the quote currency, so its profit is the quote that actually arrived minus the position's cost. The bot reads the real fee from every filled order and adds it to "Fees Paid" in the quote currency, converting a coin fee at the fill price. Orders that rest on the book pay the 0% maker fee. These pay the 0.09% taker fee: a grid order that fills at once because the market already passed it, the split start-up market buy, and the market sales of a sell-off. Dry-run and backtests assume 0% for grid fills and 0.09% for the split buy and the sell-off.
+
+**Selling everything (stop-loss and emergency stop):** the bot first marks the sell-off in the saved state. It finishes any earlier sale and checks orders that were sent but never confirmed, then cancels every grid order and books anything that traded in the meantime. It then sells all held coins with market orders, in pieces no larger than the exchange maximum. A sale that fills nothing is retried, up to 3 times. A sale that fails to place leaves the sell-off pending. Coins behind an order whose cancel can't be confirmed are not sold. An order whose reply was lost, the split buy included, is looked up by its ID, and the coins it may hold are neither sold nor written off until it is found. While such an order, a grid order the exchange doesn't list yet, a cancel or sale that isn't confirmed, or an exchange error holds up the sale, the sell-off checks again every 30 seconds in the same run, for up to 6 minutes. An order missing for 5 minutes is treated as never placed and the sale goes on. An amount below the exchange minimum stays in the wallet and is booked as a loss. When everything is sold, the saved grid is deleted, so the next run starts fresh without `--reset`. If the sell-off can't finish, it stays pending, its message ends with the reason, and it is completed first on the next start, in the same live or dry-run mode. `--reset` drops it instead. Ctrl+C never sells. It stops the wait above, sends no new grid order and waits for a start-up already under way. Outside a sell-off, it then cancels the grid's orders, keeps the coins and ends the grid. A sale already sent during a sell-off finishes, no new one starts, and the rest of the sell-off finishes on the next start.
 
 The dashboard displays at most 24 grid rows in a price-centred window and reports how many higher and lower levels are hidden, so 100-level-per-side grids remain readable.
 
 If Telegram connectors are configured (see `revx-telegram` skill), notifications are sent on startup, shutdown, fills, and P&L changes.
+
+**One run per grid:** a grid run, live or dry, holds a lock file next to its saved state (`grid_state_<PAIR>.lock` in the config folder). A second run of the same pair from the same config folder, `--reset` included, is refused before it sends anything while the first one runs. A lock left on this machine by a run that crashed is taken over, also after a restart of the machine. Otherwise the error names the lock file to delete. Use one config folder per running machine or container. Two containers that share a host name and a config folder can each start the same grid, because neither sees the other's process. Never start a second copy of a grid to check on it, run `revx order open` instead. Never delete a lock file unless the user confirms no grid process is running.
+
+**Outages and outside changes:** a key the exchange refuses (401 or 403) gets one Telegram message at once that names the masked key, and one more when it works again. The dashboard says how to fix it, and open grid orders stay on the exchange meanwhile. After a 401, fix the key with `revx configure` and start the grid again. After a 403, fix the key's permissions in Revolut X and the grid goes on by itself. After 5 minutes without prices or order data for any other reason, a grid sends one Telegram message, and one more when data is back. It keeps running meanwhile. A grid order cancelled outside the bot, for example in the app, is placed again, and the dashboard says how many and when. If one is replaced outside the bot, the grid places its own again. The dashboard, the restart summary and the stop message say the replacement is not tracked, so cancel it with `revx order cancel` if it isn't wanted.
 
 ### Long-Running Command — Behavioral Instructions for Claude
 
@@ -188,8 +202,8 @@ If Telegram connectors are configured (see `revx-telegram` skill), notifications
 
 1. Run the command using the `Bash` tool with `run_in_background: true` — this frees Claude immediately while the process runs asynchronously
 2. Periodically read the background task output file with the `Read` tool to monitor status and report key events to the user (orders placed, fills, errors)
-3. If the user asks to stop, use the `TaskStop` tool with the task ID
-4. Also print the command to the user so they can optionally run it in a separate terminal for the full live dashboard experience (with colors, real-time tables, Ctrl+C to stop)
+3. If the user asks to stop, end the grid the way Ctrl+C does: run `pkill -INT -f "revx strategy grid run <PAIR>"`, then read the output until the stop summary appears. Use the `TaskStop` tool only if that fails, because it keeps the grid for the next start
+4. Only one copy of a grid can run. If the user would rather watch the live dashboard (colors, real-time tables, Ctrl+C to stop), give them the command to run in their own terminal instead of starting it in the background. Never do both
 
 **Example — starting a grid bot:**
 
@@ -200,13 +214,9 @@ Bash tool call:
 
 Response to user:
 
-> Started grid bot for BTC-USD in the background. I'll check for updates periodically.
+> Started grid bot for BTC-USD in the background. I'll check for updates periodically, and I can stop it whenever you want.
 >
-> If you'd like to see the live dashboard, run this in a separate terminal:
-> ```bash
-> revx strategy grid run BTC-USD --investment 500 --levels 10 --range 5
-> ```
-> Press Ctrl+C to stop (gracefully cancels open orders).
+> If you'd rather watch the live dashboard yourself, I can stop this run, and you start the same command in your own terminal. Only one copy of a grid can run at a time.
 
 ---
 
@@ -226,7 +236,7 @@ Use `--split` consistently across backtest, optimize, dry-run, and live when the
 
 ## P&L Metrics
 
-**Realized P&L** = sum of profit from each completed sell (sell revenue − cost per level). Measures pure grid trading profit. The initial split buy (if `--split` is used) does not affect this metric.
+**Realized P&L** = sum of profit from each completed sell (sell revenue − cost per level). Measures pure grid trading profit. The split buy (if `--split` is used) books no profit itself, but its cost, including the 0.09% fee paid in coins, is the cost of the coins it bought, so it counts when those coins are sold.
 
 **Total P&L** = (final quote balance + final base × final price) − initial investment. The mark-to-market portfolio value change. No assets are force-sold at the end.
 

@@ -2,17 +2,36 @@ import {
   RevolutXError,
   AuthenticationError,
   AuthNotConfiguredError,
+  InvalidCredentialsError,
   RateLimitError,
   BadRequestError,
   NotFoundError,
   NetworkError,
   ForbiddenError,
+  ValidationError,
 } from "@revolut/revolut-x-api";
 import chalk from "chalk";
+import { credentialsHint } from "./credentials-hint.js";
+import { retryFailure } from "./order-outcome.js";
 
 const ERROR_PREFIX = chalk.red.bold("✖ Error:");
 
+function validationIssues(errors: unknown): string[] {
+  if (!Array.isArray(errors)) return [];
+  return errors.map((issue: { path?: unknown; message?: unknown }) => {
+    const field = Array.isArray(issue.path) ? issue.path.join(".") : "";
+    const message = String(issue.message ?? "is not valid");
+    return field ? `${field}: ${message}` : message;
+  });
+}
+
 export function handleError(err: unknown): never {
+  if (err instanceof InvalidCredentialsError) {
+    console.error(`${ERROR_PREFIX} ${chalk.white(err.message)}`);
+    console.error(chalk.gray(`  ↳ ${credentialsHint(err.issue)}\n`));
+    process.exit(1);
+  }
+
   if (err instanceof AuthNotConfiguredError) {
     console.error(`${ERROR_PREFIX} ${chalk.white("Not authenticated.")}`);
     console.error(
@@ -73,8 +92,21 @@ export function handleError(err: unknown): never {
     process.exit(1);
   }
 
+  if (err instanceof ValidationError) {
+    console.error(`${ERROR_PREFIX} ${chalk.white(err.message)}`);
+    for (const issue of validationIssues(err.errors)) {
+      console.error(chalk.gray(`  ↳ ${issue}`));
+    }
+    console.error("");
+    process.exit(1);
+  }
+
   if (err instanceof RevolutXError) {
-    console.error(`${ERROR_PREFIX} ${chalk.white(err.message)}\n`);
+    const failure = retryFailure(err);
+    console.error(
+      `${ERROR_PREFIX} ${chalk.white(err.message)}${failure ? "" : "\n"}`,
+    );
+    if (failure) console.error(chalk.gray(`  ↳ ${failure}\n`));
     process.exit(1);
   }
 

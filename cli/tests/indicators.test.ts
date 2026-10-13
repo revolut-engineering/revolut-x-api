@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { Decimal } from "decimal.js";
+import type { OrderBookLevel } from "@revolut/revolut-x-api";
 
 import {
   computeEma,
-  computeSma,
   computeRsi,
   computeMacd,
   computeBollinger,
@@ -12,11 +12,15 @@ import {
   computeObi,
   computeSpreadPct,
   computePriceChangePct,
-} from "../../src/shared/indicators/core.js";
+} from "../src/shared/indicators/core.js";
 
-import { evaluateAlert } from "../../src/shared/indicators/evaluators.js";
+import { evaluateAlert } from "../src/shared/indicators/evaluators.js";
 
-import type { MarketSnapshot } from "../../src/shared/indicators/evaluators.js";
+import type { MarketSnapshot } from "../src/shared/indicators/evaluators.js";
+
+function level(quantity: string): OrderBookLevel {
+  return { price: "100", quantity, orderCount: 1 };
+}
 
 function dec(values: (string | number)[]): Decimal[] {
   return values.map((v) => new Decimal(String(v)));
@@ -62,19 +66,6 @@ describe("computeEma", () => {
     const result = computeEma(values, 1);
     expect(result).not.toBeNull();
     expect(result!.eq(42)).toBe(true);
-  });
-});
-
-describe("computeSma", () => {
-  it("basic SMA", () => {
-    const values = dec([10, 20, 30, 40, 50]);
-    const result = computeSma(values, 3);
-    expect(result).not.toBeNull();
-    expect(result!.eq(40)).toBe(true); // (30+40+50)/3
-  });
-
-  it("insufficient data returns null", () => {
-    expect(computeSma(dec([10]), 5)).toBeNull();
   });
 });
 
@@ -211,28 +202,48 @@ describe("computeVolumeRatio", () => {
 
 describe("computeObi", () => {
   it("balanced book → OBI = 0", () => {
-    const bids = [{ q: "100" }, { q: "100" }];
-    const asks = [{ q: "100" }, { q: "100" }];
-    expect(computeObi(bids, asks).toFixed(4)).toBe("0.0000");
+    const bids = [level("100"), level("100")];
+    const asks = [level("100"), level("100")];
+    expect(computeObi(bids, asks)?.toFixed(4)).toBe("0.0000");
   });
 
   it("buy pressure → positive OBI", () => {
-    const bids = [{ q: "300" }];
-    const asks = [{ q: "100" }];
+    const bids = [level("300")];
+    const asks = [level("100")];
     const obi = computeObi(bids, asks);
-    expect(obi.gt(0)).toBe(true);
-    expect(obi.toFixed(4)).toBe("0.5000");
+    expect(obi?.gt(0)).toBe(true);
+    expect(obi?.toFixed(4)).toBe("0.5000");
   });
 
   it("sell pressure → negative OBI", () => {
-    const bids = [{ q: "100" }];
-    const asks = [{ q: "300" }];
+    const bids = [level("100")];
+    const asks = [level("300")];
     const obi = computeObi(bids, asks);
-    expect(obi.lt(0)).toBe(true);
+    expect(obi?.lt(0)).toBe(true);
   });
 
-  it("empty book → OBI = 0", () => {
-    expect(computeObi([], []).toFixed(4)).toBe("0.0000");
+  it("empty book → no reading", () => {
+    expect(computeObi([], [])).toBeNull();
+    expect(computeObi([level("0")], [level("0")])).toBeNull();
+  });
+
+  it("sums every level on each side", () => {
+    const obi = computeObi([level("200"), level("100")], [level("100")]);
+    expect(obi?.toString()).toBe("0.5");
+  });
+
+  it("keeps the full ratio, so rounding is left to the display", () => {
+    expect(computeObi([level("200")], [level("100")])?.toFixed(4)).toBe(
+      "0.3333",
+    );
+    expect(
+      computeObi([level("200")], [level("100")])
+        ?.times(3)
+        .toFixed(4),
+    ).toBe("1.0000");
+    expect(computeObi([level("100")], [level("500")])?.toFixed(4)).toBe(
+      "-0.6667",
+    );
   });
 });
 
@@ -332,6 +343,27 @@ describe("evaluateAlert — price", () => {
     const snap: MarketSnapshot = { price: new Decimal("95") };
     const result = evaluateAlert(alert, snap);
     expect(result.conditionMet).toBe(true);
+  });
+});
+
+describe("evaluateAlert — bollinger", () => {
+  it("shows the price against the band it watches", () => {
+    // given
+    const closes = Array.from({ length: 20 }, (_, i) => (i % 2 ? 101 : 99));
+    const alert = {
+      alert_type: "bollinger",
+      config_json: JSON.stringify({ band: "lower", period: 20 }),
+    };
+
+    // when
+    const result = evaluateAlert(alert, {
+      price: new Decimal("100"),
+      candles: makeCandles(closes),
+    });
+
+    // then
+    expect(result.current?.label).toBe("Price / BB(20) lower");
+    expect(result.current?.value).toBe("100 / 98");
   });
 });
 
@@ -516,10 +548,52 @@ describe("evaluateAlert — obi", () => {
     };
     const snap: MarketSnapshot = {
       price: new Decimal("100"),
-      orderBook: { bids: [{ q: "300" }], asks: [{ q: "100" }] },
+      orderBook: { bids: [level("300")], asks: [level("100")] },
     };
     const result = evaluateAlert(alert, snap);
     expect(result.conditionMet).toBe(true);
+  });
+
+  it("calls a balanced book balanced, not sell pressure", () => {
+    const alert = {
+      alert_type: "obi",
+      config_json: JSON.stringify({ direction: "below", threshold: "0.3" }),
+    };
+    const snap: MarketSnapshot = {
+      price: new Decimal("100"),
+      orderBook: { bids: [level("100")], asks: [level("100")] },
+    };
+    const result = evaluateAlert(alert, snap);
+    expect(result.detail).toContain("Balanced");
+    expect(result.detail).not.toContain("pressure");
+  });
+
+  it("never fires on an empty book", () => {
+    const alert = {
+      alert_type: "obi",
+      config_json: JSON.stringify({ direction: "below", threshold: "0.3" }),
+    };
+    const snap: MarketSnapshot = {
+      price: new Decimal("100"),
+      orderBook: { bids: [], asks: [] },
+    };
+    const result = evaluateAlert(alert, snap);
+    expect(result.conditionMet).toBe(false);
+    expect(result.detail).toBe("Order book is empty");
+  });
+
+  it("reports a quantity it can't read instead of a blank reading", () => {
+    const alert = {
+      alert_type: "obi",
+      config_json: JSON.stringify({ direction: "above", threshold: "0.3" }),
+    };
+    const snap: MarketSnapshot = {
+      price: new Decimal("100"),
+      orderBook: { bids: [level("abc")], asks: [level("100")] },
+    };
+    const result = evaluateAlert(alert, snap);
+    expect(result.conditionMet).toBe(false);
+    expect(result.error).toContain("abc");
   });
 
   it("no order book → conditionMet false", () => {
@@ -551,6 +625,81 @@ describe("evaluateAlert — price_change_pct", () => {
     };
     const result = evaluateAlert(alert, snap);
     expect(result.conditionMet).toBe(true);
+  });
+
+  it("compares with the last completed candle for a one-hour lookback", () => {
+    const candles = makeCandles([100, 110]);
+    const alert = {
+      alert_type: "price_change_pct",
+      config_json: JSON.stringify({
+        lookback: 1,
+        direction: "rise",
+        threshold: "5",
+      }),
+    };
+    const snap: MarketSnapshot = { price: new Decimal("110"), candles };
+    const result = evaluateAlert(alert, snap);
+    expect(result.conditionMet).toBe(true);
+    expect(result.current?.value).toBe("+10.00%");
+  });
+
+  it("says how many candles it needs when it has too few", () => {
+    const alert = {
+      alert_type: "price_change_pct",
+      config_json: JSON.stringify({ lookback: 24, threshold: "5" }),
+    };
+    const snap: MarketSnapshot = {
+      price: new Decimal("100"),
+      candles: makeCandles(Array(24).fill(100)),
+    };
+    expect(evaluateAlert(alert, snap).error).toBe(
+      "needs 25 hourly candles, has 24",
+    );
+  });
+});
+
+describe("evaluateAlert — candles needed", () => {
+  it.each([
+    ["rsi", { period: 14 }, 15],
+    ["ema_cross", { fast_period: 9, slow_period: 21 }, 21],
+    ["macd", { fast: 12, slow: 26, signal: 9 }, 35],
+    ["bollinger", { period: 20 }, 20],
+    ["volume_spike", { period: 20 }, 21],
+    ["atr_breakout", { period: 14 }, 15],
+    ["price_change_pct", { lookback: 24 }, 25],
+  ] as const)(
+    "%s works from exactly the number of candles it asks for",
+    (type, config, needed) => {
+      const alert = { alert_type: type, config_json: JSON.stringify(config) };
+      const closes = Array.from({ length: needed }, (_, i) => 100 + (i % 5));
+      const snap = (count: number): MarketSnapshot => ({
+        price: new Decimal("101"),
+        candles: makeCandles(closes.slice(0, count)),
+      });
+      expect(evaluateAlert(alert, snap(needed - 1)).error).toBe(
+        `needs ${needed} hourly candles, has ${needed - 1}`,
+      );
+      expect(evaluateAlert(alert, snap(needed)).error).toBeUndefined();
+    },
+  );
+
+  it("says there was no volume rather than asking for more candles", () => {
+    const alert = {
+      alert_type: "volume_spike",
+      config_json: JSON.stringify({ period: 20 }),
+    };
+    const snap: MarketSnapshot = {
+      price: new Decimal("100"),
+      candles: makeCandles(Array(100).fill(100), {
+        volumes: Array(100).fill(0),
+      }),
+    };
+    const result = evaluateAlert(alert, snap);
+    expect(result.error).toBeUndefined();
+    expect(result.conditionMet).toBe(false);
+    expect(result.detail).toBe(
+      "No trading volume in the last 20 hourly candles",
+    );
   });
 });
 
@@ -598,5 +747,152 @@ describe("evaluateAlert — unknown type", () => {
     const snap: MarketSnapshot = { price: new Decimal("100") };
     const result = evaluateAlert(alert, snap);
     expect(result.conditionMet).toBe(false);
+  });
+});
+
+describe("indicators on a pair priced far below one", () => {
+  const tiny = Array.from({ length: 40 }, (_, i) =>
+    new Decimal("0.0000125").plus(new Decimal("0.0000001").times(i % 5)),
+  );
+
+  it("keeps the Bollinger bands apart", () => {
+    // when
+    const bands = computeBollinger(tiny, 20)!;
+
+    // then
+    expect(bands.upper.gt(bands.middle)).toBe(true);
+    expect(bands.middle.gt(bands.lower)).toBe(true);
+    expect(bands.lower.gt(0)).toBe(true);
+  });
+
+  it("measures a true range above zero", () => {
+    // when
+    const atr = computeAtr(tiny, tiny, tiny, 14)!;
+
+    // then
+    expect(atr.gt(0)).toBe(true);
+  });
+
+  it("gives MACD lines that are not zero", () => {
+    // when
+    const macd = computeMacd(tiny)!;
+
+    // then
+    expect(macd.macd.isZero() && macd.signal.isZero()).toBe(false);
+  });
+
+  it("compares a tiny spread exactly", () => {
+    // when
+    const spread = computeSpreadPct(
+      new Decimal("0.0000125"),
+      new Decimal("0.00001250000001"),
+    );
+
+    // then
+    expect(spread.gt(0)).toBe(true);
+  });
+
+  it("doesn't fire a Bollinger alert while the price sits between the bands", () => {
+    // when
+    const result = evaluateAlert(
+      {
+        alert_type: "bollinger",
+        config_json: JSON.stringify({ band: "upper", period: 20 }),
+      },
+      {
+        price: new Decimal("0.0000126"),
+        candles: makeCandles(tiny.map((value) => value.toFixed())),
+      },
+    );
+
+    // then
+    expect(result.conditionMet).toBe(false);
+    expect(result.detail).not.toContain("Upper: 0 ");
+  });
+});
+
+describe("Bollinger bands at any price level", () => {
+  const btc = Array.from({ length: 40 }, (_, i) =>
+    new Decimal("80000").plus(new Decimal("400").times(i % 5)),
+  );
+  const scale = new Decimal("0.00000000015625");
+  const tiny = btc.map((close) => close.times(scale));
+
+  it("scales the band width with the price", () => {
+    // when
+    const big = computeBollinger(btc, 20)!;
+    const small = computeBollinger(tiny, 20)!;
+
+    // then
+    const ratio = small.upper
+      .minus(small.middle)
+      .div(big.upper.minus(big.middle).times(scale));
+    expect(ratio.toFixed(6)).toBe("1.000000");
+  });
+
+  it("fires the upper band on a tiny-priced pair just above it", () => {
+    // given
+    const upper = computeBollinger(btc, 20)!.upper.times(scale);
+
+    // when
+    const result = evaluateAlert(
+      {
+        alert_type: "bollinger",
+        config_json: JSON.stringify({ band: "upper", period: 20 }),
+      },
+      {
+        price: upper.times("1.001"),
+        candles: makeCandles(tiny.map((value) => value.toFixed())),
+      },
+    );
+
+    // then
+    expect(result.conditionMet).toBe(true);
+  });
+});
+
+describe("what a monitor shows is what it compares", () => {
+  it("alerts a price change that shows the threshold", () => {
+    // given
+    const closes = [...Array(24).fill("100"), "104.996"];
+
+    // when
+    const result = evaluateAlert(
+      {
+        alert_type: "price_change_pct",
+        config_json: JSON.stringify({
+          direction: "rise",
+          threshold: "5",
+          lookback: 24,
+        }),
+      },
+      { price: new Decimal("104.996"), candles: makeCandles(closes) },
+    );
+
+    // then
+    expect(result.current?.value).toBe("+5.00%");
+    expect(result.conditionMet).toBe(true);
+  });
+
+  it("shows a price change with as many decimals as its threshold", () => {
+    // given
+    const closes = [...Array(24).fill("100000"), "99999"];
+
+    // when
+    const result = evaluateAlert(
+      {
+        alert_type: "price_change_pct",
+        config_json: JSON.stringify({
+          direction: "fall",
+          threshold: "0.001",
+          lookback: 24,
+        }),
+      },
+      { price: new Decimal("99999"), candles: makeCandles(closes) },
+    );
+
+    // then
+    expect(result.current?.value).toBe("-0.001%");
+    expect(result.conditionMet).toBe(true);
   });
 });
