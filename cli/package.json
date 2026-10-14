@@ -1,6 +1,6 @@
 {
   "name": "@revolut/revolut-x-cli",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "description": "Command-line interface for crypto exchange trading",
   "keywords": [
     "cli",
@@ -43,7 +43,7 @@
     "cli-table3": "^0.6.5",
     "commander": "^13.0.0",
     "decimal.js": "^10.6.0",
-    "@revolut/revolut-x-api": "^1.0.50"
+    "@revolut/revolut-x-api": "^1.0.51"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

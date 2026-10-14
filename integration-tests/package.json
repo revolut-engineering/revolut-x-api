@@ -1,6 +1,6 @@
 {
   "name": "revolutx-integration-tests",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "private": true,
   "type": "module",
   "engines": {
