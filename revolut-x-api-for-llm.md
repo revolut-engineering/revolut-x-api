@@ -225,7 +225,7 @@ Get configuration for all traded currency pairs.
 
 ### POST /orders
 
-Place a new order (limit or market).
+Place a new order (limit, market, conditional, or take-profit/stop-loss).
 
 **Auth:** Required
 **Errors:** 400, 401, 403, 409, 5XX
@@ -239,7 +239,7 @@ Place a new order (limit or market).
 | client_order_id | string (uuid) | yes | Unique identifier for idempotency |
 | symbol | string | yes | Trading pair symbol (dash format, e.g., `BTC-USD`) |
 | side | string | yes | `"buy"` or `"sell"` |
-| order_configuration | object | yes | Must contain exactly one of `limit` or `market` |
+| order_configuration | object | yes | Must contain exactly one of `limit`, `market`, `conditional`, or `tpsl` |
 
 **order_configuration.limit:**
 
@@ -256,6 +256,23 @@ Place a new order (limit or market).
 |-------|------|----------|-------------|
 | base_size | string (decimal) | one of base_size/quote_size | Amount in base currency |
 | quote_size | string (decimal) | one of base_size/quote_size | Amount in quote currency |
+
+**order_configuration.conditional:** (stop order — rests until the trigger condition is met, then places a market or limit order)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| base_size | string (decimal) | one of base_size/quote_size | Amount in base currency |
+| quote_size | string (decimal) | one of base_size/quote_size | Amount in quote currency |
+| limit_price | string (decimal) | no | Limit price for the order placed on trigger; market order on trigger when omitted |
+| trigger_price | string (decimal) | yes | Price that activates the order (must be > 0) |
+
+**order_configuration.tpsl:** (take-profit/stop-loss — trigger directions are derived from `side`: sell → TP `ge`/SL `le`; buy → TP `le`/SL `ge`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| base_size | string (decimal) | yes | Amount in base currency (quote sizing not supported) |
+| take_profit | object | one of take_profit/stop_loss | `{ "trigger_price": "...", "limit_price": "..." }` — `limit_price` optional |
+| stop_loss | object | one of take_profit/stop_loss | `{ "trigger_price": "...", "limit_price": "..." }` — `limit_price` optional |
 
 **Note on `time_in_force`:** This field cannot be set during order placement. Limit orders default to `gtc` (good till cancelled). Market orders are always `ioc` (immediate or cancel). The `time_in_force` field appears only in the `Order` response object.
 
@@ -291,6 +308,42 @@ Place a new order (limit or market).
   "side": "sell",
   "order_configuration": {
     "market": {"quote_size": "0.1"}
+  }
+}
+```
+
+**Example request (conditional order, market on trigger):**
+```json
+{
+  "client_order_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "symbol": "BTC-USD",
+  "side": "sell",
+  "order_configuration": {
+    "conditional": {"base_size": "0.1", "trigger_price": "100000"}
+  }
+}
+```
+
+**Example request (conditional order, limit on trigger):**
+```json
+{
+  "client_order_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "symbol": "BTC-USD",
+  "side": "buy",
+  "order_configuration": {
+    "conditional": {"quote_size": "500", "trigger_price": "90000", "limit_price": "89900"}
+  }
+}
+```
+
+**Example request (take-profit/stop-loss order):**
+```json
+{
+  "client_order_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "symbol": "BTC-USD",
+  "side": "sell",
+  "order_configuration": {
+    "tpsl": {"base_size": "0.1", "take_profit": {"trigger_price": "110000"}, "stop_loss": {"trigger_price": "90000"}}
   }
 }
 ```
@@ -550,7 +603,7 @@ In addition to all `Order` fields, the response may include these optional field
 
 ### DELETE /orders/{venue_order_id}
 
-Cancel an active order by its venue order ID.
+Cancel an active order by its venue order ID. Works for market, limit, conditional, tpsl, and twap orders.
 
 **Auth:** Required
 **Errors:** 400, 401, 403, 404, 409, 5XX

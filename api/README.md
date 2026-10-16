@@ -185,6 +185,29 @@ await client.placeOrder({
   market: { baseSize: "0.001" },
 });
 
+// Place conditional (stop) order — activates at the trigger price, then sells at market
+await client.placeOrder({
+  symbol: "BTC-USD",
+  side: "sell",
+  conditional: {
+    triggerPrice: "100000",
+    baseSize: "0.001",             // baseSize or quoteSize required
+    // limitPrice: "100500",       // optional: limit order on trigger instead of market
+  },
+});
+
+// Place take-profit / stop-loss order (trigger directions are derived from side)
+await client.placeOrder({
+  symbol: "BTC-USD",
+  side: "sell",
+  tpsl: {
+    baseSize: "0.001",            // base size only
+    takeProfit: { triggerPrice: "110000" },   // optional, at least one leg required
+    stopLoss: { triggerPrice: "90000" },      // optional
+    // legs accept optional limitPrice for a limit order on trigger
+  },
+});
+
 // Active orders (with filters)
 const active = await client.getActiveOrders({
   symbols: ["BTC-USD"],
@@ -208,6 +231,28 @@ const history = await client.getHistoricalOrders({
 
 // Get specific order
 const order = await client.getOrder("venue-order-id");
+
+// Replace an open order — only the fields you pass change, the rest stay as-is
+await client.replaceOrder("venue-order-id", {
+  clientOrderId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  price: "96000",
+});
+
+// Replace a conditional order's trigger (the whole trigger is replaced;
+// omitting limitPrice switches to market execution on trigger)
+await client.replaceOrder("venue-order-id", {
+  clientOrderId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  conditional: { triggerPrice: "100000", limitPrice: "99500" },
+});
+
+// Replace TP/SL triggers on a take-profit/stop-loss order —
+// explicit null removes a leg, omitted fields stay unchanged
+await client.replaceOrder("venue-order-id", {
+  clientOrderId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  baseSize: "0.002",
+  takeProfit: { triggerPrice: "115000", limitPrice: "114900" },
+  stopLoss: null,
+});
 
 // Cancel single order
 await client.cancelOrder("venue-order-id");

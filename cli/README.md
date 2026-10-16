@@ -140,6 +140,20 @@ revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
   --post-only                           # Limit orders only, cannot combine with ioc
   --client-order-id <uuid>              # Optional idempotency key (random UUID if omitted)
 
+# Place conditional (stop) orders — activate at trigger price, then market or limit execution
+revx order place BTC-USD sell --qty 0.001 --conditional --trigger-price 100000
+revx order place BTC-USD buy --qty 0.001 --conditional --trigger-price 90000 --trigger-limit-price 89900
+  --trigger-price <price>               # Price that activates the order
+  --trigger-limit-price <price>         # Optional limit price on trigger (market when omitted)
+
+# Place take-profit / stop-loss orders (trigger directions derived from side)
+revx order place BTC-USD sell --qty 0.001 --tp 110000 --sl 90000
+revx order place BTC-USD sell --qty 0.001 --tp 110000 --tp-limit 109900
+  --tp <price>                          # Take-profit trigger price
+  --sl <price>                          # Stop-loss trigger price (at least one of --tp/--sl)
+  --tp-limit <price>                    # Optional limit price for the TP leg
+  --sl-limit <price>                    # Optional limit price for the SL leg
+
 # View orders
 revx order open                         # Active orders (alias: active)
   --symbols BTC-USD,ETH-USD             # Filter by pairs
@@ -157,13 +171,16 @@ revx order history                      # Historical orders
 revx order get <order-id>               # Get specific order details
 revx order fills <order-id>             # Get fills for an order
 
-# Replace orders (at least one flag required)
+# Replace orders (at least one flag required; only passed fields change)
 revx order replace <order-id> --price 96000     # Update the limit price (a buy keeps its quote amount, qty recalculated)
 revx order replace <order-id> --qty 0.002       # Update base qty (amount recalculated)
 revx order replace <order-id> --quote 150       # Update quote amount (qty recalculated)
 revx order replace <order-id> --time-in-force ioc
 revx order replace <order-id> --post-only       # Maker-only execution
 revx order replace <order-id> --allow-taker     # Allow taking liquidity
+revx order replace <order-id> --trigger-price 100000 --trigger-limit-price 99500   # Replace conditional trigger (whole trigger)
+revx order replace <order-id> --tp 115000 --tp-limit 114900 --sl 90000             # Replace TP/SL triggers (whole triggers)
+revx order replace <order-id> --sl none         # Remove the stop-loss leg (none/null = explicit removal)
   --client-order-id <uuid>              # Optional, random UUID if omitted
 
 # Cancel orders

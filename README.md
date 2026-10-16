@@ -90,6 +90,8 @@ revx order place BTC-USD buy --quote 100 --market           # Market buy (quote 
 revx order place BTC-USD sell --qty 0.001 --limit 95000     # Limit sell
 revx order place BTC-USD buy --qty 0.001 --limit 95000 --post-only
 revx order place BTC-USD buy --qty 0.001 --limit 95000 --time-in-force ioc
+revx order place BTC-USD sell --qty 0.001 --conditional --trigger-price 100000   # Stop order
+revx order place BTC-USD sell --qty 0.001 --tp 110000 --sl 90000   # Take-profit / stop-loss
 revx order open                                             # List active orders
 revx order open --symbols BTC-USD --side buy                # Filter active orders
 revx order history --symbols BTC-USD                        # Order history for pair
@@ -99,6 +101,7 @@ revx order cancel <order-id>                                # Cancel an order
 revx order cancel --all                                     # Cancel all open orders
 revx order replace <order-id> --price 96000                 # Update the limit price
 revx order replace <order-id> --time-in-force ioc           # Update time in force
+revx order replace <order-id> --tp 115000 --tp-limit 114900 # Replace take-profit trigger (whole trigger)
 
 # Trades
 revx trade private BTC-USD                                  # Private trade history
