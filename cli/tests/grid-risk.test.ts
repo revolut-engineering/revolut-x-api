@@ -344,6 +344,7 @@ describe("renderReconciliationSummary", () => {
     resent: 0,
     renewed: {},
     unlisted: 0,
+    held: 0,
   };
 
   it("says a pending order closed on the exchange was placed anew", () => {
@@ -433,6 +434,19 @@ describe("renderReconciliationSummary", () => {
     // then
     expect(output).toContain(
       "1 order not listed by the exchange yet, looked up again",
+    );
+    expect(output).not.toContain("No leftover orders");
+  });
+
+  it("says rejected orders are looked up by their client order IDs for up to 5 minutes", () => {
+    // when
+    const output = stripVTControlCharacters(
+      renderReconciliationSummary({ ...NO_ORDERS, held: 2 }),
+    );
+
+    // then
+    expect(output).toContain(
+      "2 orders rejected or already placed, looked up by client order ID for up to 5 minutes",
     );
     expect(output).not.toContain("No leftover orders");
   });

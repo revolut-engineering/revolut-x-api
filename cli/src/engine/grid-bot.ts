@@ -37,7 +37,6 @@ import {
 } from "../db/grid-store.js";
 import {
   awaitTerminal,
-  awaitTerminalOrNull,
   cancelUntilClosed,
   DEAD_STATUSES,
   FILLED_STATUSES,
@@ -146,6 +145,12 @@ interface TrackedOrder {
   position?: GridLevelPosition;
 }
 
+interface PendingIntent {
+  clientOrderId: string;
+  level: GridLevelState;
+  position?: GridLevelPosition;
+}
+
 type CloseOut =
   | { outcome: "complete" | "failed" }
   | { outcome: "waiting"; reason: string };
@@ -193,12 +198,11 @@ const CANCELLED_STATUSES = new Set(["cancelled", PARTIALLY_FILLED_STATUS]);
 const LADDER_MAX_ROWS = 80;
 const MAX_REJECTIONS = 3;
 const MAX_EMPTY_SALES = 3;
-const REJECTION_SETTLE_MS = 5_000;
-const UNREAD_REJECTION_MS = 60_000;
 const UNCONFIRMED_GRACE_MS = 5 * 60_000;
 const SELL_OFF_RETRY_MS = 30_000;
 const SELL_OFF_WAIT_LIMIT_MS = UNCONFIRMED_GRACE_MS + 60_000;
 const AWAITING_LOOKUP = "not confirmed yet, looked up once a minute";
+const REJECTED_LOOKUP = "rejected or already placed, looked up once a minute";
 const NOT_LISTED_YET = "not listed by the exchange yet";
 const NOT_PLACED_YET = "not placed yet";
 const UNLISTED_WITHOUT_ID =
@@ -206,7 +210,7 @@ const UNLISTED_WITHOUT_ID =
 const UNLISTED_NOTICE_MS = 60_000;
 const UNIDENTIFIED_HOLD_MS = 24 * 60 * 60 * 1000;
 const HISTORY_RETRY_MS = 60_000;
-const REFUSED_RECHECK_MS = 60_000;
+const PENDING_LOOKUP_MS = 60_000;
 const ORDER_LOOKUP_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const ORDER_LOOKUP_FALLBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const TRAILING_UP_CONFIRMATION_TICKS = 3;
@@ -408,12 +412,10 @@ export class ForegroundGridBot {
   private _tickInFlight: Promise<void> | null = null;
   private _sellOffMessage: string | null = null;
   private _sellOffError: string | null = null;
-  private readonly _refusedRecheckAt = new Map<string, number>();
   private _pendingSweepAt = 0;
   private readonly _pendingMissedOnce = new Set<string>();
   private readonly _placementHealth = new PlacementHealth();
   private readonly _unansweredSince = new Map<string, number>();
-  private readonly _unreadRejections = new Map<string, number>();
   private readonly _outage = new OutageWatch();
   private _changedOutside: {
     cancelled: number;
@@ -424,7 +426,7 @@ export class ForegroundGridBot {
   private readonly _selfCancelled = new Set<string>();
   private readonly _unidentified = new Set<string>();
   private readonly _historyRetryAt = new Map<string, number>();
-  private _tickHistory: Promise<Map<string, Order>> | null = null;
+  private _tickHistory: Promise<Order[]> | null = null;
   private _openBuyFills = new Decimal(0);
   private _ordersUnreachable = false;
   private _cashShortfall: {
@@ -502,14 +504,6 @@ export class ForegroundGridBot {
     return awaitTerminal(this._orderGateway(), orderId, timeoutMs);
   }
 
-  private _awaitRejection(orderId: string): Promise<OrderDetails | null> {
-    return awaitTerminalOrNull(
-      this._orderGateway(),
-      orderId,
-      REJECTION_SETTLE_MS,
-    );
-  }
-
   private async _closeGridOrders(
     state: GridState,
     policy: "settle" | "keepTraded",
@@ -535,11 +529,7 @@ export class ForegroundGridBot {
         continue;
       }
       const order = outcome.order;
-      if (
-        !order &&
-        !this._unreadRejections.has(target.orderId) &&
-        this._recordMissing(target.orderId, state) === "waiting"
-      ) {
+      if (!order && this._recordMissing(target.orderId, state) === "waiting") {
         unlisted.push(target.orderId);
         continue;
       }
@@ -804,13 +794,13 @@ export class ForegroundGridBot {
     let replaced = 0;
     let bought = false;
     for (const [index, outcome] of outcomes.entries()) {
-      const [orderId, target] = targets[index];
+      const [, target] = targets[index];
       if (!outcome.closed) {
         stillOpen.push(savedOrderLabel(target));
         continue;
       }
       if (!outcome.order) {
-        if (!this._unreadRejections.has(orderId)) unlisted.push(target);
+        unlisted.push(target);
         continue;
       }
       if (target.tracked && this._hasFilledQuantity(outcome.order)) {
@@ -1475,7 +1465,6 @@ export class ForegroundGridBot {
       level.positions = [];
     }
     this._placementHealth.reset();
-    this._unreadRejections.clear();
     this._cashShortfall = null;
 
     for (let i = 0; i < N; i++) {
@@ -1504,14 +1493,6 @@ export class ForegroundGridBot {
     const rebuildResults = await Promise.allSettled(
       rebuilds.map((rebuild) => rebuild.placement),
     );
-    const fatalRebuild = rebuildResults.find(
-      (result) =>
-        result.status === "rejected" &&
-        result.reason instanceof OrderRejectedError,
-    );
-    if (fatalRebuild?.status === "rejected") {
-      throw fatalRebuild.reason;
-    }
     rebuildResults.forEach((result, index) => {
       if (result.status !== "rejected") return;
       rethrowIfInsecureKey(result.reason);
@@ -1713,10 +1694,14 @@ export class ForegroundGridBot {
     return !position.sellOrderId && !position.sellClientOrderId;
   }
 
-  private _noteMissing(orderId: string, state = this._state!): number {
+  private _noteMissing(
+    orderId: string,
+    state = this._state!,
+    listedAt = Date.now(),
+  ): number {
     const misses = (state.missingSince ??= {});
     const firstMiss = Date.parse(misses[orderId] ?? "");
-    if (Number.isFinite(firstMiss)) return Date.now() - firstMiss;
+    if (Number.isFinite(firstMiss)) return listedAt - firstMiss;
     misses[orderId] = new Date().toISOString();
     this._saveGridState(state);
     return 0;
@@ -1725,8 +1710,9 @@ export class ForegroundGridBot {
   private _recordMissing(
     orderId: string,
     state = this._state!,
+    listedAt = Date.now(),
   ): "waiting" | "gone" {
-    if (this._noteMissing(orderId, state) < UNCONFIRMED_GRACE_MS) {
+    if (this._noteMissing(orderId, state, listedAt) < UNCONFIRMED_GRACE_MS) {
       return "waiting";
     }
     this._forgetMissing(orderId, state);
@@ -1744,8 +1730,6 @@ export class ForegroundGridBot {
   }
 
   private _pruneMissing(state: GridState): void {
-    const misses = state.missingSince;
-    if (!misses) return;
     const tracked = new Set<string>();
     for (const level of state.levels) {
       level.buyOrderIds.forEach((id) => tracked.add(id));
@@ -1757,7 +1741,12 @@ export class ForegroundGridBot {
     }
     if (state.splitOrderId) tracked.add(state.splitOrderId);
     if (state.splitClientOrderId) tracked.add(state.splitClientOrderId);
-    for (const id of Object.keys(misses)) {
+    if (state.usedClientOrderIds) {
+      state.usedClientOrderIds = state.usedClientOrderIds.filter((id) =>
+        tracked.has(id),
+      );
+    }
+    for (const id of Object.keys(state.missingSince ?? {})) {
       if (!tracked.has(id)) this._forgetMissing(id, state);
     }
   }
@@ -2266,7 +2255,9 @@ export class ForegroundGridBot {
       }
       throw err;
     }
-    if (clientOrderId) this._unansweredSince.delete(clientOrderId);
+    if (clientOrderId && response.data.state !== "rejected") {
+      this._unansweredSince.delete(clientOrderId);
+    }
     return response.data;
   }
 
@@ -2310,26 +2301,16 @@ export class ForegroundGridBot {
     order: Pick<Order, "id" | "status" | "client_order_id" | "filled_quantity">,
   ): void {
     this._rememberClientOrderId(target, order.client_order_id);
-    this._recordFoundOrder(
-      this._slotOf(target),
-      order,
-      target.position ? "sell" : "buy",
-      this._targetPrice(target),
-    );
+    this._recordFoundOrder(this._slotOf(target), order);
   }
 
   private _recordFoundOrder(
     slot: string,
     order: Pick<Order, "id" | "status" | "client_order_id" | "filled_quantity">,
-    side: "buy" | "sell",
-    price: string,
   ): void {
-    this._unreadRejections.delete(order.id);
     this._noLongerMissing(order.id);
     this._noLongerMissing(order.client_order_id);
-    if (order.status === "rejected") {
-      this._countRejection(slot, order.client_order_id, side, price);
-    } else if (
+    if (
       RESTING_STATUSES.has(order.status) ||
       new Decimal(order.filled_quantity || 0).gt(0)
     ) {
@@ -2342,7 +2323,6 @@ export class ForegroundGridBot {
     order: Pick<Order, "id" | "status" | "client_order_id">,
   ): void {
     this._rememberClientOrderId(target, order.client_order_id);
-    this._unreadRejections.delete(order.id);
     this._noLongerMissing(order.id);
     if (RESTING_STATUSES.has(order.status)) {
       this._placementHealth.confirmed(this._slotOf(target), order.id);
@@ -2368,17 +2348,6 @@ export class ForegroundGridBot {
     this._warnings.push(
       `${side === "buy" ? "Buy" : "Sell"} @${price} rejected, retrying (${rejections + 1}/${MAX_REJECTIONS})`,
     );
-  }
-
-  private _isLostRejection(orderId: string, err: unknown): boolean {
-    const deadline = this._unreadRejections.get(orderId);
-    if (!(err instanceof NotFoundError) || deadline === undefined) return false;
-    if (Date.now() < deadline) return false;
-    this._unreadRejections.delete(orderId);
-    this._warnings.push(
-      `Order ${orderId} was rejected and never showed up, placing it again`,
-    );
-    return true;
   }
 
   private async _replaceBuy(
@@ -2492,11 +2461,8 @@ export class ForegroundGridBot {
   private async _clientOrderIdInHistory(
     orderId: string,
   ): Promise<string | undefined> {
-    const orders = await (this._tickHistory ??= this._ordersByClientOrderId());
-    for (const order of orders.values()) {
-      if (order.id === orderId) return order.client_order_id;
-    }
-    return undefined;
+    const orders = await (this._tickHistory ??= this._listOrders());
+    return orders.find((order) => order.id === orderId)?.client_order_id;
   }
 
   private _lookUpFromGridStart(clientOrderId: string): void {
@@ -2689,7 +2655,6 @@ export class ForegroundGridBot {
         );
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof OrderRejectedError) throw err;
         this._alertBuyFailure(level, settlement.remainingQuote, err);
       }
     }
@@ -2753,7 +2718,6 @@ export class ForegroundGridBot {
         );
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof OrderRejectedError) throw err;
         this._alertBuyFailure(level, rebuyQuote, err);
       }
     }
@@ -3201,23 +3165,18 @@ export class ForegroundGridBot {
       this._saveGridState(this._state);
       return;
     }
-    let fatalBuyError: OrderRejectedError | null = null;
     buyResults.forEach((result, index) => {
       if (result.status === "fulfilled") {
         buysPlaced++;
         return;
       }
       rethrowIfInsecureKey(result.reason);
-      if (result.reason instanceof OrderRejectedError) {
-        fatalBuyError ??= result.reason;
-      }
       const message =
         result.reason instanceof Error
           ? result.reason.message
           : String(result.reason);
       errors.push(`buy @${buyLevels[index].price}: ${message}`);
     });
-    if (fatalBuyError) throw fatalBuyError;
 
     if (buysPlaced === 0 && buyLevels.length > 0) {
       const detail = errors.length > 0 ? `\n  First error: ${errors[0]}` : "";
@@ -3299,7 +3258,7 @@ export class ForegroundGridBot {
         this._clearSplitExecutionState();
         this._saveGridState(this._state);
 
-        const sellResults = await Promise.allSettled(
+        await Promise.allSettled(
           splitPositions.map(async ({ sellLevel, position }) => {
             await this._placeSellOnLevel(sellLevel, position);
             if (position.sellOrderId) {
@@ -3308,14 +3267,6 @@ export class ForegroundGridBot {
             }
           }),
         );
-        const fatalSellError = sellResults.find(
-          (result) =>
-            result.status === "rejected" &&
-            result.reason instanceof OrderRejectedError,
-        );
-        if (fatalSellError?.status === "rejected") {
-          throw fatalSellError.reason;
-        }
         if (this._isStopping()) {
           this._saveGridState(this._state);
           return;
@@ -3378,6 +3329,7 @@ export class ForegroundGridBot {
     let ordersGone = 0;
     let ordersReplaced = 0;
     let ordersUnlisted = 0;
+    let ordersHeld = 0;
     const countReplaced = (order: OrderDetails): boolean => {
       if (outsideChange(order) !== "replaced") return false;
       ordersReplaced++;
@@ -3397,6 +3349,9 @@ export class ForegroundGridBot {
       this._trackedOrders(this._state).map((target) => target.orderId),
     );
     const resumed = await this._resumePendingPlacements();
+    ordersHeld += this._pendingIntents().filter((intent) =>
+      this._isUsed(intent.clientOrderId),
+    ).length;
     const trackedOrders = this._trackedOrders(this._state);
     const ordersResent = trackedOrders.filter((target) =>
       resumed.resent.has(target.orderId),
@@ -3436,14 +3391,17 @@ export class ForegroundGridBot {
             settledBuyLevelIndices.add(level.index);
           }
         } else if (DEAD_STATUSES.has(order.status)) {
-          this._dropBuyOrder(level, buyOrderId);
-          countClosed(order);
+          if (this._holdRejectedOrder(target, order)) {
+            ordersHeld++;
+          } else {
+            this._dropBuyOrder(level, buyOrderId);
+            countClosed(order);
+          }
         } else {
           ordersKept++;
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof OrderRejectedError) throw err;
         if (err instanceof NotFoundError) {
           this._noteMissing(buyOrderId);
           ordersUnlisted++;
@@ -3492,14 +3450,17 @@ export class ForegroundGridBot {
             settledSellSourceIndices.add(level.index);
           }
         } else if (DEAD_STATUSES.has(order.status)) {
-          this._clearSellOrder(pos);
-          countClosed(order);
+          if (this._holdRejectedOrder(target, order)) {
+            ordersHeld++;
+          } else {
+            this._clearSellOrder(pos);
+            countClosed(order);
+          }
         } else {
           ordersKept++;
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof OrderRejectedError) throw err;
         if (err instanceof NotFoundError) {
           this._noteMissing(sellOrderId);
           ordersUnlisted++;
@@ -3686,6 +3647,7 @@ export class ForegroundGridBot {
         resent: ordersResent,
         renewed: ordersRenewed,
         unlisted: ordersUnlisted,
+        held: ordersHeld,
       }),
     );
     this._log(chalk.dim("  Grid resumed and state saved.\n"));
@@ -4030,20 +3992,17 @@ export class ForegroundGridBot {
           this._noteChangedOutside(order);
           await this._processTerminalBuy(level, order, true);
         } else if (DEAD_STATUSES.has(order.status)) {
-          this._noteChangedOutside(order);
-          await this._replaceBuy(level, buyOrderId);
+          if (!this._holdRejectedOrder(target, order)) {
+            this._noteChangedOutside(order);
+            await this._replaceBuy(level, buyOrderId);
+          }
         } else if (openPartialFill) {
           this._addOpenBuyFill(order);
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof OrderRejectedError) throw err;
         if (err instanceof NotFoundError) {
-          if (this._unreadRejections.has(buyOrderId)) {
-            if (this._isLostRejection(buyOrderId, err)) {
-              await this._replaceBuy(level, buyOrderId);
-            }
-          } else if (this._noteMissing(buyOrderId) >= UNCONFIRMED_GRACE_MS) {
+          if (this._noteMissing(buyOrderId) >= UNCONFIRMED_GRACE_MS) {
             await this._handleUnlistedBuy(target);
           }
           continue;
@@ -4081,19 +4040,15 @@ export class ForegroundGridBot {
           this._noteChangedOutside(order);
           await this._processTerminalSell(level, sellLevel, pos, order, true);
         } else if (DEAD_STATUSES.has(order.status)) {
-          this._noteChangedOutside(order);
-          this._clearSellOrder(pos);
+          if (!this._holdRejectedOrder(target, order)) {
+            this._noteChangedOutside(order);
+            this._clearSellOrder(pos);
+          }
         }
       } catch (err) {
         rethrowIfInsecureKey(err);
-        if (err instanceof OrderRejectedError) throw err;
         if (err instanceof NotFoundError) {
-          if (this._unreadRejections.has(sellOrderId)) {
-            if (this._isLostRejection(sellOrderId, err)) {
-              this._clearSellOrder(pos);
-              this._saveGridState(state);
-            }
-          } else if (this._noteMissing(sellOrderId) >= UNCONFIRMED_GRACE_MS) {
+          if (this._noteMissing(sellOrderId) >= UNCONFIRMED_GRACE_MS) {
             await this._handleUnlistedSell(target);
           }
           continue;
@@ -4104,7 +4059,7 @@ export class ForegroundGridBot {
       }
     }
 
-    await this._sweepPendingBuys();
+    await this._sweepPendingIntents(activeOrders);
 
     const quoteCurrency = this._config.pair.split("-")[1] ?? "";
     let freeCash = this._config.dryRun
@@ -4139,11 +4094,15 @@ export class ForegroundGridBot {
       const sellLevel = state.levels[level.index + 1];
       if (!sellLevel) continue;
       for (const pos of level.positions) {
-        if (!pos.sellOrderId) {
-          const baseHeld = new Decimal(pos.baseHeld);
-          if (baseHeld.gt(0)) {
-            await this._placeSellOnLevel(sellLevel, pos);
-          }
+        if (pos.sellOrderId) continue;
+        if (
+          pos.sellClientOrderId &&
+          this._awaitsLookup(pos.sellClientOrderId)
+        ) {
+          continue;
+        }
+        if (new Decimal(pos.baseHeld).gt(0)) {
+          await this._placeSellOnLevel(sellLevel, pos);
         }
       }
     }
@@ -4310,13 +4269,8 @@ export class ForegroundGridBot {
       return;
     }
 
-    const refusedId = position.sellClientOrderId;
-    if (refusedId && this._refusedRecheckAt.has(refusedId)) {
-      await this._recheckRefused(refusedId, (order) =>
-        this._resumePendingSell(sellLevel, position, order, false),
-      );
-      return;
-    }
+    const pendingId = position.sellClientOrderId;
+    if (pendingId && this._isUsed(pendingId)) return;
 
     if (this._config.dryRun) {
       position.sellOrderId = `dry-sell-${sellLevel.index}`;
@@ -4324,83 +4278,61 @@ export class ForegroundGridBot {
       return;
     }
 
-    const level = this._state!.levels[sellLevel.index - 1];
+    const slot = this._sellSlot(position);
     try {
       const baseAmount = normalizeBaseOrderSize(
         heldBase,
         this._getOrderConstraints(),
         new Decimal(sellLevel.price),
       );
-      for (;;) {
-        if (this._isStopping()) return;
-        const newIntent = !position.sellClientOrderId;
-        const clientOrderId = (position.sellClientOrderId ??= randomUUID());
-        position.sellBaseSize = baseAmount.toString();
-        this._saveGridState(this._state!);
-        let placement: OrderPlacementResult;
-        try {
-          placement = await this._placeGridOrder({
-            symbol: this._config.pair,
-            side: "sell",
-            clientOrderId,
-            limit: {
-              price: sellLevel.price,
-              baseSize: baseAmount.toString(),
-              executionInstructions: ["allow_taker"],
-            },
-          });
-        } catch (err) {
-          if (!(err instanceof OrderNotSentError)) throw err;
-          if (newIntent) {
-            position.sellClientOrderId = undefined;
-            position.sellBaseSize = undefined;
-            this._saveGridState(this._state!);
-          }
+      if (this._isStopping()) return;
+      const newIntent = !position.sellClientOrderId;
+      const clientOrderId = (position.sellClientOrderId ??= randomUUID());
+      position.sellBaseSize = baseAmount.toString();
+      this._saveGridState(this._state!);
+      let placement: OrderPlacementResult;
+      try {
+        placement = await this._placeGridOrder({
+          symbol: this._config.pair,
+          side: "sell",
+          clientOrderId,
+          limit: {
+            price: sellLevel.price,
+            baseSize: baseAmount.toString(),
+            executionInstructions: ["allow_taker"],
+          },
+        });
+      } catch (err) {
+        if (isDuplicateClientOrderIdError(err)) {
+          this._holdForLookup(slot, clientOrderId);
           return;
         }
-        const orderId = placement.venue_order_id;
-        const slot = this._sellSlot(position);
-        position.sellOrderId = orderId;
-        this._saveGridState(this._state!);
-        if (placement.state !== "rejected") {
-          this._placementHealth.sent(slot, orderId);
-          return;
+        if (!(err instanceof OrderNotSentError)) throw err;
+        if (newIntent) {
+          position.sellClientOrderId = undefined;
+          position.sellBaseSize = undefined;
+          this._saveGridState(this._state!);
         }
-        this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
-        this._countRejection(slot, clientOrderId, "sell", sellLevel.price);
-        const order = await this._awaitRejection(orderId);
-        if (!order) {
-          this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
-          return;
-        }
-        if (this._hasFilledQuantity(order)) {
-          await this._processTerminalSell(
-            level,
-            sellLevel,
-            position,
-            order,
-            true,
-          );
-          return;
-        }
-        this._clearSellOrder(position);
-        this._saveGridState(this._state!);
-        if (this._state!.halt) return;
+        return;
       }
+      if (placement.state === "rejected") {
+        this._holdForLookup(slot, clientOrderId);
+        return;
+      }
+      const orderId = placement.venue_order_id;
+      position.sellOrderId = orderId;
+      this._forgetLookup(clientOrderId);
+      this._saveGridState(this._state!);
+      this._placementHealth.sent(slot, orderId);
     } catch (err) {
       rethrowIfInsecureKey(err);
-      if (err instanceof OrderRejectedError) throw err;
       const clientOrderId = position.sellClientOrderId;
-      if (clientOrderId && isDuplicateClientOrderIdError(err)) {
-        this._markRefused(this._sellSlot(position), clientOrderId);
-        await this._recheckRefused(clientOrderId, (order) =>
-          this._resumePendingSell(sellLevel, position, order, false),
-        );
-        return;
+      if (clientOrderId && placementDoubt(err)) {
+        this._noteMissing(clientOrderId);
       }
       const base = this._config.pair.split("-")[0] ?? "";
       this._alertPlacementFailure(
-        this._sellSlot(position),
+        slot,
         `the sell of ${position.baseHeld} ${base} at ${this._cs}${sellLevel.price}`,
         err,
       );
@@ -4472,11 +4404,14 @@ export class ForegroundGridBot {
         : null;
     };
     for (const level of state.levels) {
-      (level.pendingBuyClientOrderIds ?? []).forEach(() =>
+      (level.pendingBuyClientOrderIds ?? []).forEach((clientOrderId) =>
         note(
           "buy",
           level.price,
-          unplaced(this._buySlot(level), AWAITING_LOOKUP),
+          unplaced(
+            this._buySlot(level),
+            this._isUsed(clientOrderId) ? REJECTED_LOOKUP : AWAITING_LOOKUP,
+          ),
         ),
       );
       for (const orderId of level.buyOrderIds) {
@@ -4492,15 +4427,19 @@ export class ForegroundGridBot {
           continue;
         }
         if (!new Decimal(position.baseHeld).gt(0)) continue;
-        const refused =
-          !!position.sellClientOrderId &&
-          this._refusedRecheckAt.has(position.sellClientOrderId);
+        const clientOrderId = position.sellClientOrderId;
         note(
           "sell",
           sellLevel.price,
           unplaced(
             this._sellSlot(position),
-            refused ? AWAITING_LOOKUP : NOT_PLACED_YET,
+            !clientOrderId
+              ? NOT_PLACED_YET
+              : this._isUsed(clientOrderId)
+                ? REJECTED_LOOKUP
+                : this._awaitsLookup(clientOrderId)
+                  ? AWAITING_LOOKUP
+                  : NOT_PLACED_YET,
           ),
         );
       }
@@ -4539,26 +4478,112 @@ export class ForegroundGridBot {
     return lines;
   }
 
-  private async _sweepPendingBuys(): Promise<void> {
-    const state = this._state!;
-    const pending = state.levels.flatMap((level) =>
-      (level.pendingBuyClientOrderIds ?? []).map((clientOrderId) => ({
-        level,
-        clientOrderId,
-      })),
+  private _pendingIntents(): PendingIntent[] {
+    const intents: PendingIntent[] = [];
+    for (const level of this._state!.levels) {
+      for (const clientOrderId of level.pendingBuyClientOrderIds ?? []) {
+        intents.push({ clientOrderId, level });
+      }
+      for (const position of level.positions) {
+        if (position.sellClientOrderId && !position.sellOrderId) {
+          intents.push({
+            clientOrderId: position.sellClientOrderId,
+            level,
+            position,
+          });
+        }
+      }
+    }
+    return intents;
+  }
+
+  private _isStillPending(intent: PendingIntent): boolean {
+    const { clientOrderId, level, position } = intent;
+    if (!position) {
+      return !!level.pendingBuyClientOrderIds?.includes(clientOrderId);
+    }
+    return (
+      level.positions.includes(position) &&
+      position.sellClientOrderId === clientOrderId &&
+      !position.sellOrderId
     );
-    const pendingIds = new Set(pending.map((entry) => entry.clientOrderId));
+  }
+
+  private _intentSlot(intent: PendingIntent): string {
+    return intent.position
+      ? this._sellSlot(intent.position)
+      : this._buySlot(intent.level);
+  }
+
+  private _isUsed(clientOrderId: string): boolean {
+    return !!this._state!.usedClientOrderIds?.includes(clientOrderId);
+  }
+
+  private _awaitsLookup(clientOrderId: string): boolean {
+    return (
+      this._isUsed(clientOrderId) ||
+      this._state!.missingSince?.[clientOrderId] !== undefined
+    );
+  }
+
+  private _holdForLookup(slot: string, clientOrderId: string): void {
+    if (this._isUsed(clientOrderId)) return;
+    (this._state!.usedClientOrderIds ??= []).push(clientOrderId);
+    this._placementHealth.adopted(slot);
+    this._noLongerMissing(clientOrderId);
+    this._noteMissing(clientOrderId);
+  }
+
+  private _holdRejectedOrder(
+    target: TrackedOrder,
+    order: Pick<Order, "status" | "client_order_id" | "filled_quantity">,
+  ): boolean {
+    const clientOrderId = order.client_order_id;
+    if (!clientOrderId || !this._isBareRejection(order)) return false;
+    const { level, orderId, position } = target;
+    if (position) {
+      position.sellOrderId = null;
+      position.sellClientOrderId = clientOrderId;
+    } else {
+      const quote =
+        level.buyOrderQuoteSizes?.[orderId] ?? this._state!.quotePerLevel;
+      this._removeBuyOrder(level, orderId);
+      const pendingIds = (level.pendingBuyClientOrderIds ??= []);
+      if (!pendingIds.includes(clientOrderId)) pendingIds.push(clientOrderId);
+      (level.pendingBuyQuoteSizes ??= {})[clientOrderId] = quote;
+    }
+    this._holdForLookup(this._slotOf(target), clientOrderId);
+    this._saveGridState(this._state!);
+    return true;
+  }
+
+  private async _sweepPendingIntents(
+    activeOrders: Map<string, Order>,
+  ): Promise<void> {
+    const listed = new Map<string, Order>();
+    for (const order of activeOrders.values()) {
+      if (order.client_order_id) listed.set(order.client_order_id, order);
+    }
+    for (const intent of this._pendingIntents()) {
+      const order = listed.get(intent.clientOrderId);
+      if (order) await this._resumeIntent(intent, order, true);
+    }
+    const pending = this._pendingIntents().filter(
+      (intent) => !intent.position || this._awaitsLookup(intent.clientOrderId),
+    );
+    const pendingIds = new Set(pending.map((intent) => intent.clientOrderId));
     for (const clientOrderId of this._pendingMissedOnce) {
       if (!pendingIds.has(clientOrderId)) {
         this._pendingMissedOnce.delete(clientOrderId);
       }
     }
     if (pending.length === 0 || Date.now() < this._pendingSweepAt) return;
-    this._pendingSweepAt = Date.now() + REFUSED_RECHECK_MS;
+    const listedAt = Date.now();
+    this._pendingSweepAt = listedAt + PENDING_LOOKUP_MS;
     let orders: Map<string, Order>;
     try {
       orders = await this._ordersByClientOrderId(
-        this._lookupStart(pending.map((entry) => entry.clientOrderId)),
+        this._lookupStart([...pendingIds]),
       );
     } catch (err) {
       rethrowIfInsecureKey(err);
@@ -4569,21 +4594,33 @@ export class ForegroundGridBot {
     }
     const quoteCurrency = this._config.pair.split("-")[1] ?? "";
     let freeQuote: Decimal | null | undefined;
-    for (const { level, clientOrderId } of pending) {
-      if (!level.pendingBuyClientOrderIds?.includes(clientOrderId)) continue;
-      const quoteSize = this._pendingBuyQuote(level, clientOrderId);
+    for (const intent of pending) {
+      if (!this._isStillPending(intent)) continue;
+      const { clientOrderId, level, position } = intent;
       const order = orders.get(clientOrderId);
-      if (order) {
-        this._forgetLookup(clientOrderId);
-        this._pendingMissedOnce.delete(clientOrderId);
-        await this._resumePendingBuy(level, clientOrderId, order, true);
+      if (order && !this._isBareRejection(order)) {
+        await this._resumeIntent(intent, order, true);
         continue;
       }
-      if (this._refusedRecheckAt.has(clientOrderId)) continue;
+      if (order) this._holdForLookup(this._intentSlot(intent), clientOrderId);
+      if (this._isUsed(clientOrderId)) {
+        if (
+          this._recordMissing(clientOrderId, this._state!, listedAt) === "gone"
+        ) {
+          await this._retirePendingIntent(intent);
+        }
+        continue;
+      }
       if (!this._pendingMissedOnce.has(clientOrderId)) {
         this._pendingMissedOnce.add(clientOrderId);
         continue;
       }
+      if (position) {
+        const sellLevel = this._state!.levels[level.index + 1];
+        if (sellLevel) await this._placeSellOnLevel(sellLevel, position);
+        continue;
+      }
+      const quoteSize = this._pendingBuyQuote(level, clientOrderId);
       if (freeQuote === undefined) {
         freeQuote = await this._checkBalance(quoteCurrency);
       }
@@ -4600,6 +4637,56 @@ export class ForegroundGridBot {
     }
   }
 
+  private async _resumeIntent(
+    intent: PendingIntent,
+    order: Order | undefined,
+    resend: boolean,
+  ): Promise<ResumedPlacement | null> {
+    const { clientOrderId, level, position } = intent;
+    if (!position) {
+      return this._resumePendingBuy(level, clientOrderId, order, resend);
+    }
+    const sellLevel = this._state!.levels[level.index + 1];
+    if (!sellLevel) return null;
+    return this._resumePendingSell(sellLevel, position, order, resend);
+  }
+
+  private async _retirePendingIntent(intent: PendingIntent): Promise<void> {
+    const { clientOrderId, level, position } = intent;
+    this._forgetLookup(clientOrderId);
+    if (position) {
+      const sellLevel = this._state!.levels[level.index + 1];
+      position.sellClientOrderId = undefined;
+      position.sellBaseSize = undefined;
+      this._saveGridState(this._state!);
+      if (!sellLevel) return;
+      this._countRejection(
+        this._sellSlot(position),
+        clientOrderId,
+        "sell",
+        sellLevel.price,
+      );
+      await this._placeSellOnLevel(sellLevel, position);
+      return;
+    }
+    const quoteSize = this._pendingBuyQuote(level, clientOrderId);
+    this._clearPendingBuy(level, clientOrderId);
+    this._saveGridState(this._state!);
+    try {
+      this._countRejection(
+        this._buySlot(level),
+        clientOrderId,
+        "buy",
+        level.price,
+      );
+    } catch (err) {
+      this._returnToSlot(level, quoteSize);
+      this._saveGridState(this._state!);
+      throw err;
+    }
+    await this._placeBuyOrAlert(level, quoteSize);
+  }
+
   private async _placeBuyOrAlert(
     level: GridLevelState,
     quoteSize = new Decimal(this._state!.quotePerLevel),
@@ -4609,19 +4696,9 @@ export class ForegroundGridBot {
       return await this._placeBuyOrder(level, quoteSize, clientOrderId);
     } catch (err) {
       rethrowIfInsecureKey(err);
-      if (err instanceof OrderRejectedError) throw err;
-      if (clientOrderId && isDuplicateClientOrderIdError(err)) {
-        this._markRefused(this._buySlot(level), clientOrderId);
-        return null;
-      }
       this._alertBuyFailure(level, quoteSize, err);
       return null;
     }
-  }
-
-  private _markRefused(slot: string, clientOrderId: string): void {
-    this._placementHealth.adopted(slot);
-    this._refusedRecheckAt.set(clientOrderId, 0);
   }
 
   private _pendingBuyQuote(
@@ -4631,39 +4708,6 @@ export class ForegroundGridBot {
     return new Decimal(
       level.pendingBuyQuoteSizes?.[clientOrderId] ?? this._state!.quotePerLevel,
     );
-  }
-
-  private async _recheckRefused(
-    clientOrderId: string,
-    resolve: (order: Order) => Promise<unknown>,
-  ): Promise<void> {
-    if (Date.now() < (this._refusedRecheckAt.get(clientOrderId) ?? 0)) return;
-    const order = await this._findByClientOrderId(clientOrderId);
-    if (!order) {
-      this._refusedRecheckAt.set(
-        clientOrderId,
-        Date.now() + REFUSED_RECHECK_MS,
-      );
-      return;
-    }
-    this._forgetLookup(clientOrderId);
-    await resolve(order);
-  }
-
-  private async _findByClientOrderId(
-    clientOrderId: string,
-  ): Promise<Order | undefined> {
-    try {
-      return (
-        await this._ordersByClientOrderId(this._lookupStart([clientOrderId]))
-      ).get(clientOrderId);
-    } catch (err) {
-      rethrowIfInsecureKey(err);
-      this._warnings.push(
-        `Order lookup: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return undefined;
-    }
   }
 
   private async _placeBuyOrder(
@@ -4677,74 +4721,68 @@ export class ForegroundGridBot {
       return orderId;
     }
 
-    let attemptClientOrderId = clientOrderId ?? randomUUID();
-    let minted = clientOrderId === undefined;
+    const attemptClientOrderId = clientOrderId ?? randomUUID();
+    const minted = clientOrderId === undefined;
     level.pendingBuyQuoteSizes ??= {};
     const persistedQuoteSize = level.pendingBuyQuoteSizes[attemptClientOrderId];
     const requestedQuoteSize = persistedQuoteSize
       ? new Decimal(persistedQuoteSize)
       : quoteSize;
-    for (;;) {
-      const pendingIds = (level.pendingBuyClientOrderIds ??= []);
-      const newIntent = !pendingIds.includes(attemptClientOrderId);
-      if (newIntent && minted && this._isStopping()) {
+    const pendingIds = (level.pendingBuyClientOrderIds ??= []);
+    const newIntent = !pendingIds.includes(attemptClientOrderId);
+    if (newIntent && minted && this._isStopping()) {
+      this._returnToSlot(level, requestedQuoteSize);
+      this._saveGridState(this._state!);
+      return null;
+    }
+    if (newIntent) {
+      pendingIds.push(attemptClientOrderId);
+      level.pendingBuyQuoteSizes[attemptClientOrderId] =
+        requestedQuoteSize.toString();
+      this._saveGridState(this._state!);
+    }
+    let placement: OrderPlacementResult;
+    try {
+      placement = await this._placeGridOrder({
+        symbol: this._config.pair,
+        side: "buy",
+        clientOrderId: attemptClientOrderId,
+        limit: {
+          price: level.price,
+          quoteSize: requestedQuoteSize.toString(),
+          executionInstructions: ["allow_taker"],
+        },
+      });
+    } catch (err) {
+      if (isDuplicateClientOrderIdError(err)) {
+        this._holdForLookup(this._buySlot(level), attemptClientOrderId);
+        return null;
+      }
+      if (!(err instanceof OrderNotSentError)) throw err;
+      if (newIntent && minted) {
+        this._clearPendingBuy(level, attemptClientOrderId);
         this._returnToSlot(level, requestedQuoteSize);
         this._saveGridState(this._state!);
-        return null;
       }
-      if (newIntent) {
-        pendingIds.push(attemptClientOrderId);
-        (level.pendingBuyQuoteSizes ??= {})[attemptClientOrderId] =
-          requestedQuoteSize.toString();
-        this._saveGridState(this._state!);
-      }
-      let placement: OrderPlacementResult;
-      try {
-        placement = await this._placeGridOrder({
-          symbol: this._config.pair,
-          side: "buy",
-          clientOrderId: attemptClientOrderId,
-          limit: {
-            price: level.price,
-            quoteSize: requestedQuoteSize.toString(),
-            executionInstructions: ["allow_taker"],
-          },
-        });
-      } catch (err) {
-        if (!(err instanceof OrderNotSentError)) throw err;
-        if (newIntent && minted) {
-          this._clearPendingBuy(level, attemptClientOrderId);
-          this._returnToSlot(level, requestedQuoteSize);
-          this._saveGridState(this._state!);
-        }
-        return null;
-      }
-      const orderId = placement.venue_order_id;
-      this._clearPendingBuy(level, attemptClientOrderId);
-      level.buyOrderQuoteSizes ??= {};
-      level.buyOrderQuoteSizes[orderId] = requestedQuoteSize.toString();
-      (level.buyClientOrderIds ??= {})[orderId] = attemptClientOrderId;
-      if (!level.buyOrderIds.includes(orderId)) {
-        level.buyOrderIds.push(orderId);
-      }
-      this._saveGridState(this._state!);
-      const slot = this._buySlot(level);
-      if (placement.state !== "rejected") {
-        this._placementHealth.sent(slot, orderId);
-        return orderId;
-      }
-      this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
-      this._countRejection(slot, attemptClientOrderId, "buy", level.price);
-      const order = await this._awaitRejection(orderId);
-      if (!order) {
-        this._unreadRejections.set(orderId, Date.now() + UNREAD_REJECTION_MS);
-        return orderId;
-      }
-      if (await this._processTerminalBuy(level, order, true)) return null;
-      if (this._state!.halt) return null;
-      attemptClientOrderId = randomUUID();
-      minted = true;
+      return null;
     }
+    const slot = this._buySlot(level);
+    if (placement.state === "rejected") {
+      this._holdForLookup(slot, attemptClientOrderId);
+      return null;
+    }
+    const orderId = placement.venue_order_id;
+    this._clearPendingBuy(level, attemptClientOrderId);
+    level.buyOrderQuoteSizes ??= {};
+    level.buyOrderQuoteSizes[orderId] = requestedQuoteSize.toString();
+    (level.buyClientOrderIds ??= {})[orderId] = attemptClientOrderId;
+    if (!level.buyOrderIds.includes(orderId)) {
+      level.buyOrderIds.push(orderId);
+    }
+    this._forgetLookup(attemptClientOrderId);
+    this._saveGridState(this._state!);
+    this._placementHealth.sent(slot, orderId);
+    return orderId;
   }
 
   private async _resumePendingPlacements(resend = true): Promise<{
@@ -4752,7 +4790,6 @@ export class ForegroundGridBot {
     renewed: Map<string, ClosedPendingOrder>;
     found: Set<string>;
   }> {
-    const state = this._state!;
     const resentOrderIds = new Set<string>();
     const renewedOrderIds = new Map<string, ClosedPendingOrder>();
     const foundOrderIds = new Set<string>();
@@ -4769,43 +4806,21 @@ export class ForegroundGridBot {
       renewed: renewedOrderIds,
       found: foundOrderIds,
     });
-    const hasPending = state.levels.some(
-      (level) =>
-        (level.pendingBuyClientOrderIds?.length ?? 0) > 0 ||
-        level.positions.some(
-          (position) => !!position.sellClientOrderId && !position.sellOrderId,
-        ),
-    );
-    if (!hasPending) return resumed();
+    const intents = this._pendingIntents();
+    if (intents.length === 0) return resumed();
     const ordersByClientOrderId = await this._ordersByClientOrderId();
     for (const order of ordersByClientOrderId.values()) {
       foundOrderIds.add(order.id);
     }
-    for (const level of state.levels) {
-      for (const clientOrderId of [...(level.pendingBuyClientOrderIds ?? [])]) {
-        note(
-          await this._resumePendingBuy(
-            level,
-            clientOrderId,
-            ordersByClientOrderId.get(clientOrderId),
-            resend,
-          ),
-        );
-      }
-      const sellLevel = state.levels[level.index + 1];
-      if (!sellLevel) continue;
-      for (const position of level.positions) {
-        if (position.sellClientOrderId && !position.sellOrderId) {
-          note(
-            await this._resumePendingSell(
-              sellLevel,
-              position,
-              ordersByClientOrderId.get(position.sellClientOrderId),
-              resend,
-            ),
-          );
-        }
-      }
+    for (const intent of intents) {
+      if (!this._isStillPending(intent)) continue;
+      note(
+        await this._resumeIntent(
+          intent,
+          ordersByClientOrderId.get(intent.clientOrderId),
+          resend,
+        ),
+      );
     }
     return resumed();
   }
@@ -4829,13 +4844,47 @@ export class ForegroundGridBot {
   }
 
   private _forgetLookup(clientOrderId: string): void {
-    this._refusedRecheckAt.delete(clientOrderId);
+    const state = this._state!;
+    if (this._isUsed(clientOrderId)) {
+      state.usedClientOrderIds = state.usedClientOrderIds!.filter(
+        (usedId) => usedId !== clientOrderId,
+      );
+    }
+    this._pendingMissedOnce.delete(clientOrderId);
     this._unansweredSince.delete(clientOrderId);
+    this._noLongerMissing(clientOrderId);
   }
 
   private async _ordersByClientOrderId(
     historyFrom = this._gridHistoryStart(),
   ): Promise<Map<string, Order>> {
+    const byClientOrderId = new Map<string, Order>();
+    for (const order of await this._listOrders(historyFrom)) {
+      const known = byClientOrderId.get(order.client_order_id);
+      if (!known || this._orderRank(order) < this._orderRank(known)) {
+        byClientOrderId.set(order.client_order_id, order);
+      }
+    }
+    return byClientOrderId;
+  }
+
+  private _orderRank(order: Pick<Order, "status" | "filled_quantity">): number {
+    if (this._isBareRejection(order)) return 2;
+    return this._isOpenOrFilled(order) ? 0 : 1;
+  }
+
+  private _isBareRejection(
+    order: Pick<Order, "status" | "filled_quantity">,
+  ): boolean {
+    return (
+      order.status === "rejected" &&
+      !new Decimal(order.filled_quantity || 0).gt(0)
+    );
+  }
+
+  private async _listOrders(
+    historyFrom = this._gridHistoryStart(),
+  ): Promise<Order[]> {
     const orders = new Map<string, Order>();
     let cursor: string | undefined;
     do {
@@ -4847,7 +4896,7 @@ export class ForegroundGridBot {
         }),
       );
       for (const order of response.data) {
-        orders.set(order.client_order_id, order);
+        orders.set(order.id, order);
       }
       cursor = response.metadata?.next_cursor as string | undefined;
     } while (cursor);
@@ -4868,11 +4917,9 @@ export class ForegroundGridBot {
       apiLimit: HISTORICAL_ORDERS_API_LIMIT,
     });
     for (const order of historical) {
-      if (!orders.has(order.client_order_id)) {
-        orders.set(order.client_order_id, order);
-      }
+      if (!orders.has(order.id)) orders.set(order.id, order);
     }
-    return orders;
+    return [...orders.values()];
   }
 
   private _isOpenOrFilled(
@@ -4891,19 +4938,25 @@ export class ForegroundGridBot {
     resend: boolean,
   ): Promise<ResumedPlacement | null> {
     const quoteSize = this._pendingBuyQuote(level, clientOrderId);
-    if (!order) {
-      if (resend) {
-        return placedAgain(
-          await this._placeBuyOrAlert(level, quoteSize, clientOrderId),
-          null,
-        );
+    if (!order || this._isBareRejection(order)) {
+      if (order) this._holdForLookup(this._buySlot(level), clientOrderId);
+      if (!resend) {
+        if (this._recordMissing(clientOrderId) === "gone") {
+          this._clearPendingBuy(level, clientOrderId);
+          this._saveGridState(this._state!);
+        }
+        return null;
       }
-      if (this._recordMissing(clientOrderId) === "gone") {
-        this._clearPendingBuy(level, clientOrderId);
-        this._saveGridState(this._state!);
+      if (this._isUsed(clientOrderId)) {
+        this._noteMissing(clientOrderId);
+        return null;
       }
-      return null;
+      return placedAgain(
+        await this._placeBuyOrAlert(level, quoteSize, clientOrderId),
+        null,
+      );
     }
+    this._forgetLookup(clientOrderId);
     this._clearPendingBuy(level, clientOrderId);
     if (this._isOpenOrFilled(order)) {
       level.buyOrderQuoteSizes ??= {};
@@ -4914,11 +4967,11 @@ export class ForegroundGridBot {
       }
       this._saveGridState(this._state!);
       this._placementHealth.adopted(this._buySlot(level));
-      this._recordFoundOrder(this._buySlot(level), order, "buy", level.price);
+      this._recordFoundOrder(this._buySlot(level), order);
       return null;
     }
     this._saveGridState(this._state!);
-    this._recordFoundOrder(this._buySlot(level), order, "buy", level.price);
+    this._recordFoundOrder(this._buySlot(level), order);
     const closedAs = this._closedAs(order);
     if (!resend) return null;
     return placedAgain(await this._placeBuyOrAlert(level, quoteSize), closedAs);
@@ -4930,41 +4983,39 @@ export class ForegroundGridBot {
     order: Order | undefined,
     resend: boolean,
   ): Promise<ResumedPlacement | null> {
-    const closedAs =
-      order && !this._isOpenOrFilled(order) ? this._closedAs(order) : null;
-    if (order) {
-      if (this._isOpenOrFilled(order)) {
-        position.sellOrderId = order.id;
-        this._saveGridState(this._state!);
-        this._placementHealth.adopted(this._sellSlot(position));
-        this._recordFoundOrder(
-          this._sellSlot(position),
-          order,
-          "sell",
-          sellLevel.price,
-        );
+    const clientOrderId = position.sellClientOrderId;
+    if (!order || this._isBareRejection(order)) {
+      if (order && clientOrderId) {
+        this._holdForLookup(this._sellSlot(position), clientOrderId);
+      }
+      if (!resend) {
+        if (clientOrderId && this._recordMissing(clientOrderId) === "gone") {
+          position.sellClientOrderId = undefined;
+          position.sellBaseSize = undefined;
+          this._saveGridState(this._state!);
+        }
         return null;
       }
-      position.sellClientOrderId = undefined;
-      position.sellBaseSize = undefined;
-      this._saveGridState(this._state!);
-      this._recordFoundOrder(
-        this._sellSlot(position),
-        order,
-        "sell",
-        sellLevel.price,
-      );
-    } else if (!resend) {
-      if (
-        position.sellClientOrderId &&
-        this._recordMissing(position.sellClientOrderId) === "gone"
-      ) {
-        position.sellClientOrderId = undefined;
-        position.sellBaseSize = undefined;
-        this._saveGridState(this._state!);
+      if (clientOrderId && this._isUsed(clientOrderId)) {
+        this._noteMissing(clientOrderId);
+        return null;
       }
+      await this._placeSellOnLevel(sellLevel, position);
+      return placedAgain(position.sellOrderId ?? null, null);
+    }
+    if (clientOrderId) this._forgetLookup(clientOrderId);
+    if (this._isOpenOrFilled(order)) {
+      position.sellOrderId = order.id;
+      this._saveGridState(this._state!);
+      this._placementHealth.adopted(this._sellSlot(position));
+      this._recordFoundOrder(this._sellSlot(position), order);
       return null;
     }
+    const closedAs = this._closedAs(order);
+    position.sellClientOrderId = undefined;
+    position.sellBaseSize = undefined;
+    this._saveGridState(this._state!);
+    this._recordFoundOrder(this._sellSlot(position), order);
     if (!resend) return null;
     await this._placeSellOnLevel(sellLevel, position);
     return placedAgain(position.sellOrderId ?? null, closedAs);
