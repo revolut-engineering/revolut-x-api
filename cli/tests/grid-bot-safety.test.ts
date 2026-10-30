@@ -221,7 +221,7 @@ describe("grid bot safety", () => {
     ]);
   });
 
-  it("still stops when restoring a first buy hits the third rejection", async () => {
+  it("keeps restoring start-up when a first buy comes back rejected, holding its client order ID", async () => {
     // given
     const state = makeState();
     state.initializing = true;
@@ -268,10 +268,14 @@ describe("grid bot safety", () => {
     const startup = internals._reconcileAndInit(state);
 
     // then
-    await expect(startup).rejects.toMatchObject({
-      name: "OrderRejectedError",
-    });
-    expect(placeOrder).toHaveBeenCalledTimes(3);
+    await expect(startup).resolves.toBeUndefined();
+    const sent = placeOrder.mock.calls.map(
+      ([request]) => request.clientOrderId,
+    );
+    expect(sent).toHaveLength(1);
+    expect(state.levels[1].pendingBuyClientOrderIds).toEqual(sent);
+    expect(state.levels[1].buyOrderIds).toEqual([]);
+    expect(state.initializing).toBe(false);
   });
 
   it("still starts when a split sell can't be restored, and keeps its coins for the next check", async () => {
@@ -709,7 +713,7 @@ describe("grid bot safety", () => {
       _state: GridState;
       _client: Record<string, unknown>;
       _pendingSweepAt: number;
-      _sweepPendingBuys: () => Promise<void>;
+      _sweepPendingIntents: (activeOrders: Map<string, Order>) => Promise<void>;
     };
     internals._state = state;
     internals._client = {
@@ -720,9 +724,9 @@ describe("grid bot safety", () => {
     };
 
     // when
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
     internals._pendingSweepAt = 0;
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
 
     // then
     expect(placeOrder).toHaveBeenCalledTimes(1);
@@ -2067,6 +2071,10 @@ describe("grid bot take-now recovery", () => {
 });
 
 describe("grid bot refused re-sends while running", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   function listed(overrides: Partial<Order>): Order {
     return {
       id: "listed",
@@ -2114,7 +2122,7 @@ describe("grid bot refused re-sends while running", () => {
       _attentionLines: () => string[];
       _client: Record<string, unknown>;
       _pendingSweepAt: number;
-      _sweepPendingBuys: () => Promise<void>;
+      _sweepPendingIntents: (activeOrders: Map<string, Order>) => Promise<void>;
       _placeBuyOrAlert: (
         level: GridLevelState,
         quote?: Decimal,
@@ -2155,15 +2163,16 @@ describe("grid bot refused re-sends while running", () => {
     state.levels[0].pendingBuyQuoteSizes = { stale: "10" };
 
     // when
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
 
     // then
     expect(state.levels[0].buyOrderIds).toEqual(["live-buy"]);
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
   });
 
-  it("replaces a stuck buy that the exchange had rejected with a fresh one", async () => {
+  it("replaces a stuck buy that the exchange had rejected with a fresh one once 5 minutes have passed", async () => {
     // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { state, internals, placeOrder } = refusingBot({
       historical: [listed({ id: "old", status: "rejected" })],
     });
@@ -2180,14 +2189,21 @@ describe("grid bot refused re-sends while running", () => {
         }) as never,
     );
 
+    await internals._sweepPendingIntents(new Map());
+    const withinFiveMinutes = placeOrder.mock.calls.length;
+
     // when
-    await internals._sweepPendingBuys();
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    internals._pendingSweepAt = 0;
+    await internals._sweepPendingIntents(new Map());
 
     // then
+    expect(withinFiveMinutes).toBe(0);
     expect(placeOrder).toHaveBeenCalledTimes(1);
     expect(placeOrder.mock.calls[0][0].clientOrderId).not.toBe("stale");
     expect(state.levels[0].buyOrderIds).toEqual(["fresh-buy"]);
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+    expect(internals._warnings).toEqual(["Buy @99 rejected, retrying (2/3)"]);
   });
 
   it("stops re-sending a refused id it can't find and only looks it up again later", async () => {
@@ -2199,14 +2215,14 @@ describe("grid bot refused re-sends while running", () => {
     // when
     for (let sweep = 0; sweep < 3; sweep++) {
       internals._pendingSweepAt = 0;
-      await internals._sweepPendingBuys();
+      await internals._sweepPendingIntents(new Map());
     }
 
     // then
     expect(placeOrder).toHaveBeenCalledTimes(1);
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["stale"]);
     expect(internals._attentionLines()).toEqual([
-      "Buy @99 not confirmed yet, looked up once a minute",
+      "Buy @99 rejected or already placed, looked up once a minute",
     ]);
   });
 
@@ -2235,7 +2251,7 @@ describe("grid bot refused re-sends while running", () => {
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["stale"]);
   });
 
-  it("adopts the live sell when a stuck sell is refused as already placed", async () => {
+  it("adopts the live sell the lookup finds when a stuck sell is refused as already placed", async () => {
     // given
     const { state, internals } = refusingBot({
       active: [
@@ -2258,6 +2274,7 @@ describe("grid bot refused re-sends while running", () => {
 
     // when
     await internals._placeSellOnLevel(state.levels[1], position);
+    await internals._sweepPendingIntents(new Map());
 
     // then
     expect(position.sellOrderId).toBe("live-sell");
@@ -3749,19 +3766,16 @@ describe("grid bot attention lines and end-of-check alerts", () => {
     state.levels[0].positions = [
       { ...heldPosition(), sellClientOrderId: "refused-sell" },
     ];
-    const refused = (
-      internals as unknown as { _refusedRecheckAt: Map<string, number> }
-    )._refusedRecheckAt;
-    refused.set("refused-sell", 0);
+    state.usedClientOrderIds = ["refused-sell"];
     const whileRefused = internals._attentionLines();
 
     // when
-    refused.delete("refused-sell");
+    state.usedClientOrderIds = [];
     state.levels[0].positions[0].sellClientOrderId = undefined;
 
     // then
     expect(whileRefused).toEqual([
-      "Sell @99.1 not confirmed yet, looked up once a minute",
+      "Sell @99.1 rejected or already placed, looked up once a minute",
     ]);
     expect(internals._attentionLines()).toEqual(["Sell @99.1 not placed yet"]);
   });
@@ -3810,7 +3824,7 @@ describe("grid bot attention lines and end-of-check alerts", () => {
 
     // then
     expect(internals._attentionLines()).toEqual([
-      "Sell @99.1 not confirmed yet, looked up once a minute",
+      "Sell @99.1 rejected or already placed, looked up once a minute",
     ]);
   });
 
@@ -4167,6 +4181,19 @@ function stopRequest(internals: object): AbortController {
   return (internals as { _stopRequest: AbortController })._stopRequest;
 }
 
+function rejectThreeTimes(internals: {
+  _countRejection: (
+    slot: string,
+    clientOrderId: string,
+    side: "buy" | "sell",
+    price: string,
+  ) => void;
+}): void {
+  for (const clientOrderId of ["first", "second", "third"]) {
+    internals._countRejection("buy:2", clientOrderId, "buy", "99.2");
+  }
+}
+
 describe("grid bot liquidation", () => {
   type SaleRequest = {
     clientOrderId: string;
@@ -4309,6 +4336,12 @@ describe("grid bot liquidation", () => {
         sellLevel: GridLevelState,
         position: GridLevelPosition,
       ) => Promise<void>;
+      _countRejection: (
+        slot: string,
+        clientOrderId: string,
+        side: "buy" | "sell",
+        price: string,
+      ) => void;
       _cancelUntilClosed: (
         orderId: string,
       ) => Promise<{ closed: boolean; order?: OrderDetails | null }>;
@@ -5291,13 +5324,7 @@ describe("grid bot liquidation", () => {
       sales: [{ filled_quantity: "0.1", filled_amount: "9.5" }],
     });
     state.levels[1].positions = [position("p1", "0.1", "10")];
-    internals._run = async () => {
-      await internals._placeBuyOrder(
-        state.levels[2],
-        new Decimal("10"),
-        "rebuy",
-      );
-    };
+    internals._run = async () => rejectThreeTimes(internals);
 
     // when
     const run = bot.run();
@@ -5348,13 +5375,7 @@ describe("grid bot liquidation", () => {
       peek: async () => new Decimal("90"),
       next: async () => ({ price: new Decimal("90"), timestamp: 1 }),
     };
-    internals._tick = async () => {
-      await internals._placeBuyOrder(
-        state.levels[2],
-        new Decimal("10"),
-        "rebuy",
-      );
-    };
+    internals._tick = async () => rejectThreeTimes(internals);
 
     // when
     const loop = internals._loop();
@@ -5383,13 +5404,7 @@ describe("grid bot liquidation", () => {
         },
       };
     });
-    internals._run = async () => {
-      await internals._placeBuyOrder(
-        state.levels[2],
-        new Decimal("10"),
-        "rebuy",
-      );
-    };
+    internals._run = async () => rejectThreeTimes(internals);
 
     // when
     const run = bot.run();
@@ -5404,21 +5419,24 @@ describe("grid bot liquidation", () => {
     expect(state.halt).toBeDefined();
   });
 
-  it("books and sells what a rejected sell traded when its third rejection stops the grid", async () => {
+  it("books and sells what a rejected sell traded when rejections stop the grid", async () => {
     // given
+    const traded = {
+      side: "sell",
+      status: "rejected",
+      filled_quantity: "0.04",
+      filled_amount: "3.964",
+      total_fee: "0",
+      fee_currency: "USD",
+    } as const;
     const { bot, state, internals, placeOrder } = liquidationBot({
-      orders: {
-        "rejected-1": { side: "sell", status: "rejected" },
-        "rejected-2": { side: "sell", status: "rejected" },
-        "rejected-3": {
-          side: "sell",
-          status: "rejected",
-          filled_quantity: "0.04",
-          filled_amount: "3.964",
-          total_fee: "0",
-          fee_currency: "USD",
-        },
-      },
+      historical: [
+        exchangeOrder("rejected-sell", {
+          ...traded,
+          client_order_id: "held-sell",
+        }),
+      ],
+      orders: { "rejected-sell": traded },
       sales: [
         {
           filled_quantity: "0.06",
@@ -5427,20 +5445,15 @@ describe("grid bot liquidation", () => {
         },
       ],
     });
-    const held = position("p1", "0.1", "10");
-    state.levels[0].positions = [held];
-    for (const venueOrderId of ["rejected-1", "rejected-2", "rejected-3"]) {
-      placeOrder.mockImplementationOnce(async (request: SaleRequest) => ({
-        data: {
-          venue_order_id: venueOrderId,
-          client_order_id: request.clientOrderId,
-          state: "rejected" as const,
-        },
-      }));
-    }
-    internals._run = async () => {
-      await internals._placeSellOnLevel(state.levels[1], held);
-    };
+    state.createdAt = new Date(Date.now() - 60_000).toISOString();
+    state.levels[0].positions = [
+      {
+        ...position("p1", "0.1", "10"),
+        sellClientOrderId: "held-sell",
+        sellBaseSize: "0.1",
+      },
+    ];
+    internals._run = async () => rejectThreeTimes(internals);
 
     // when
     const run = bot.run();
@@ -5448,7 +5461,6 @@ describe("grid bot liquidation", () => {
     // then
     await expect(run).rejects.toMatchObject({
       name: "OrderRejectedError",
-      side: "sell",
     });
     expect(marketSells(placeOrder)).toEqual([
       expect.objectContaining({ market: { baseSize: "0.06" } }),
@@ -5460,12 +5472,12 @@ describe("grid bot liquidation", () => {
   it("does not count rejections it finds while selling everything", async () => {
     // given
     const { state, internals, placeOrder } = liquidationBot({
-      historical: [
-        exchangeOrder("stale-order", {
-          client_order_id: "stale",
+      historical: ["first", "stale"].map((clientOrderId) =>
+        exchangeOrder(`${clientOrderId}-order`, {
+          client_order_id: clientOrderId,
           status: "rejected",
         }),
-      ],
+      ),
       sales: [
         {
           filled_quantity: "0.1",
@@ -5475,36 +5487,18 @@ describe("grid bot liquidation", () => {
       ],
     });
     state.levels[1].positions = [position("p1", "0.1", "10")];
-    for (const venueOrderId of ["rejected-1", "rejected-2"]) {
-      placeOrder.mockImplementationOnce(async (request: SaleRequest) => ({
-        data: {
-          venue_order_id: venueOrderId,
-          client_order_id: request.clientOrderId,
-          state: "rejected" as const,
-        },
-      }));
-    }
-    placeOrder.mockImplementationOnce(async () => {
-      throw new Error("Insufficient balance");
-    });
-    await expect(
-      internals._placeBuyOrder(state.levels[0], new Decimal("10"), "first"),
-    ).rejects.toThrow("Insufficient balance");
+    state.levels[0].pendingBuyClientOrderIds = ["first", "stale"];
+    state.levels[0].pendingBuyQuoteSizes = { first: "10", stale: "10" };
     const tenMinutesAgo = new Date(Date.now() - 10 * 60_000).toISOString();
-    state.missingSince = Object.fromEntries(
-      state.levels[0].pendingBuyClientOrderIds!.map((id) => [
-        id,
-        tenMinutesAgo,
-      ]),
-    );
-    state.levels[0].pendingBuyClientOrderIds!.push("stale");
-    state.levels[0].pendingBuyQuoteSizes!.stale = "10";
+    state.missingSince = { first: tenMinutesAgo, stale: tenMinutesAgo };
+    state.usedClientOrderIds = ["first", "stale"];
 
     // when
     await internals._liquidate("stop-loss", new Decimal("90"));
 
     // then
     expect(marketSells(placeOrder)).toHaveLength(1);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
     expect(state.halt).toBeUndefined();
   });
 
@@ -6153,6 +6147,7 @@ describe("grid bot order rejection", () => {
   type PlacementRequest = {
     clientOrderId: string;
     limit: {
+      price?: string;
       quoteSize?: string;
       baseSize?: string;
       executionInstructions?: string[];
@@ -6339,7 +6334,7 @@ describe("grid bot order rejection", () => {
     );
   });
 
-  it("looks up a rejected buy, re-sends it twice with new order IDs, then stops with the last one tracked", async () => {
+  it("keeps a rejected buy's client order ID and sends nothing more at once", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -6349,46 +6344,6 @@ describe("grid bot order rejection", () => {
     const { internals, getOrder } = placementInternals(state, placeOrder);
 
     // when
-    const placement = internals._placeBuyOrder(
-      state.levels[0],
-      new Decimal("10"),
-      "client-order",
-    );
-
-    // then
-    await expect(placement).rejects.toMatchObject({
-      name: "OrderRejectedError",
-      side: "buy",
-      price: "99",
-    });
-    const requests = sentRequests(placeOrder);
-    expect(requests).toHaveLength(3);
-    expect(requests[0].clientOrderId).toBe("client-order");
-    expect(new Set(requests.map((r) => r.clientOrderId)).size).toBe(3);
-    expect(requests.map((r) => r.limit.quoteSize)).toEqual(["10", "10", "10"]);
-    expect(getOrder).toHaveBeenCalledTimes(2);
-    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
-    expect(state.levels[0].pendingBuyQuoteSizes).toEqual({});
-    expect(state.levels[0].buyOrderIds).toEqual([
-      `venue-${requests[2].clientOrderId}`,
-    ]);
-  });
-
-  it("keeps a buy that the exchange accepts on a re-send", async () => {
-    // given
-    const state = makeState();
-    state.levels[0].buyOrderIds = [];
-    const placeOrder = vi
-      .fn()
-      .mockImplementationOnce(async (request: PlacementRequest) =>
-        rejectedPlacement(request),
-      )
-      .mockImplementationOnce(async (request: PlacementRequest) =>
-        acceptedPlacement(request, "accepted-buy"),
-      );
-    const { internals } = placementInternals(state, placeOrder);
-
-    // when
     const orderId = await internals._placeBuyOrder(
       state.levels[0],
       new Decimal("10"),
@@ -6396,13 +6351,17 @@ describe("grid bot order rejection", () => {
     );
 
     // then
-    expect(orderId).toBe("accepted-buy");
-    expect(placeOrder).toHaveBeenCalledTimes(2);
-    expect(state.levels[0].buyOrderIds).toEqual(["accepted-buy"]);
-    expect(state.levels[0].buyOrderQuoteSizes).toEqual({
-      "accepted-buy": "10",
+    expect(orderId).toBeNull();
+    expect(sentRequests(placeOrder).map((r) => r.clientOrderId)).toEqual([
+      "client-order",
+    ]);
+    expect(getOrder).not.toHaveBeenCalled();
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["client-order"]);
+    expect(state.levels[0].pendingBuyQuoteSizes).toEqual({
+      "client-order": "10",
     });
-    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+    expect(state.levels[0].buyOrderIds).toEqual([]);
+    expect(internals._warnings).toEqual([]);
   });
 
   it("treats an error thrown by order placement as a failure, not a rejection", async () => {
@@ -6427,7 +6386,7 @@ describe("grid bot order rejection", () => {
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["client-order"]);
   });
 
-  it("looks up a rejected sell, re-sends it twice with new order IDs, then stops with the last one tracked", async () => {
+  it("keeps a rejected sell's client order ID and sends nothing more until it is looked up", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -6444,62 +6403,20 @@ describe("grid bot order rejection", () => {
     const { internals, getOrder } = placementInternals(state, placeOrder);
 
     // when
-    const placement = internals._placeSellOnLevel(state.levels[1], position);
-
-    // then
-    await expect(placement).rejects.toMatchObject({
-      name: "OrderRejectedError",
-      side: "sell",
-      price: "99.1",
-    });
-    const requests = sentRequests(placeOrder);
-    expect(requests).toHaveLength(3);
-    expect(new Set(requests.map((r) => r.clientOrderId)).size).toBe(3);
-    expect(requests.map((r) => r.limit.baseSize)).toEqual([
-      "0.1",
-      "0.1",
-      "0.1",
-    ]);
-    expect(getOrder).toHaveBeenCalledTimes(2);
-    expect(state.levels[0].positions).toEqual([position]);
-    expect(position.sellOrderId).toBe(`venue-${requests[2].clientOrderId}`);
-    expect(position.sellClientOrderId).toBe(requests[2].clientOrderId);
-    expect(position.sellBaseSize).toBe("0.1");
-  });
-
-  it("keeps a sell that the exchange accepts on a re-send", async () => {
-    // given
-    const state = makeState();
-    state.levels[0].buyOrderIds = [];
-    const position: GridLevelPosition = {
-      id: "position-1",
-      baseHeld: "0.1",
-      fillCost: "10",
-      sellOrderId: null,
-    };
-    state.levels[0].positions = [position];
-    const placeOrder = vi
-      .fn()
-      .mockImplementationOnce(async (request: PlacementRequest) =>
-        rejectedPlacement(request),
-      )
-      .mockImplementationOnce(async (request: PlacementRequest) =>
-        acceptedPlacement(request, "accepted-sell"),
-      );
-    const { internals } = placementInternals(state, placeOrder);
-
-    // when
+    await internals._placeSellOnLevel(state.levels[1], position);
     await internals._placeSellOnLevel(state.levels[1], position);
 
     // then
     const requests = sentRequests(placeOrder);
-    expect(requests).toHaveLength(2);
-    expect(position.sellOrderId).toBe("accepted-sell");
-    expect(position.sellClientOrderId).toBe(requests[1].clientOrderId);
+    expect(requests).toHaveLength(1);
+    expect(getOrder).not.toHaveBeenCalled();
+    expect(position.sellOrderId).toBeNull();
+    expect(position.sellClientOrderId).toBe(requests[0].clientOrderId);
     expect(position.sellBaseSize).toBe("0.1");
+    expect(internals._warnings).toEqual([]);
   });
 
-  it("propagates a rejection while replacing a partial buy remainder", async () => {
+  it("keeps a rejected partial buy remainder pending under its client order ID", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
@@ -6552,13 +6469,15 @@ describe("grid bot order rejection", () => {
     );
 
     // then
-    await expect(settlement).rejects.toMatchObject({
-      name: "OrderRejectedError",
-    });
-    expect(placeOrder).toHaveBeenCalledTimes(3);
+    await expect(settlement).resolves.toBe(true);
+    const sent = sentRequests(placeOrder);
+    expect(sent.map((request) => request.limit.quoteSize)).toEqual(["6"]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([
+      sent[0].clientOrderId,
+    ]);
   });
 
-  it("stops when the re-buy after a completed sell keeps being rejected", async () => {
+  it("keeps a rejected re-buy after a completed sell pending under its client order ID", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -6621,15 +6540,16 @@ describe("grid bot order rejection", () => {
     );
 
     // then
-    await expect(settlement).rejects.toMatchObject({
-      name: "OrderRejectedError",
-    });
-    expect(placeOrder).toHaveBeenCalledTimes(3);
+    await expect(settlement).resolves.toBeDefined();
+    const sent = sentRequests(placeOrder);
+    expect(sent).toHaveLength(1);
     expect(state.stats.realizedPnl).toBe("1");
-    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([
+      sent[0].clientOrderId,
+    ]);
   });
 
-  it("counts a legacy post-only order found rejected once and places it again", async () => {
+  it("holds a legacy post-only order found rejected under its client order ID instead of placing another at once", async () => {
     // given
     const state = makeState();
     const order = rejectedOrder({ id: "buy-1" });
@@ -6661,15 +6581,31 @@ describe("grid bot order rejection", () => {
     };
     internals._state = state;
     internals._pairInfo = PAIR_INFO;
-    internals._client = { getActiveOrders, getOrder, placeOrder, getBalances };
+    internals._client = {
+      getActiveOrders,
+      getHistoricalOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getOrder,
+      placeOrder,
+      getBalances,
+    };
 
     // when
     await internals._tick(new Decimal("100"));
 
     // then
-    expect(state.levels[0].buyOrderIds).toHaveLength(1);
-    expect(state.levels[0].buyOrderIds[0]).not.toBe("buy-1");
-    expect(internals._warnings).toContain("Buy @99 rejected, retrying (2/3)");
+    expect(state.levels[0].buyOrderIds).toEqual([]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["client-order"]);
+    expect(state.levels[0].pendingBuyQuoteSizes).toEqual({
+      "client-order": "10",
+    });
+    expect(
+      sentRequests(placeOrder).filter(
+        (request) => request.limit.price === "99",
+      ),
+    ).toEqual([]);
+    expect(internals._warnings.filter((w) => w.includes("rejected"))).toEqual(
+      [],
+    );
   });
 
   it("books the fill of an already tracked buy that was rejected and keeps running", async () => {
@@ -6721,85 +6657,6 @@ describe("grid bot order rejection", () => {
     expect(state.levels[0].positions).toEqual([
       expect.objectContaining({ baseHeld: "0.1", fillCost: "9.8" }),
     ]);
-  });
-
-  it("waits for sibling initial placements before propagating a rejection", async () => {
-    // given
-    let releaseSiblingPlacement!: () => void;
-    const siblingPlacement = new Promise<{
-      data: {
-        venue_order_id: string;
-        client_order_id: string;
-        state: "new";
-      };
-    }>((resolve) => {
-      releaseSiblingPlacement = () =>
-        resolve({
-          data: {
-            venue_order_id: "accepted-order",
-            client_order_id: "accepted-client",
-            state: "new",
-          },
-        });
-    });
-    let calls = 0;
-    const placeOrder = vi.fn(async (request: PlacementRequest) => {
-      calls++;
-      if (calls === 2) return siblingPlacement;
-      return rejectedPlacement(request);
-    });
-    const getOrder = settledRejection();
-    const getBalances = vi.fn(async () => [
-      { currency: "USD", available: "1000" },
-    ]);
-    const bot = new ForegroundGridBot(
-      {
-        pair: "BTC-USD",
-        levels: 4,
-        rangePct: "0.01",
-        investment: "40",
-        splitInvestment: false,
-        intervalSec: 30,
-        dryRun: false,
-        reset: false,
-        trailingUp: false,
-      },
-      {
-        rateLimiter: {
-          place: (operation) => operation(),
-          cancel: (operation) => operation(),
-          query: (operation) => operation(),
-        },
-      },
-    );
-    const internals = bot as unknown as {
-      _pairInfo: CurrencyPair;
-      _client: {
-        placeOrder: typeof placeOrder;
-        getOrder: typeof getOrder;
-        getBalances: typeof getBalances;
-      };
-      _priceSource: { peek: () => Promise<Decimal> };
-      _initNewGrid: () => Promise<void>;
-    };
-    internals._pairInfo = PAIR_INFO;
-    internals._client = { placeOrder, getOrder, getBalances };
-    internals._priceSource = { peek: async () => new Decimal("100") };
-    let settled = false;
-
-    // when
-    const initialization = internals._initNewGrid().finally(() => {
-      settled = true;
-    });
-    await vi.waitFor(() => expect(placeOrder).toHaveBeenCalledTimes(4));
-
-    // then
-    expect(settled).toBe(false);
-    releaseSiblingPlacement();
-    await expect(initialization).rejects.toMatchObject({
-      name: "OrderRejectedError",
-    });
-    expect(placeOrder).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -6912,14 +6769,19 @@ describe("grid bot rejections counted per order slot", () => {
     const getActiveOrders = vi.fn(async () => ({
       data: [...active].map(([id, status]) => ({
         id,
-        client_order_id: id,
+        client_order_id: orders.get(id)?.client_order_id ?? id,
         status,
       })),
       metadata: {},
     }));
+    const closed = () =>
+      [...orders.values()].filter(
+        (order) => !["new", "partially_filled"].includes(order.status),
+      ) as unknown as Order[];
     const getHistoricalOrders = vi.fn(
       async (request: { startDate: number; endDate: number }) => ({
-        data: request.startDate <= request.endDate ? listed : [],
+        data:
+          request.startDate <= request.endDate ? [...listed, ...closed()] : [],
         metadata: {},
       }),
     );
@@ -7008,173 +6870,109 @@ describe("grid bot rejections counted per order slot", () => {
     return warnings.filter((warning) => warning.includes("rejected, retrying"));
   }
 
+  function minuteChecks(internals: {
+    _warnings: string[];
+    _tick: (price: Decimal) => Promise<void>;
+  }) {
+    const warnings: string[] = [];
+    const check = async () => {
+      await internals._tick(new Decimal("99.5"));
+      warnings.push(...rejectionWarnings(internals._warnings));
+    };
+    const fiveMinutes = async () => {
+      for (let minute = 0; minute < 5; minute++) {
+        vi.setSystemTime(Date.now() + 61_000);
+        await check();
+      }
+    };
+    return { warnings, check, fiveMinutes };
+  }
+
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("stops a sell whose re-send keeps meeting its still-reserved coins on the third rejection", async () => {
+  it("keeps counting when the exchange accepts each new buy and rejects it later", async () => {
     // given
-    const state = makeState();
-    state.levels[0].buyOrderIds = [];
-    const position = heldPosition();
-    state.levels[0].positions = [position];
-    const { internals, placeOrder } = streakBot(state, {
-      sell: ["rejected", "refused", "rejected", "refused", "rejected"],
-    });
-
-    // when
-    await internals._placeSellOnLevel(state.levels[1], position);
-    await internals._placeSellOnLevel(state.levels[1], position);
-    const third = internals._placeSellOnLevel(state.levels[1], position);
-
-    // then
-    await expect(third).rejects.toMatchObject({
-      name: "OrderRejectedError",
-      side: "sell",
-      price: "99.1",
-    });
-    expect(placeOrder).toHaveBeenCalledTimes(5);
-    expect(position.sellOrderId).toBe("venue-5");
-  });
-
-  it("adds up rejections of one sell across a check's fill handling and held-coins step, then stops next check", async () => {
-    // given
-    const state = makeState();
-    state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
-    const orders = new Map<string, OrderDetails>([
-      [
-        "buy-1",
-        {
-          id: "buy-1",
-          client_order_id: "client-buy-1",
-          status: "filled",
-          filled_quantity: "0.1",
-          filled_amount: "9.9",
-          total_fee: "0",
-          fee_currency: "BTC",
-        } as OrderDetails,
-      ],
-    ]);
-    const { internals, placeOrder } = streakBot(
-      state,
-      { sell: ["rejected", "refused", "rejected", "refused", "rejected"] },
-      orders,
-    );
-
-    // when
-    await internals._tick(new Decimal("99.5"));
-    const secondCheck = internals._tick(new Decimal("99.5"));
-
-    // then
-    await expect(secondCheck).rejects.toMatchObject({
-      name: "OrderRejectedError",
-      side: "sell",
-    });
-    expect(sells(placeOrder)).toHaveLength(5);
-  });
-
-  it("stops a buy whose rejections are split by a refusal and the minute retry", async () => {
-    // given
-    const state = makeState();
-    state.levels[0].buyOrderIds = [];
-    const { internals, placeOrder } = streakBot(state, {
-      buy: ["rejected", "refused", "rejected", "rejected", "placed"],
-    });
-    await expect(
-      internals._placeBuyOrder(state.levels[0], new Decimal("10"), "first"),
-    ).rejects.toThrow("Insufficient balance");
-    const pendingId = state.levels[0].pendingBuyClientOrderIds![0];
-
-    // when
-    const retry = internals._placeBuyOrAlert(
-      state.levels[0],
-      new Decimal("10"),
-      pendingId,
-    );
-
-    // then
-    await expect(retry).rejects.toMatchObject({
-      name: "OrderRejectedError",
-      side: "buy",
-      price: "99",
-    });
-    expect(placeOrder).toHaveBeenCalledTimes(4);
-  });
-
-  it("keeps counting when the exchange accepts each re-send and rejects it later", async () => {
-    // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const state = makeState();
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
     const orders = new Map([["buy-1", trackedBuy("rejected")]]);
     const { internals } = streakBot(state, {}, orders);
+    let failure: unknown = null;
 
     // when
-    await internals._tick(new Decimal("99.5"));
-    rejectLater(orders, state.levels[0].buyOrderIds[0]);
-    await internals._tick(new Decimal("99.5"));
-    rejectLater(orders, state.levels[0].buyOrderIds[0]);
-    const thirdCheck = internals._tick(new Decimal("99.5"));
+    for (let minute = 0; minute < 20 && !failure; minute++) {
+      for (const id of state.levels[0].buyOrderIds) rejectLater(orders, id);
+      await internals._tick(new Decimal("99.5")).catch((err: unknown) => {
+        failure = err;
+      });
+      vi.setSystemTime(Date.now() + 61_000);
+    }
 
     // then
-    await expect(thirdCheck).rejects.toMatchObject({
+    expect(failure).toMatchObject({
       name: "OrderRejectedError",
       side: "buy",
       price: "99",
     });
-    expect(state.levels[0].buyOrderIds).toHaveLength(1);
   });
 
-  it("starts the count again once a re-sent order is seen on the book", async () => {
+  it("starts the count again once a new order is seen on the book", async () => {
     // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const state = makeState();
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
     const orders = new Map([["buy-1", trackedBuy("rejected")]]);
     const { internals, active } = streakBot(state, {}, orders);
-    await internals._tick(new Decimal("99.5"));
-    const resting = state.levels[0].buyOrderIds[0];
-    active.set(resting, "new");
-    await internals._tick(new Decimal("99.5"));
-    active.delete(resting);
-    rejectLater(orders, resting);
-    await internals._tick(new Decimal("99.5"));
-    rejectLater(orders, state.levels[0].buyOrderIds[0]);
+    const { warnings, check, fiveMinutes } = minuteChecks(internals);
+    await check();
+    await fiveMinutes();
+    const replacement = state.levels[0].buyOrderIds[0];
+    active.set(replacement, "new");
+    await check();
+    active.delete(replacement);
+    rejectLater(orders, replacement);
 
     // when
-    const check = internals._tick(new Decimal("99.5"));
+    await check();
+    await fiveMinutes();
 
     // then
-    await expect(check).resolves.toBeUndefined();
-    expect(rejectionWarnings(internals._warnings)).toEqual([
-      "Buy @99 rejected, retrying (3/3)",
+    expect(warnings).toEqual([
+      "Buy @99 rejected, retrying (2/3)",
+      "Buy @99 rejected, retrying (2/3)",
     ]);
   });
 
   it("does not take an order the exchange still lists as pending as proof", async () => {
     // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const state = makeState();
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
     const orders = new Map([["buy-1", trackedBuy("rejected")]]);
     const { internals, active } = streakBot(state, {}, orders);
-    await internals._tick(new Decimal("99.5"));
-    const pending = state.levels[0].buyOrderIds[0];
-    active.set(pending, "pending_new");
-    await internals._tick(new Decimal("99.5"));
-    active.delete(pending);
-    rejectLater(orders, pending);
-    await internals._tick(new Decimal("99.5"));
-    rejectLater(orders, state.levels[0].buyOrderIds[0]);
+    const { warnings, check, fiveMinutes } = minuteChecks(internals);
+    await check();
+    await fiveMinutes();
+    const replacement = state.levels[0].buyOrderIds[0];
+    active.set(replacement, "pending_new");
+    await check();
+    active.delete(replacement);
+    rejectLater(orders, replacement);
 
     // when
-    const check = internals._tick(new Decimal("99.5"));
+    await check();
+    await fiveMinutes();
 
     // then
-    await expect(check).rejects.toMatchObject({
-      name: "OrderRejectedError",
-      side: "buy",
-    });
+    expect(warnings).toEqual([
+      "Buy @99 rejected, retrying (2/3)",
+      "Buy @99 rejected, retrying (3/3)",
+    ]);
   });
 
-  it("counts a rejected order seen by the minute lookup and again by the next check only once", async () => {
+  it("books a rejected order that traded, found by the minute lookup, without counting a rejection", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -7202,14 +7000,14 @@ describe("grid bot rejections counted per order slot", () => {
     await internals._tick(new Decimal("99.5"));
 
     // then
-    expect(firstCheck).toEqual(["Buy @99 rejected, retrying (2/3)"]);
+    expect(firstCheck).toEqual([]);
     expect(rejectionWarnings(internals._warnings)).toEqual([]);
     expect(state.levels[0].positions).toEqual([
       expect.objectContaining({ baseHeld: "0.05" }),
     ]);
   });
 
-  it("counts a sell found rejected when resuming it", async () => {
+  it("holds a sell found rejected when resuming it, without counting it or sending another", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -7232,14 +7030,13 @@ describe("grid bot rejections counted per order slot", () => {
     await internals._resumePendingPlacements();
 
     // then
-    expect(rejectionWarnings(internals._warnings)).toEqual([
-      "Sell @99.1 rejected, retrying (2/3)",
-    ]);
-    expect(sells(placeOrder)).toHaveLength(1);
-    expect(position.sellOrderId).toBe("venue-1");
+    expect(rejectionWarnings(internals._warnings)).toEqual([]);
+    expect(sells(placeOrder)).toEqual([]);
+    expect(position.sellOrderId).toBeNull();
+    expect(position.sellClientOrderId).toBe("lost-sell");
   });
 
-  it("counts a rejected order found while reconciling at start-up", async () => {
+  it("holds a tracked buy found rejected at start-up under its client order ID, without counting it", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
@@ -7253,9 +7050,9 @@ describe("grid bot rejections counted per order slot", () => {
     await internals._reconcileAndInit(state);
 
     // then
-    expect(rejectionWarnings(internals._warnings)).toEqual([
-      "Buy @99 rejected, retrying (2/3)",
-    ]);
+    expect(rejectionWarnings(internals._warnings)).toEqual([]);
+    expect(state.levels[0].buyOrderIds).toEqual([]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["client-buy-1"]);
   });
 
   it("books what a rejected sell traded and sends only the rest", async () => {
@@ -7270,6 +7067,8 @@ describe("grid bot rejections counted per order slot", () => {
 
     // when
     await internals._placeSellOnLevel(state.levels[1], position);
+    await internals._tick(new Decimal("99.5"));
+    await internals._tick(new Decimal("99.5"));
 
     // then
     expect(sells(placeOrder).map((request) => request.limit.baseSize)).toEqual([
@@ -7295,6 +7094,8 @@ describe("grid bot rejections counted per order slot", () => {
       new Decimal("10"),
       "first",
     );
+    await internals._tick(new Decimal("99.5"));
+    await internals._tick(new Decimal("99.5"));
 
     // then
     expect(result).toBeNull();
@@ -7306,110 +7107,43 @@ describe("grid bot rejections counted per order slot", () => {
     ]);
   });
 
-  it("keeps a rejected sell tracked for the next check when the exchange can't show it within 5 seconds", async () => {
-    // given
-    vi.useFakeTimers();
-    const state = makeState();
-    state.levels[0].buyOrderIds = [];
-    const position = heldPosition();
-    state.levels[0].positions = [position];
-    const { internals, placeOrder, getOrder } = streakBot(state, {
-      sell: ["unreadable"],
-    });
-    let settled = false;
-
-    // when
-    const placement = internals
-      ._placeSellOnLevel(state.levels[1], position)
-      .then(() => {
-        settled = true;
-      });
-    await vi.advanceTimersByTimeAsync(4_999);
-    const settledEarly = settled;
-    await vi.advanceTimersByTimeAsync(1_000);
-    await placement;
-
-    // then
-    expect(settledEarly).toBe(false);
-    expect(getOrder.mock.calls.length).toBeGreaterThan(1);
-    expect(placeOrder).toHaveBeenCalledTimes(1);
-    expect(position.sellOrderId).toBe("venue-1");
-    expect(position.sellClientOrderId).toBe(sells(placeOrder)[0].clientOrderId);
-  });
-
-  it("drops a rejected sell the exchange still can't show a minute later and places it again", async () => {
-    // given
-    vi.useFakeTimers();
-    const state = makeState();
-    state.levels[0].buyOrderIds = [];
-    const position = heldPosition();
-    state.levels[0].positions = [position];
-    const { internals, placeOrder } = streakBot(state, {
-      sell: ["unreadable", "rejected"],
-    });
-    const placement = internals._placeSellOnLevel(state.levels[1], position);
-    await vi.advanceTimersByTimeAsync(6_000);
-    await placement;
-    const firstStrike = [...internals._warnings];
-    await internals._tick(new Decimal("99.5"));
-    const keptAfterFirstCheck = position.sellOrderId;
-    vi.setSystemTime(Date.now() + 60_000);
-
-    // when
-    const nextCheck = internals._tick(new Decimal("99.5"));
-    await vi.advanceTimersByTimeAsync(6_000);
-    await nextCheck;
-
-    // then
-    expect(firstStrike).toEqual(["Sell @99.1 rejected, retrying (2/3)"]);
-    expect(keptAfterFirstCheck).toBe("venue-1");
-    expect(internals._warnings).toContain(
-      "Sell @99.1 rejected, retrying (3/3)",
-    );
-    expect(sells(placeOrder)).toHaveLength(3);
-    expect(position.sellOrderId).not.toBe("venue-1");
-    expect(position.sellOrderId).not.toBeNull();
-  });
-
   it("keeps an order reported rejected that turns out to rest on the book", async () => {
     // given
-    vi.useFakeTimers();
     const state = makeState();
     state.levels[0].buyOrderIds = [];
     const position = heldPosition();
     state.levels[0].positions = [position];
-    const { internals, active } = streakBot(state, { sell: ["unreadable"] });
-    const placement = internals._placeSellOnLevel(state.levels[1], position);
-    await vi.advanceTimersByTimeAsync(6_000);
-    await placement;
+    const { internals, active, placeOrder } = streakBot(state, {
+      sell: ["rejected"],
+    });
+    await internals._placeSellOnLevel(state.levels[1], position);
     active.set("venue-1", "new");
-    await internals._tick(new Decimal("99.5"));
-    active.delete("venue-1");
-    vi.setSystemTime(Date.now() + 60_000);
 
     // when
     await internals._tick(new Decimal("99.5"));
 
     // then
     expect(position.sellOrderId).toBe("venue-1");
+    expect(sells(placeOrder)).toHaveLength(1);
   });
 
-  it("keeps a re-sent buy whose rejection can't be read yet tracked through start-up", async () => {
+  it("keeps a re-sent buy that comes back rejected pending through start-up", async () => {
     // given
-    vi.useFakeTimers();
     const state = makeState();
     state.levels[0].buyOrderIds = [];
     state.levels[0].pendingBuyClientOrderIds = ["stale"];
     state.levels[0].pendingBuyQuoteSizes = { stale: "10" };
-    const { internals } = streakBot(state, { buy: ["unreadable"] });
+    const { internals, placeOrder } = streakBot(state, { buy: ["rejected"] });
 
     // when
-    const reconcile = internals._reconcileAndInit(state);
-    await vi.advanceTimersByTimeAsync(6_000);
-    await reconcile;
+    await internals._reconcileAndInit(state);
 
     // then
-    expect(state.levels[0].buyOrderIds).toEqual(["venue-1"]);
+    expect(
+      placeOrder.mock.calls.map(([request]) => request.clientOrderId),
+    ).toEqual(["stale"]);
+    expect(state.levels[0].buyOrderIds).toEqual([]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["stale"]);
   });
 
   it("alerts again after an order of the slot is found on the exchange", async () => {
@@ -7502,6 +7236,10 @@ describe("grid bot rejections counted per order slot", () => {
 });
 
 describe("grid bot pending placement recovery", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   type PlacementRequest = {
     clientOrderId: string;
     side: "buy" | "sell";
@@ -7597,7 +7335,7 @@ describe("grid bot pending placement recovery", () => {
         takeAlerts: () => Array<{ order: string; reason: string }>;
       };
       _resumePendingPlacements: () => Promise<void>;
-      _sweepPendingBuys: () => Promise<void>;
+      _sweepPendingIntents: (activeOrders: Map<string, Order>) => Promise<void>;
       _placeBuyOrAlert: (
         level: GridLevelState,
         quoteSize?: Decimal,
@@ -7638,8 +7376,9 @@ describe("grid bot pending placement recovery", () => {
     return position;
   }
 
-  it("replaces a pending buy that the exchange already rejected with a fresh one at its amount", async () => {
+  it("holds a pending buy the exchange already rejected at start-up and replaces it at its amount 5 minutes later", async () => {
     // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { state, internals, placeOrder } = recoveryInternals({
       historical: [exchangeOrder({ id: "old-rejected" })],
       placeOrder: async (request) => ({
@@ -7650,11 +7389,18 @@ describe("grid bot pending placement recovery", () => {
         },
       }),
     });
+    await internals._resumePendingPlacements();
+    const atStartUp = {
+      sent: placeOrder.mock.calls.length,
+      pending: [...(state.levels[0].pendingBuyClientOrderIds ?? [])],
+    };
 
     // when
-    await internals._resumePendingPlacements();
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await internals._sweepPendingIntents(new Map());
 
     // then
+    expect(atStartUp).toEqual({ sent: 0, pending: ["stale-client"] });
     expect(placeOrder).toHaveBeenCalledTimes(1);
     expect(placeOrder.mock.calls[0][0].clientOrderId).not.toBe("stale-client");
     expect(placeOrder.mock.calls[0][0].limit.quoteSize).toBe("10");
@@ -7662,17 +7408,20 @@ describe("grid bot pending placement recovery", () => {
     expect(state.levels[0].buyOrderIds).toEqual(["fresh-buy"]);
   });
 
-  it("still starts when the fresh buy for a rejected pending buy can't be placed", async () => {
+  it("keeps the new buy pending at its amount when it can't be sent after the rejected one is given up", async () => {
     // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { state, internals } = recoveryInternals({
       historical: [exchangeOrder({ id: "old-rejected" })],
       placeOrder: async () => {
         throw new Error("socket hang up");
       },
     });
+    await internals._resumePendingPlacements();
 
     // when
-    await internals._resumePendingPlacements();
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await internals._sweepPendingIntents(new Map());
 
     // then
     const pending = state.levels[0].pendingBuyClientOrderIds ?? [];
@@ -7831,7 +7580,7 @@ describe("grid bot pending placement recovery", () => {
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["stale-client"]);
     expect(state.levels[0].buyOrderIds).toEqual([]);
     expect(internals._attentionLines()).toEqual([
-      "Buy @99 not confirmed yet, looked up once a minute",
+      "Buy @99 rejected or already placed, looked up once a minute",
     ]);
   });
 
@@ -8008,9 +7757,9 @@ describe("grid bot pending placement recovery", () => {
     };
     const { state, internals, placeOrder } = recoveryInternals(exchange);
     await internals._resumePendingPlacements();
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
     internals._pendingSweepAt = 0;
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
     const sendsWhileLocked = placeOrder.mock.calls.length;
     const lineWhileLocked = internals._attentionLines();
     cashLocked = false;
@@ -8018,7 +7767,7 @@ describe("grid bot pending placement recovery", () => {
 
     // when
     internals._pendingSweepAt = 0;
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
 
     // then
     expect(sendsWhileLocked).toBe(1);
@@ -8040,9 +7789,9 @@ describe("grid bot pending placement recovery", () => {
     const lookupsAtStartup = getHistoricalOrders.mock.calls.length;
 
     // when
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
     internals._pendingSweepAt = 0;
-    await internals._sweepPendingBuys();
+    await internals._sweepPendingIntents(new Map());
 
     // then
     expect(placeOrder).toHaveBeenCalledTimes(1);
@@ -8051,7 +7800,7 @@ describe("grid bot pending placement recovery", () => {
     );
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["stale-client"]);
     expect(internals._attentionLines()).toEqual([
-      "Buy @99 not confirmed yet, looked up once a minute",
+      "Buy @99 rejected or already placed, looked up once a minute",
     ]);
   });
 
@@ -8110,7 +7859,7 @@ describe("grid bot pending placement recovery", () => {
       vi.setSystemTime(sentAt + 30_000);
 
       // when
-      await internals._sweepPendingBuys();
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(getHistoricalOrders).toHaveBeenCalled();
@@ -8131,9 +7880,38 @@ describe("grid bot pending placement recovery", () => {
       });
       const position = pendingSell(state);
       position.sellClientOrderId = undefined;
+      await internals._placeSellOnLevel(state.levels[1], position);
 
       // when
+      await internals._sweepPendingIntents(new Map());
+
+      // then
+      expect(getHistoricalOrders).toHaveBeenCalled();
+      expect(earliestStart(getHistoricalOrders)).toBe(sentAt - DAY);
+    });
+
+    it("reads a sell that came back rejected only from a day before it was sent", async () => {
+      // given
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const sentAt = Date.now();
+      const { state, internals, getHistoricalOrders } = recoveryInternals({
+        placeOrder: (request) => {
+          vi.setSystemTime(sentAt + 60 * 60 * 1000);
+          return {
+            data: {
+              venue_order_id: "rejected-copy",
+              client_order_id: request.clientOrderId,
+              state: "rejected",
+            },
+          };
+        },
+      });
+      const position = pendingSell(state);
+      position.sellClientOrderId = undefined;
       await internals._placeSellOnLevel(state.levels[1], position);
+
+      // when
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(getHistoricalOrders).toHaveBeenCalled();
@@ -8172,9 +7950,10 @@ describe("grid bot pending placement recovery", () => {
       });
       const position = pendingSell(state);
       position.sellClientOrderId = undefined;
+      await internals._placeSellOnLevel(state.levels[1], position);
 
       // when
-      await internals._placeSellOnLevel(state.levels[1], position);
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(getHistoricalOrders).toHaveBeenCalled();
@@ -8202,7 +7981,7 @@ describe("grid bot pending placement recovery", () => {
       );
 
       // when
-      await internals._sweepPendingBuys();
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(earliestStart(getHistoricalOrders)).toBe(firstSentAt - DAY);
@@ -8224,7 +8003,7 @@ describe("grid bot pending placement recovery", () => {
       await internals._placeBuyOrAlert(state.levels[1], new Decimal("10"));
 
       // when
-      await internals._sweepPendingBuys();
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(earliestStart(getHistoricalOrders)).toBe(olderSentAt - DAY);
@@ -8241,7 +8020,7 @@ describe("grid bot pending placement recovery", () => {
       await internals._placeBuyOrAlert(state.levels[1], new Decimal("10"));
 
       // when
-      await internals._sweepPendingBuys();
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(state.levels[0].pendingBuyClientOrderIds).toEqual([
@@ -8257,7 +8036,7 @@ describe("grid bot pending placement recovery", () => {
       const { state, internals, getHistoricalOrders } = recoveryInternals();
 
       // when
-      await internals._sweepPendingBuys();
+      await internals._sweepPendingIntents(new Map());
 
       // then
       expect(earliestStart(getHistoricalOrders)).toBe(
@@ -8308,8 +8087,9 @@ describe("grid bot pending placement recovery", () => {
     expect(position.sellBaseSize).toBe("0.1");
   });
 
-  it("replaces a pending sell that the exchange already rejected with a fresh one", async () => {
+  it("holds a pending sell the exchange already rejected at start-up and replaces it 5 minutes later", async () => {
     // given
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { state, internals, placeOrder } = recoveryInternals({
       historical: [
         exchangeOrder({
@@ -8327,11 +8107,15 @@ describe("grid bot pending placement recovery", () => {
       }),
     });
     const position = pendingSell(state);
+    await internals._resumePendingPlacements();
+    const sentAtStartUp = placeOrder.mock.calls.length;
 
     // when
-    await internals._resumePendingPlacements();
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await internals._sweepPendingIntents(new Map());
 
     // then
+    expect(sentAtStartUp).toBe(0);
     expect(placeOrder).toHaveBeenCalledTimes(1);
     const request = placeOrder.mock.calls[0][0];
     expect(request.side).toBe("sell");
@@ -8391,8 +8175,8 @@ describe("grid bot pending placement recovery", () => {
     expect(getHistoricalOrders.mock.calls[0][0].startDate).toBe(
       Date.parse(state.createdAt) - 24 * 60 * 60 * 1000,
     );
-    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
-    expect(state.levels[1].pendingBuyClientOrderIds).toEqual([]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["stale-client"]);
+    expect(state.levels[1].pendingBuyClientOrderIds).toEqual(["stale-2"]);
   });
 
   it("does not query the exchange when nothing is pending", async () => {
@@ -8890,7 +8674,6 @@ describe("grid bot orders the exchange doesn't list yet", () => {
       _pairInfo: CurrencyPair;
       _warnings: string[];
       _client: Record<string, unknown>;
-      _unreadRejections: Map<string, number>;
       _tick: (price: Decimal) => Promise<void>;
       _reconcileAndInit: (savedState: GridState) => Promise<void>;
       _attentionLines: () => string[];
@@ -9585,21 +9368,6 @@ describe("grid bot orders the exchange doesn't list yet", () => {
     expect(internals._openBuyFills.toString()).toBe("0.04");
     expect(state.levels[0].positions).toEqual([]);
     expect(state.stats.totalBuys).toBe(0);
-  });
-
-  it("forgets a rejected order whose cancel only ever answers not-found", async () => {
-    // given
-    const { state, internals } = unlistedBot();
-    internals._state = state;
-    internals._unreadRejections.set("buy-1", Date.now() + 60_000);
-    internals._cancelUntilClosed = async () => ({ closed: true, order: null });
-
-    // when
-    const result = await internals._closeGridOrders(state, "keepTraded");
-
-    // then
-    expect(result.problems).toEqual([]);
-    expect(state.levels[0].buyOrderIds).toEqual([]);
   });
 
   it("finishes a stop-loss sale in the same run once a fresh grid order is listed", async () => {
@@ -10668,20 +10436,6 @@ describe("grid bot orders the exchange doesn't list yet", () => {
     );
   });
 
-  it("doesn't count a rejected order in its one-minute window as missing", async () => {
-    // given
-    const { state, internals } = unlistedBot();
-    internals._state = state;
-    internals._unreadRejections.set("buy-1", Date.now() + 60_000);
-
-    // when
-    await internals._tick(new Decimal("99.5"));
-
-    // then
-    expect(state.missingSince ?? {}).toEqual({});
-    expect(internals._attentionLines().join("\n")).not.toContain("not listed");
-  });
-
   it("doesn't place a second first buy on a level whose buy isn't listed yet", async () => {
     // given
     const { state, internals, placeOrder } = unlistedBot();
@@ -10697,27 +10451,17 @@ describe("grid bot orders the exchange doesn't list yet", () => {
     expect(state.levels[0].buyOrderIds).toEqual(["buy-1"]);
   });
 
-  it("doesn't read back orders that a resumed buy placed during the restart", async () => {
+  it("holds a resumed buy that comes back rejected during the restart without reading it back", async () => {
     // given
-    const { state, internals, placeOrder, readIds, text } = unlistedBot({
-      orders: {
-        "buy-99-1": {
-          status: "rejected",
-          filled_quantity: "0.05",
-          filled_amount: "4.95",
-          average_fill_price: "99",
-        },
-      },
-    });
+    const { state, internals, placeOrder, readIds, text } = unlistedBot();
     state.levels[0].buyOrderIds = [];
     state.levels[0].pendingBuyClientOrderIds = ["c-pending"];
     state.levels[0].pendingBuyQuoteSizes = { "c-pending": "10" };
-    let placed = 0;
     placeOrder.mockImplementation(async (request: PlaceRequest) => ({
       data: {
-        venue_order_id: `${request.side}-${request.limit.price}-${++placed}`,
+        venue_order_id: `${request.side}-${request.limit.price}`,
         client_order_id: request.clientOrderId,
-        state: placed === 1 ? ("rejected" as const) : ("new" as const),
+        state: "rejected" as const,
       },
     }));
 
@@ -10725,8 +10469,14 @@ describe("grid bot orders the exchange doesn't list yet", () => {
     await internals._reconcileAndInit(state);
 
     // then
-    expect(placeOrder.mock.calls.length).toBeGreaterThan(1);
-    expect(readIds().every((id) => id === "buy-99-1")).toBe(true);
+    expect(
+      placeOrder.mock.calls.map(([request]) => request.clientOrderId),
+    ).toEqual(["c-pending"]);
+    expect(readIds()).not.toContain("buy-99");
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual(["c-pending"]);
+    expect(text()).toContain(
+      "1 order rejected or already placed, looked up by client order ID for up to 5 minutes",
+    );
     expect(text()).not.toContain("not listed by the exchange");
   });
 
@@ -10900,5 +10650,698 @@ describe("grid bot Telegram health", () => {
 
     // then
     expect(telegram._telegramProblem()).toBeNull();
+  });
+});
+
+describe("grid bot orders whose reply was lost or came back rejected", () => {
+  type Request = {
+    clientOrderId: string;
+    side: "buy" | "sell";
+    limit: { price: string; quoteSize?: string; baseSize?: string };
+  };
+  type Reply = "answer" | "lose" | "drop" | "reject" | "refuse";
+
+  const RESTING = new Set(["new", "partially_filled"]);
+  const PRICE = new Decimal("99.05");
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function aMinuteLater() {
+    vi.setSystemTime(Date.now() + 61_000);
+  }
+
+  function exchangeOrder(
+    id: string,
+    request: Request,
+    status: Order["status"],
+    overrides: Partial<Order> = {},
+  ): Order {
+    const quantity = request.limit.baseSize ?? "0.1";
+    return {
+      id,
+      client_order_id: request.clientOrderId,
+      symbol: "BTC/USD",
+      side: request.side,
+      type: "limit",
+      quantity,
+      filled_quantity: "0",
+      leaves_quantity: RESTING.has(status) ? quantity : "0",
+      price: request.limit.price,
+      status,
+      time_in_force: "gtc",
+      execution_instructions: ["allow_taker"],
+      created_date: Date.now(),
+      updated_date: Date.now(),
+      ...overrides,
+    };
+  }
+
+  function sellRequest(clientOrderId: string): Request {
+    return {
+      clientOrderId,
+      side: "sell",
+      limit: { price: "99.1", baseSize: "0.1" },
+    };
+  }
+
+  function exchangeBot(state: GridState) {
+    const orders: Order[] = [];
+    const unlisted = new Set<string>();
+    const replies: Reply[] = [];
+    let sent = 0;
+    const placeOrder = vi.fn(async (request: Request) => {
+      sent++;
+      const reply = replies.shift() ?? "answer";
+      if (reply === "drop") {
+        throw new NetworkError("No reply from the exchange within 30 s.");
+      }
+      if (reply === "refuse") {
+        throw new BadRequestError(
+          `An order with the client_order_id '${request.clientOrderId}' has already been placed.`,
+        );
+      }
+      const duplicate = orders.some(
+        (order) => order.client_order_id === request.clientOrderId,
+      );
+      const rejected = duplicate || reply === "reject";
+      const id = `${duplicate ? "twin" : "order"}-${sent}`;
+      orders.push(exchangeOrder(id, request, rejected ? "rejected" : "new"));
+      if (reply === "lose") {
+        throw new NetworkError("No reply from the exchange within 30 s.");
+      }
+      return {
+        data: {
+          venue_order_id: id,
+          client_order_id: request.clientOrderId,
+          state: rejected ? ("rejected" as const) : ("new" as const),
+        },
+      };
+    });
+    const listed = () => orders.filter((order) => !unlisted.has(order.id));
+    const output: string[] = [];
+    const bot = new ForegroundGridBot(
+      {
+        pair: "BTC-USD",
+        levels: 4,
+        rangePct: "0.01",
+        investment: "40",
+        splitInvestment: false,
+        intervalSec: 30,
+        dryRun: false,
+        reset: false,
+        trailingUp: false,
+      },
+      {
+        humanOutput: {
+          write: (chunk: string) => {
+            output.push(chunk);
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    );
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: Record<string, unknown>;
+      _priceSource: { peek: () => Promise<Decimal> };
+      _placementHealth: {
+        rejected: (slot: string, clientOrderId: string) => number | null;
+      };
+      _warnings: string[];
+      _attentionLines: () => string[];
+      _tick: (price: Decimal) => Promise<void>;
+      _placeSellOnLevel: (
+        sellLevel: GridLevelState,
+        position: GridLevelPosition,
+      ) => Promise<void>;
+      _resumePendingPlacements: () => Promise<unknown>;
+      _reconcileAndInit: (savedState: GridState) => Promise<void>;
+    };
+    internals._state = state;
+    internals._pairInfo = PAIR_INFO;
+    internals._priceSource = { peek: async () => PRICE };
+    internals._client = {
+      placeOrder,
+      getActiveOrders: vi.fn(async () => ({
+        data: listed().filter((order) => RESTING.has(order.status)),
+        metadata: {},
+      })),
+      getHistoricalOrders: vi.fn(
+        async (request: { startDate: number; endDate: number }) => ({
+          data:
+            request.startDate <= request.endDate
+              ? listed().filter((order) => !RESTING.has(order.status))
+              : [],
+          metadata: {},
+        }),
+      ),
+      getOrder: vi.fn(async (id: string) => {
+        const order = listed().find((candidate) => candidate.id === id);
+        if (!order) throw new NotFoundError(`Order with ID '${id}' not found.`);
+        return { data: order as OrderDetails };
+      }),
+      getBalances: vi.fn(async () => [
+        { currency: "USD", available: "1000" },
+        { currency: "BTC", available: "10" },
+      ]),
+    };
+    const warnings: string[] = [];
+    const check = async () => {
+      try {
+        await internals._tick(PRICE);
+      } finally {
+        warnings.push(...internals._warnings);
+      }
+    };
+    const sends = (side: "buy" | "sell") =>
+      placeOrder.mock.calls
+        .map(([request]) => request)
+        .filter((request) => request.side === side)
+        .map((request) => request.clientOrderId);
+    const live = (side: "buy" | "sell") =>
+      orders
+        .filter((order) => order.side === side && RESTING.has(order.status))
+        .map((order) => order.id);
+    const rejections = () =>
+      warnings.filter((warning) => warning.includes("rejected, retrying"));
+    return {
+      internals,
+      orders,
+      unlisted,
+      replies,
+      check,
+      sends,
+      live,
+      rejections,
+      text: () => stripVTControlCharacters(output.join("")),
+    };
+  }
+
+  function sellState() {
+    const state = makeState();
+    state.createdAt = new Date(Date.now() - 60_000).toISOString();
+    state.gridPrice = "99";
+    state.levels[0].buyOrderIds = [];
+    const position: GridLevelPosition = {
+      id: "p1",
+      baseHeld: "0.1",
+      fillCost: "9.9",
+      slotQuote: "10",
+      sellOrderId: null,
+    };
+    state.levels[0].positions = [position];
+    return { state, position };
+  }
+
+  it("tracks a sell whose reply was lost from the next check's open orders and sends nothing more", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("lose");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+    exchange.unlisted.add("order-1");
+    await exchange.check();
+
+    // when
+    exchange.unlisted.delete("order-1");
+    await exchange.check();
+
+    // then
+    expect(exchange.sends("sell")).toEqual([clientOrderId]);
+    expect(position.sellOrderId).toBe("order-1");
+    expect(position.sellClientOrderId).toBe(clientOrderId);
+    expect(exchange.live("sell")).toEqual(["order-1"]);
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("keeps the client order ID when its re-send comes back rejected and tracks the first order once listed", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("lose");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+    exchange.unlisted.add("order-1");
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+    const whileUnlisted = {
+      sends: exchange.sends("sell"),
+      sellOrderId: position.sellOrderId,
+      sellClientOrderId: position.sellClientOrderId,
+      attention: exchange.internals._attentionLines(),
+    };
+
+    // when
+    exchange.unlisted.delete("order-1");
+    await exchange.check();
+
+    // then
+    expect(whileUnlisted).toEqual({
+      sends: [clientOrderId, clientOrderId],
+      sellOrderId: null,
+      sellClientOrderId: clientOrderId,
+      attention: [
+        "Sell @99.1 rejected or already placed, looked up once a minute",
+      ],
+    });
+    expect(exchange.orders.map((order) => order.id)).toEqual([
+      "order-1",
+      "twin-2",
+    ]);
+    expect(position.sellOrderId).toBe("order-1");
+    expect(exchange.sends("sell")).toEqual([clientOrderId, clientOrderId]);
+    expect(exchange.live("sell")).toEqual(["order-1"]);
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("waits a check after a lost reply and sends the sell again under the same ID once two lookups miss it", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("drop");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+    await exchange.check();
+    const afterFirstCheck = exchange.sends("sell").length;
+
+    // when
+    aMinuteLater();
+    await exchange.check();
+
+    // then
+    expect(afterFirstCheck).toBe(1);
+    expect(exchange.sends("sell")).toEqual([clientOrderId, clientOrderId]);
+    expect(position.sellOrderId).toBe("order-2");
+  });
+
+  it("places a rejected sell again under a new client order ID only after 5 minutes, counting one rejection", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("reject");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+    for (let minute = 0; minute < 4; minute++) {
+      aMinuteLater();
+      await exchange.check();
+    }
+    const withinFiveMinutes = exchange.sends("sell");
+
+    // when
+    aMinuteLater();
+    await exchange.check();
+
+    // then
+    expect(withinFiveMinutes).toEqual([clientOrderId]);
+    const sends = exchange.sends("sell");
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).not.toBe(clientOrderId);
+    expect(position.sellClientOrderId).toBe(sends[1]);
+    expect(position.sellOrderId).toBe("order-2");
+    expect(exchange.rejections()).toEqual([
+      "Sell @99.1 rejected, retrying (2/3)",
+    ]);
+  });
+
+  it("stops after a sell is rejected three times in a row, waiting 5 minutes after each one", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("reject", "reject", "reject");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const sendsByMinute: number[] = [];
+    let failure: unknown = null;
+    let stoppedAt = 0;
+
+    // when
+    for (let minute = 1; minute <= 20 && !failure; minute++) {
+      aMinuteLater();
+      await exchange.check().catch((err: unknown) => {
+        failure = err;
+        stoppedAt = minute;
+      });
+      sendsByMinute.push(exchange.sends("sell").length);
+    }
+
+    // then
+    expect(failure).toMatchObject({
+      name: "OrderRejectedError",
+      side: "sell",
+      price: "99.1",
+    });
+    expect(stoppedAt).toBe(15);
+    expect(sendsByMinute).toEqual([
+      1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3,
+    ]);
+    expect(new Set(exchange.sends("sell")).size).toBe(3);
+  });
+
+  it("waits 5 minutes from a rejected answer even when the first send went out long before", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("drop", "drop", "drop", "lose");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+    const sellOrderIds: Array<string | null> = [];
+
+    // when
+    for (let minute = 1; minute <= 8; minute++) {
+      aMinuteLater();
+      if (minute === 8) exchange.unlisted.delete("order-4");
+      await exchange.check();
+      if (minute === 4) exchange.unlisted.add("order-4");
+      sellOrderIds.push(position.sellOrderId);
+    }
+
+    // then
+    expect(exchange.orders.map((order) => order.id)).toEqual([
+      "order-4",
+      "twin-5",
+    ]);
+    expect(new Set(exchange.sends("sell"))).toEqual(new Set([clientOrderId]));
+    expect(sellOrderIds).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "order-4",
+    ]);
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("judges the 5 minutes by when the orders were read, not by when a slow lookup ends", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("lose");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+    exchange.unlisted.add("order-1");
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+    for (let minute = 0; minute < 3; minute++) {
+      aMinuteLater();
+      await exchange.check();
+    }
+    const client = exchange.internals._client;
+    const readHistory = client.getHistoricalOrders as (
+      request: unknown,
+    ) => Promise<unknown>;
+    client.getHistoricalOrders = async (request: unknown) => {
+      if (exchange.unlisted.delete("order-1")) {
+        vi.setSystemTime(Date.now() + 120_000);
+      }
+      return readHistory(request);
+    };
+
+    // when
+    aMinuteLater();
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+
+    // then
+    expect(new Set(exchange.sends("sell"))).toEqual(new Set([clientOrderId]));
+    expect(exchange.live("sell")).toEqual(["order-1"]);
+    expect(position.sellOrderId).toBe("order-1");
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("never counts the rejected copies of an order that is on the book", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("lose");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    exchange.unlisted.add("order-1");
+
+    // when
+    for (let minute = 0; minute < 4; minute++) {
+      aMinuteLater();
+      await exchange.check();
+    }
+    exchange.unlisted.delete("order-1");
+    await exchange.check();
+
+    // then
+    expect(new Set(exchange.sends("sell")).size).toBe(1);
+    expect(position.sellOrderId).toBe("order-1");
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("gives up on a client order ID the exchange calls already placed but never lists, after 5 minutes", async () => {
+    // given
+    const { state, position } = sellState();
+    const exchange = exchangeBot(state);
+    exchange.replies.push("drop", "refuse");
+    await exchange.internals._placeSellOnLevel(state.levels[1], position);
+    const clientOrderId = position.sellClientOrderId;
+
+    // when
+    for (let minute = 0; minute < 7; minute++) {
+      aMinuteLater();
+      await exchange.check();
+    }
+
+    // then
+    const sends = exchange.sends("sell");
+    expect(sends.slice(0, 2)).toEqual([clientOrderId, clientOrderId]);
+    expect(sends).toHaveLength(3);
+    expect(position.sellOrderId).toBe("order-3");
+    expect(exchange.rejections()).toEqual([
+      "Sell @99.1 rejected, retrying (2/3)",
+    ]);
+  });
+
+  it("keeps a re-sent buy that comes back rejected and places no second buy on its level", async () => {
+    // given
+    const state = makeState();
+    state.createdAt = new Date(Date.now() - 60_000).toISOString();
+    state.gridPrice = "99.1";
+    state.levels[0].buyOrderIds = [];
+    state.levels[0].pendingBuyClientOrderIds = ["lost"];
+    state.levels[0].pendingBuyQuoteSizes = { lost: "10" };
+    const exchange = exchangeBot(state);
+    exchange.orders.push(
+      exchangeOrder(
+        "first",
+        {
+          clientOrderId: "lost",
+          side: "buy",
+          limit: { price: "99", baseSize: "0.1" },
+        },
+        "new",
+      ),
+    );
+    exchange.unlisted.add("first");
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+    const whileUnlisted = {
+      sends: exchange.sends("buy"),
+      pending: [...(state.levels[0].pendingBuyClientOrderIds ?? [])],
+      tracked: [...state.levels[0].buyOrderIds],
+    };
+
+    // when
+    exchange.unlisted.delete("first");
+    await exchange.check();
+
+    // then
+    expect(whileUnlisted).toEqual({
+      sends: ["lost"],
+      pending: ["lost"],
+      tracked: [],
+    });
+    expect(state.levels[0].buyOrderIds).toEqual(["first"]);
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+    expect(exchange.sends("buy")).toEqual(["lost"]);
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("places a new buy only 5 minutes after the exchange calls its re-send already placed", async () => {
+    // given
+    const state = makeState();
+    state.createdAt = new Date(Date.now() - 60_000).toISOString();
+    state.gridPrice = "99.1";
+    state.levels[0].buyOrderIds = [];
+    state.levels[0].pendingBuyClientOrderIds = ["lost"];
+    state.levels[0].pendingBuyQuoteSizes = { lost: "10" };
+    const exchange = exchangeBot(state);
+    exchange.replies.push("refuse");
+    const sendsByMinute: number[] = [];
+
+    // when
+    await exchange.check();
+    for (let minute = 1; minute <= 6; minute++) {
+      aMinuteLater();
+      await exchange.check();
+      sendsByMinute.push(exchange.sends("buy").length);
+    }
+
+    // then
+    expect(sendsByMinute).toEqual([1, 1, 1, 1, 1, 2]);
+    const sends = exchange.sends("buy");
+    expect(sends[0]).toBe("lost");
+    expect(sends[1]).not.toBe("lost");
+    expect(state.levels[0].buyOrderIds).toEqual(["order-2"]);
+    expect(state.levels[0].buyOrderQuoteSizes).toEqual({ "order-2": "10" });
+    expect(exchange.rejections()).toEqual(["Buy @99 rejected, retrying (2/3)"]);
+  });
+
+  it("gives a leftover buy's amount back to its slot when giving up on it stops the grid", async () => {
+    // given
+    const state = makeState();
+    state.createdAt = new Date(Date.now() - 60_000).toISOString();
+    state.gridPrice = "99.1";
+    state.levels[0].buyOrderIds = [];
+    state.levels[0].positions = [
+      {
+        id: "p1",
+        baseHeld: "0.06",
+        fillCost: "6",
+        slotQuote: "6",
+        sellOrderId: "sell-1",
+        sellBaseSize: "0.06",
+      },
+    ];
+    state.levels[0].pendingBuyClientOrderIds = ["leftover"];
+    state.levels[0].pendingBuyQuoteSizes = { leftover: "4" };
+    state.usedClientOrderIds = ["leftover"];
+    state.missingSince = {
+      leftover: new Date(Date.now() - 6 * 60_000).toISOString(),
+    };
+    const exchange = exchangeBot(state);
+    exchange.orders.push(
+      exchangeOrder(
+        "sell-1",
+        {
+          clientOrderId: "sell-1-client",
+          side: "sell",
+          limit: { price: "99.1", baseSize: "0.06" },
+        },
+        "new",
+      ),
+    );
+    exchange.internals._placementHealth.rejected("buy:0", "earlier-1");
+    exchange.internals._placementHealth.rejected("buy:0", "earlier-2");
+
+    // when
+    const failure = await exchange.check().catch((err: unknown) => err);
+
+    // then
+    expect(failure).toMatchObject({ name: "OrderRejectedError", side: "buy" });
+    expect(state.levels[0].pendingBuyClientOrderIds).toEqual([]);
+    expect(state.levels[0].positions[0].slotQuote).toBe("10");
+    expect(exchange.sends("buy")).toEqual([]);
+  });
+
+  it("does not send a client order ID the exchange already used again after a restart", async () => {
+    // given
+    const { state, position } = sellState();
+    position.sellClientOrderId = "lost-sell";
+    position.sellBaseSize = "0.1";
+    state.usedClientOrderIds = ["lost-sell"];
+    state.missingSince = { "lost-sell": new Date().toISOString() };
+    const exchange = exchangeBot(state);
+
+    // when
+    await exchange.internals._resumePendingPlacements();
+    aMinuteLater();
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+
+    // then
+    expect(exchange.sends("sell")).toEqual([]);
+    expect(position.sellClientOrderId).toBe("lost-sell");
+    expect(position.sellOrderId).toBeNull();
+  });
+
+  it("tracks the filled first order over a rejected copy with the same client order ID", async () => {
+    // given
+    const { state, position } = sellState();
+    position.sellClientOrderId = "lost-sell";
+    position.sellBaseSize = "0.1";
+    const exchange = exchangeBot(state);
+    exchange.orders.push(
+      exchangeOrder("twin", sellRequest("lost-sell"), "rejected"),
+      exchangeOrder("first", sellRequest("lost-sell"), "filled", {
+        filled_quantity: "0.1",
+      }),
+    );
+
+    // when
+    await exchange.internals._resumePendingPlacements();
+
+    // then
+    expect(position.sellOrderId).toBe("first");
+    expect(exchange.sends("sell")).toEqual([]);
+  });
+
+  it("swaps a tracked sell that reads as rejected for the open order with its client order ID", async () => {
+    // given
+    const { state, position } = sellState();
+    position.sellOrderId = "twin";
+    position.sellClientOrderId = "lost-sell";
+    position.sellBaseSize = "0.1";
+    const exchange = exchangeBot(state);
+    exchange.orders.push(
+      exchangeOrder("first", sellRequest("lost-sell"), "new"),
+      exchangeOrder("twin", sellRequest("lost-sell"), "rejected"),
+    );
+
+    // when
+    await exchange.check();
+
+    // then
+    expect(position.sellOrderId).toBe("first");
+    expect(exchange.sends("sell")).toEqual([]);
+    expect(exchange.rejections()).toEqual([]);
+  });
+
+  it("swaps a saved sell that reads as rejected at start-up without placing another", async () => {
+    // given
+    const { state, position } = sellState();
+    position.sellOrderId = "twin";
+    position.sellClientOrderId = "lost-sell";
+    position.sellBaseSize = "0.1";
+    const exchange = exchangeBot(state);
+    exchange.orders.push(
+      exchangeOrder("first", sellRequest("lost-sell"), "new"),
+      exchangeOrder("twin", sellRequest("lost-sell"), "rejected"),
+    );
+
+    // when
+    await exchange.internals._reconcileAndInit(state);
+    const sentAtStartUp = exchange.sends("sell");
+    await exchange.check();
+
+    // then
+    expect(sentAtStartUp).toEqual([]);
+    expect(exchange.text()).toContain(
+      "1 order rejected or already placed, looked up by client order ID for up to 5 minutes",
+    );
+    expect(position.sellOrderId).toBe("first");
+    expect(exchange.sends("sell")).toEqual([]);
+    expect(exchange.live("sell")).toEqual(["first"]);
   });
 });

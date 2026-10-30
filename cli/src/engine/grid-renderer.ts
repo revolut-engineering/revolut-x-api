@@ -862,6 +862,7 @@ export interface ReconciliationCounts {
   resent: number;
   renewed: Partial<Record<ClosedPendingOrder, number>>;
   unlisted: number;
+  held: number;
 }
 
 const CLOSED_PENDING_WORDING: Record<ClosedPendingOrder, string> = {
@@ -889,6 +890,7 @@ export function renderReconciliationSummary(
     resent,
     renewed,
     unlisted,
+    held,
   } = counts;
   const count = (n: number, noun: string) =>
     `${n} ${noun}${n !== 1 ? "s" : ""}`;
@@ -916,6 +918,10 @@ export function renderReconciliationSummary(
     lines.push(
       `  ${chalk.cyan("\u21BB")} ${count(unlisted, "order")} not listed by the exchange yet, looked up again`,
     );
+  if (held > 0)
+    lines.push(
+      `  ${chalk.cyan("\u21BB")} ${count(held, "order")} rejected or already placed, looked up by client order ID for up to 5 minutes`,
+    );
   for (const [closedAs, n] of Object.entries(renewed)) {
     if (n > 0) {
       lines.push(
@@ -940,6 +946,7 @@ export function renderReconciliationSummary(
       replaced +
       resent +
       unlisted +
+      held +
       renewedTotal ===
     0
   )

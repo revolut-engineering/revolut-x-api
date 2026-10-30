@@ -74,6 +74,7 @@ export interface GridState {
   splitClientOrderId?: string;
   splitOrderQuoteSize?: string;
   missingSince?: Record<string, string>;
+  usedClientOrderIds?: string[];
   splitRemainingQuote?: string;
   splitAccumulatedBase?: string;
   splitAccumulatedAmount?: string;
