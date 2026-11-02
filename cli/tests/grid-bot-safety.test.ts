@@ -73,6 +73,29 @@ const PAIR_INFO: CurrencyPair = {
   status: "active",
 };
 
+const TURBO_PAIR: CurrencyPair = {
+  ...PAIR_INFO,
+  base: "TURBO",
+  base_step: "0.01",
+  quote_step: "0.0000001",
+  min_order_size: "0.01",
+  max_order_size: "1000000000",
+  min_order_size_quote: "0.1",
+};
+
+function useTurboLevels(state: GridState): GridState {
+  state.gridPrice = "0.0009113";
+  state.quotePerLevel = "150";
+  state.quotePrecision = "0.0000001";
+  state.basePrecision = "0.01";
+  ["0.000904", "0.0009113", "0.0009187", "0.0009261"].forEach(
+    (price, index) => {
+      state.levels[index].price = price;
+    },
+  );
+  return state;
+}
+
 function makeState(): GridState {
   return {
     id: "grid",
@@ -813,7 +836,7 @@ describe("grid bot safety", () => {
     ]);
   });
 
-  it("settles a terminal partial sell and relists only its remainder", async () => {
+  it("settles a terminal partial sell, relists only its remainder and buys nothing back yet", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -828,8 +851,7 @@ describe("grid bot safety", () => {
     ];
     const placeOrder = vi
       .fn()
-      .mockResolvedValueOnce({ data: { venue_order_id: "relisted-sell" } })
-      .mockResolvedValueOnce({ data: { venue_order_id: "partial-rebuy" } });
+      .mockResolvedValueOnce({ data: { venue_order_id: "relisted-sell" } });
     const getOrder = vi.fn(async (orderId: string) => ({
       data: {
         id: orderId,
@@ -875,12 +897,13 @@ describe("grid bot safety", () => {
         sellOrderId: "relisted-sell",
       }),
     ]);
-    expect(placeOrder).toHaveBeenCalledWith(
+    expect(placeOrder).not.toHaveBeenCalledWith(
       expect.objectContaining({
         side: "buy",
-        limit: expect.objectContaining({ quoteSize: "4" }),
+        limit: expect.objectContaining({ price: "99" }),
       }),
     );
+    expect(state.levels[0].positions[0].slotQuote).toBeUndefined();
   });
 
   it("keeps a partially filled order that is still active during reconciliation", async () => {
@@ -990,7 +1013,7 @@ describe("grid bot safety", () => {
     };
     state.levels[0].positions = [position];
     const notify = vi.fn();
-    const placeRemainingBuy = vi.fn(async () => undefined);
+    const placeBuyOrder = vi.fn(async () => null);
     const order = {
       id: "sell-1",
       status: "filled",
@@ -1013,7 +1036,7 @@ describe("grid bot safety", () => {
     const internals = bot as unknown as {
       _state: GridState;
       _notify: typeof notify;
-      _placeRemainingBuy: typeof placeRemainingBuy;
+      _placeBuyOrder: typeof placeBuyOrder;
       _processTerminalSell: (
         level: GridState["levels"][number],
         sellLevel: GridState["levels"][number],
@@ -1024,7 +1047,7 @@ describe("grid bot safety", () => {
     };
     internals._state = state;
     internals._notify = notify;
-    internals._placeRemainingBuy = placeRemainingBuy;
+    internals._placeBuyOrder = placeBuyOrder;
 
     // when
     await internals._processTerminalSell(
@@ -1709,7 +1732,26 @@ describe("grid bot opposite-order amounts", () => {
     } as OrderDetails;
   }
 
-  it("re-buys exactly the slot amount across a partial sale and its remainder", async () => {
+  function piece(id: string, base: string, slot: string): GridLevelPosition {
+    return {
+      id,
+      baseHeld: base,
+      fillCost: slot,
+      slotQuote: slot,
+      sellOrderId: `sell-${id}`,
+      sellBaseSize: base,
+    };
+  }
+
+  function soldOut(position: GridLevelPosition): OrderDetails {
+    return fill({
+      id: position.sellOrderId!,
+      filled_quantity: position.baseHeld,
+      filled_amount: new Decimal(position.baseHeld).times("99.1").toString(),
+    });
+  }
+
+  it("re-buys the full slot once, only after the rest of a partial sale sells", async () => {
     // given
     const state = makeState();
     state.quotePrecision = "0.1";
@@ -1738,6 +1780,8 @@ describe("grid bot opposite-order amounts", () => {
       }),
       false,
     );
+    const buysAfterPartialSale = placeBuyOrder.mock.calls.length;
+    const slotAfterPartialSale = position.slotQuote;
     position.sellOrderId = "sell-2";
     position.sellBaseSize = "0.051";
     await internals._processTerminalSell(
@@ -1749,53 +1793,12 @@ describe("grid bot opposite-order amounts", () => {
     );
 
     // then
-    const amounts = placeBuyOrder.mock.calls.map(([, quote]) => String(quote));
-    expect(amounts).toEqual(["4.9", "5.1"]);
+    expect(buysAfterPartialSale).toBe(0);
+    expect(slotAfterPartialSale).toBe("10");
+    expect(placeBuyOrder.mock.calls).toEqual([
+      [state.levels[0], new Decimal("10"), undefined, undefined],
+    ]);
     expect(state.levels[0].positions).toEqual([]);
-  });
-
-  it("keeps a partial re-buy's share in the slot when that re-buy is too small to place", async () => {
-    // given
-    const state = makeState();
-    state.quotePrecision = "0.1";
-    state.levels[0].buyOrderIds = [];
-    const position: GridLevelPosition = {
-      id: "p1",
-      baseHeld: "0.1",
-      fillCost: "10",
-      slotQuote: "10",
-      sellOrderId: "sell-1",
-      sellBaseSize: "0.1",
-    };
-    state.levels[0].positions = [position];
-    const { internals, placeBuyOrder } = amountsBot(state);
-
-    // when
-    await internals._processTerminalSell(
-      state.levels[0],
-      state.levels[1],
-      position,
-      fill({
-        id: "sell-1",
-        status: "cancelled",
-        filled_quantity: "0.005",
-        filled_amount: "0.5",
-      }),
-      false,
-    );
-    position.sellOrderId = "sell-2";
-    position.sellBaseSize = "0.095";
-    await internals._processTerminalSell(
-      state.levels[0],
-      state.levels[1],
-      position,
-      fill({ id: "sell-2", filled_quantity: "0.095", filled_amount: "9.5" }),
-      false,
-    );
-
-    // then
-    const amounts = placeBuyOrder.mock.calls.map(([, quote]) => String(quote));
-    expect(amounts).toEqual(["10"]);
   });
 
   it("treats a position from an older save file as holding the full per-level slot", async () => {
@@ -1838,7 +1841,179 @@ describe("grid bot opposite-order amounts", () => {
 
     // then
     const amounts = placeBuyOrder.mock.calls.map(([, quote]) => String(quote));
-    expect(amounts).toEqual(["4.9", "5.1"]);
+    expect(amounts).toEqual(["10"]);
+  });
+
+  it("joins an older save's pieces and re-buys their sum once the last one sells", async () => {
+    // given
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    const small = piece("piece-1", "0.04", "4");
+    const middle = piece("piece-2", "0.03", "3");
+    const last = piece("piece-3", "0.03", "3");
+    state.levels[0].positions = [small, middle, last];
+    const { internals, placeBuyOrder } = amountsBot(state);
+    const sellOut = (position: GridLevelPosition) =>
+      internals._processTerminalSell(
+        state.levels[0],
+        state.levels[1],
+        position,
+        soldOut(position),
+        false,
+      );
+
+    // when
+    await sellOut(small);
+    await sellOut(last);
+    const buysBeforeLastPiece = placeBuyOrder.mock.calls.length;
+    const joined = { ...middle };
+    await sellOut(middle);
+
+    // then
+    expect(buysBeforeLastPiece).toBe(0);
+    expect(joined.slotQuote).toBe("10");
+    expect(joined.spentQuote).toBeUndefined();
+    const amounts = placeBuyOrder.mock.calls.map(([, quote]) => String(quote));
+    expect(amounts).toEqual(["10"]);
+    expect(state.levels[0].positions).toEqual([]);
+  });
+
+  it("hands a closing piece's budget to the largest piece it fits with", async () => {
+    // given
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    state.levels[0].expectedBuys = 2;
+    const four = piece("four", "0.04", "4");
+    const six = piece("six", "0.06", "6");
+    const closing = piece("five-a", "0.05", "5");
+    const five = piece("five-b", "0.05", "5");
+    state.levels[0].positions = [four, six, closing, five];
+    const { internals, placeBuyOrder } = amountsBot(state);
+
+    // when
+    await internals._processTerminalSell(
+      state.levels[0],
+      state.levels[1],
+      closing,
+      soldOut(closing),
+      false,
+    );
+
+    // then
+    expect(placeBuyOrder).not.toHaveBeenCalled();
+    expect(five.slotQuote).toBe("10");
+    expect(four.slotQuote).toBe("4");
+    expect(six.slotQuote).toBe("6");
+  });
+
+  it("buys nothing back for a sold piece whose budget is below the minimum order", async () => {
+    // given
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    const tiny = piece("tiny", "0.005", "0.5");
+    state.levels[0].positions = [tiny];
+    const { internals, placeBuyOrder } = amountsBot(state);
+
+    // when
+    await internals._processTerminalSell(
+      state.levels[0],
+      state.levels[1],
+      tiny,
+      soldOut(tiny),
+      false,
+    );
+
+    // then
+    expect(placeBuyOrder).not.toHaveBeenCalled();
+    expect(state.levels[0].positions).toEqual([]);
+  });
+
+  it("never joins two full positions on one level", async () => {
+    // given
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    state.levels[0].expectedBuys = 2;
+    const first = piece("full-1", "0.1", "10");
+    const second = piece("full-2", "0.1", "10");
+    state.levels[0].positions = [first, second];
+    const { internals, placeBuyOrder } = amountsBot(state);
+
+    // when
+    await internals._processTerminalSell(
+      state.levels[0],
+      state.levels[1],
+      first,
+      soldOut(first),
+      false,
+    );
+
+    // then
+    const amounts = placeBuyOrder.mock.calls.map(([, quote]) => String(quote));
+    expect(amounts).toEqual(["10"]);
+    expect(second.slotQuote).toBe("10");
+  });
+
+  it("keeps a filling piece's top-up amount the same when it takes a sold piece's budget", async () => {
+    // given
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    const first = piece("piece-1", "0.06", "6");
+    const filling: GridLevelPosition = {
+      id: "piece-2",
+      baseHeld: "0.02",
+      fillCost: "2",
+      slotQuote: "4",
+      spentQuote: "2",
+      topUpClientOrderId: "top-up",
+      sellOrderId: null,
+    };
+    state.levels[0].positions = [first, filling];
+    const { internals, placeBuyOrder } = amountsBot(state);
+
+    // when
+    await internals._processTerminalSell(
+      state.levels[0],
+      state.levels[1],
+      first,
+      soldOut(first),
+      false,
+    );
+
+    // then
+    expect(placeBuyOrder).not.toHaveBeenCalled();
+    expect(filling).toMatchObject({ slotQuote: "10", spentQuote: "8" });
+    expect(state.levels[0].positions).toEqual([filling]);
+  });
+
+  it("re-buys a sold piece's own budget when the only other piece is too small to sell", async () => {
+    // given
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    const first = piece("piece-1", "0.06", "6");
+    const dust = piece("dust", "0.0005", "4");
+    dust.sellOrderId = null;
+    state.levels[0].positions = [first, dust];
+    const { internals, placeBuyOrder } = amountsBot(state);
+
+    // when
+    await internals._processTerminalSell(
+      state.levels[0],
+      state.levels[1],
+      first,
+      soldOut(first),
+      false,
+    );
+
+    // then
+    const amounts = placeBuyOrder.mock.calls.map(([, quote]) => String(quote));
+    expect(amounts).toEqual(["6"]);
+    expect(dust.slotQuote).toBe("4");
   });
 
   it("holds the sell of a partly filled buy and buys the rest into the same position", async () => {
@@ -2754,6 +2929,16 @@ describe("grid bot top-up buys", () => {
     };
   }
 
+  function fullPosition(): GridLevelPosition {
+    return {
+      id: "full",
+      baseHeld: "0.1",
+      fillCost: "10",
+      slotQuote: "10",
+      sellOrderId: "full-sell",
+    };
+  }
+
   function tickClient(
     overrides: Record<string, unknown> = {},
   ): Record<string, unknown> {
@@ -2813,10 +2998,11 @@ describe("grid bot top-up buys", () => {
     expect(position.slotQuote).toBe("10");
   });
 
-  it("sends no top-up and leaves the position's budget alone when stopping", async () => {
+  it("sends no top-up and leaves every position's budget alone when stopping", async () => {
     // given
     const placeOrder = vi.fn();
     const { state, position, internals } = topUpBot(placeOrder);
+    state.levels[0].positions = [fullPosition(), position];
     stopRequest(internals).abort();
 
     // when
@@ -2832,13 +3018,15 @@ describe("grid bot top-up buys", () => {
     expect(placeOrder).not.toHaveBeenCalled();
     expect(position.topUpClientOrderId).toBeUndefined();
     expect(position.slotQuote).toBe("10");
+    expect(state.levels[0].positions[0].slotQuote).toBe("10");
     expect(state.levels[0].pendingBuyClientOrderIds ?? []).toEqual([]);
   });
 
-  it("drops the link and leaves the budget alone when the stop comes just before the top-up is sent", async () => {
+  it("drops the link and leaves every position's budget alone when the stop comes just before the top-up is sent", async () => {
     // given
     const placeOrder = vi.fn();
     const { state, position, internals } = topUpBot(placeOrder);
+    state.levels[0].positions = [fullPosition(), position];
     (internals as unknown as { _rateLimiter: unknown })._rateLimiter = {
       place: async (
         send: () => Promise<unknown>,
@@ -2864,6 +3052,7 @@ describe("grid bot top-up buys", () => {
     expect(placeOrder).not.toHaveBeenCalled();
     expect(position.topUpClientOrderId).toBeUndefined();
     expect(position.slotQuote).toBe("10");
+    expect(state.levels[0].positions[0].slotQuote).toBe("10");
     expect(state.levels[0].pendingBuyClientOrderIds ?? []).toEqual([]);
   });
 
@@ -2977,42 +3166,91 @@ describe("grid bot top-up buys", () => {
     });
   });
 
-  it("keeps a filling position's budget when its top-up is dropped without a fill", () => {
+  it("sells all of a position's coins at once when the rest, in whole size steps at its level's price, is worth less than the minimum", async () => {
     // given
-    const { state, internals } = topUpBot(vi.fn());
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    useTurboLevels(state);
+    internals._pairInfo = TURBO_PAIR;
     const level = state.levels[0];
-    level.positions = [fillingPosition()];
-    trackBuy(level, "top-up-order", "top-up", "4.9");
+    level.positions = [
+      fillingPosition({
+        baseHeld: "165929.2",
+        fillCost: "146.0177",
+        slotQuote: "150",
+        spentQuote: "146.0177",
+      }),
+    ];
+    trackBuy(level, "top-up-order", "top-up", "3.9823");
 
     // when
-    (
-      internals as unknown as {
-        _dropBuyOrder: (level: GridLevelState, orderId: string) => void;
-      }
-    )._dropBuyOrder(level, "top-up-order");
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("top-up-order", "top-up", "4405.19", "3.8823"),
+      false,
+    );
 
     // then
-    expect(level.buyOrderIds).toEqual([]);
-    expect(level.positions[0].slotQuote).toBe("10");
-    expect(level.positions[0].spentQuote).toBe("5.05");
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({
+          price: "0.0009113",
+          baseSize: "170334.39",
+        }),
+      }),
+    ]);
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "170334.39",
+      fillCost: "149.9",
+      sellOrderId: "sell-1",
+    });
+    expect(level.positions[0].spentQuote).toBeUndefined();
   });
 
-  it("keeps a filling position's budget when a full buy on its level is dropped", () => {
+  it("still buys the rest when its coins, in whole size steps at its level's price, are worth the minimum", async () => {
     // given
-    const { state, internals } = topUpBot(vi.fn());
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    useTurboLevels(state);
+    internals._pairInfo = TURBO_PAIR;
     const level = state.levels[0];
-    level.positions = [fillingPosition()];
-    trackBuy(level, "buy-2", "c-buy-2", "10");
+    level.positions = [
+      fillingPosition({
+        baseHeld: "165929.2",
+        fillCost: "146.0177",
+        slotQuote: "150",
+        spentQuote: "146.0177",
+      }),
+    ];
+    trackBuy(level, "top-up-order", "top-up", "3.9823");
 
     // when
-    (
-      internals as unknown as {
-        _dropBuyOrder: (level: GridLevelState, orderId: string) => void;
-      }
-    )._dropBuyOrder(level, "buy-2");
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("top-up-order", "top-up", "4405.19", "3.8822"),
+      false,
+    );
 
     // then
-    expect(level.positions[0].slotQuote).toBe("10");
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({
+          price: "0.000904",
+          quoteSize: "0.1001",
+        }),
+      }),
+    ]);
+    expect(level.positions[0]).toMatchObject({
+      spentQuote: "149.8999",
+      sellOrderId: null,
+    });
   });
 
   it("clears the top-up link when the top-up ends without a fill", async () => {
@@ -3375,10 +3613,21 @@ describe("grid bot top-up buys", () => {
     const placeOrder = vi.fn(async () => ({
       data: { venue_order_id: "top-up-order-2", state: "new" },
     }));
-    const { state, internals } = topUpBot(placeOrder, tickClient());
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getActiveOrders: vi.fn(async () => ({
+          data: [{ id: "full-sell", status: "new" }],
+          metadata: {},
+        })),
+      }),
+    );
     state.gridPrice = "98";
     const level = state.levels[0];
-    level.positions = [fillingPosition({ topUpClientOrderId: "cancelled" })];
+    level.positions = [
+      fullPosition(),
+      fillingPosition({ topUpClientOrderId: "cancelled" }),
+    ];
 
     // when
     await internals._tick(new Decimal("99.05"));
@@ -3391,12 +3640,75 @@ describe("grid bot top-up buys", () => {
         limit: expect.objectContaining({ price: "99", quoteSize: "4.9" }),
       }),
     ]);
-    expect(level.positions).toHaveLength(1);
-    expect(level.positions[0]).toMatchObject({
+    expect(level.positions).toHaveLength(2);
+    expect(level.positions[0].slotQuote).toBe("10");
+    expect(level.positions[1]).toMatchObject({
       topUpClientOrderId: requests[0].clientOrderId,
       sellOrderId: null,
       slotQuote: "10",
       spentQuote: "5.05",
+    });
+  });
+
+  it("places top-ups before full buys, from the same free cash", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getBalances: vi.fn(async () => [{ currency: "USD", available: "12" }]),
+      }),
+    );
+    state.gridPrice = "100";
+    state.levels[0].positions = [];
+    state.levels[1].positions = [
+      fillingPosition({ topUpClientOrderId: undefined }),
+    ];
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ price: "99.1", quoteSize: "4.9" }),
+      }),
+    ]);
+    expect(internals._cashShortfall).toMatchObject({ buys: 2 });
+  });
+
+  it("sends no sell while a top-up is on the book, even once the rest is too small to place", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getActiveOrders: vi.fn(async () => ({
+          data: [
+            { id: "top-up-order", client_order_id: "top-up", status: "new" },
+          ],
+          metadata: {},
+        })),
+      }),
+    );
+    internals._pairInfo = { ...PAIR_INFO, min_order_size_quote: "5" };
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(level.positions[0]).toMatchObject({
+      sellOrderId: null,
+      spentQuote: "5.05",
+      topUpClientOrderId: "top-up",
     });
   });
 
@@ -3513,6 +3825,91 @@ describe("grid bot top-up buys", () => {
     expect(internals._warnings).toContain("Buy @99 rejected, retrying (2/3)");
   });
 
+  it("leaves every position's budget alone when a top-up reaches the rejection limit", async () => {
+    // given
+    const { state, internals } = topUpBot(vi.fn());
+    const level = state.levels[0];
+    level.positions = [fullPosition(), fillingPosition()];
+    level.pendingBuyClientOrderIds = ["top-up"];
+    level.pendingBuyQuoteSizes = { "top-up": "4.9" };
+    const health = internals as unknown as {
+      _buySlot: (level: GridLevelState) => string;
+      _placementHealth: { rejected: (slot: string, id: string) => void };
+    };
+    health._placementHealth.rejected(health._buySlot(level), "earlier-1");
+    health._placementHealth.rejected(health._buySlot(level), "earlier-2");
+
+    // when
+    const retiring = internals._retirePendingIntent({
+      clientOrderId: "top-up",
+      level,
+    });
+
+    // then
+    await expect(retiring).rejects.toMatchObject({
+      name: "OrderRejectedError",
+    });
+    expect(level.positions[0].slotQuote).toBe("10");
+    expect(level.positions[1]).toMatchObject({
+      slotQuote: "10",
+      spentQuote: "5.05",
+    });
+  });
+
+  it("sends one top-up for its position when a lost top-up turns out cancelled", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const cancelled = {
+      id: "top-up-order",
+      client_order_id: "top-up",
+      symbol: "BTC/USD",
+      side: "buy",
+      type: "limit",
+      quantity: "0.049",
+      filled_quantity: "0",
+      leaves_quantity: "0",
+      price: "99",
+      status: "cancelled",
+      time_in_force: "gtc",
+      execution_instructions: ["allow_taker"],
+      created_date: 1,
+      updated_date: 1,
+    } as Order;
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getHistoricalOrders: vi.fn(async () => ({
+          data: [cancelled],
+          metadata: {},
+        })),
+      }),
+    );
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    level.pendingBuyClientOrderIds = ["top-up"];
+    level.pendingBuyQuoteSizes = { "top-up": "4.9" };
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ quoteSize: "4.9" }),
+      }),
+    ]);
+    expect(requests[0].clientOrderId).not.toBe("top-up");
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0].topUpClientOrderId).toBe(
+      requests[0].clientOrderId,
+    );
+  });
+
   it("adds a top-up that filled while the bot was stopped to its position at start-up", async () => {
     // given
     const placeOrder = vi.fn(async () => ({
@@ -3549,25 +3946,26 @@ describe("grid bot top-up buys", () => {
     ]);
   });
 
-  it("leaves a position's budget alone when its top-up is dropped", () => {
+  it("leaves every position's budget alone when a top-up is dropped", () => {
     // given
     const { state, internals } = topUpBot(vi.fn());
     const level = state.levels[0];
-    level.positions = [fillingPosition()];
+    level.positions = [fullPosition(), fillingPosition()];
     trackBuy(level, "top-up-order", "top-up", "4.9");
 
     // when
     internals._dropBuyOrder(level, "top-up-order");
 
     // then
-    expect(level.positions[0]).toMatchObject({
+    expect(level.positions[0].slotQuote).toBe("10");
+    expect(level.positions[1]).toMatchObject({
       slotQuote: "10",
       spentQuote: "5.05",
     });
     expect(level.buyOrderIds).toEqual([]);
   });
 
-  it("keeps a filling position's top-up the same when another buy's budget comes back to it", () => {
+  it("keeps a filling position's budget and top-up when another buy on its level is dropped", () => {
     // given
     const { state, internals } = topUpBot(vi.fn());
     const level = state.levels[0];
@@ -3580,9 +3978,11 @@ describe("grid bot top-up buys", () => {
 
     // then
     expect(level.positions[0]).toMatchObject({
-      slotQuote: "20",
-      spentQuote: "15.05",
+      slotQuote: "10",
+      spentQuote: "5.05",
+      topUpClientOrderId: "top-up",
     });
+    expect(level.buyOrderIds).toEqual(["top-up-order"]);
   });
 });
 
@@ -4725,6 +5125,140 @@ describe("grid bot attention lines and end-of-check alerts", () => {
 
     // then
     expect(lines).toEqual(["Sell @99.1 not placed yet"]);
+  });
+
+  function buyingTheRest(): GridLevelPosition {
+    return {
+      id: "p1",
+      baseHeld: "0.101",
+      fillCost: "5.05",
+      slotQuote: "10",
+      spentQuote: "5.05",
+      sellOrderId: null,
+    };
+  }
+
+  it("shows a position still buying the rest as a buy, not as a missing sell", () => {
+    // given
+    const { state, internals } = attentionBot();
+    state.quotePrecision = "0.1";
+    state.levels[0].positions = [buyingTheRest()];
+
+    // when
+    const lines = internals._attentionLines();
+
+    // then
+    expect(lines).toEqual(["Buy @99 buying the rest, $4.90, before its sell"]);
+  });
+
+  it("shows a position buying the rest while its top-up is on the book, with no alert", async () => {
+    // given
+    const { state, internals, notify } = attentionBot();
+    internals._pairInfo = { ...PAIR_INFO, min_order_size_quote: "5" };
+    state.quotePrecision = "0.1";
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [{ ...buyingTheRest(), topUpClientOrderId: "top-up" }];
+    level.buyOrderIds = ["top-up-order"];
+    level.buyOrderQuoteSizes = { "top-up-order": "4.9" };
+    level.buyClientOrderIds = { "top-up-order": "top-up" };
+    internals._client.getActiveOrders = vi.fn(async () => ({
+      data: [{ id: "top-up-order", client_order_id: "top-up", status: "new" }],
+      metadata: {},
+    }));
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+    internals._flushPlacementAlerts();
+
+    // then
+    expect(internals._attentionLines()).toEqual([
+      "Buy @99 buying the rest, $4.90, before its sell",
+    ]);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  function failBuySlot(
+    internals: unknown,
+    level: GridLevelState,
+    reason: string,
+  ): void {
+    const health = internals as {
+      _buySlot: (level: GridLevelState) => string;
+      _placementHealth: {
+        failed: (slot: string, reason: string, order: string) => void;
+      };
+    };
+    health._placementHealth.failed(
+      health._buySlot(level),
+      reason,
+      "the buy of $4.90 at $99",
+    );
+  }
+
+  it("shows why the rest of a position can't be bought, in place of the buying line", () => {
+    // given
+    const { state, internals } = attentionBot();
+    state.quotePrecision = "0.1";
+    state.levels[0].positions = [buyingTheRest()];
+    failBuySlot(internals, state.levels[0], "Insufficient balance");
+
+    // when
+    const lines = internals._attentionLines();
+
+    // then
+    expect(lines).toEqual(["Buy @99 not placed: Insufficient balance"]);
+  });
+
+  it("keeps the buying line for a top-up on the book when another buy on its level failed", () => {
+    // given
+    const { state, internals } = attentionBot();
+    state.quotePrecision = "0.1";
+    const level = state.levels[0];
+    level.positions = [{ ...buyingTheRest(), topUpClientOrderId: "top-up" }];
+    level.buyOrderIds = ["top-up-order"];
+    level.buyOrderQuoteSizes = { "top-up-order": "4.9" };
+    level.buyClientOrderIds = { "top-up-order": "top-up" };
+    failBuySlot(internals, level, "Insufficient balance");
+
+    // when
+    const lines = internals._attentionLines();
+
+    // then
+    expect(lines).toEqual(["Buy @99 buying the rest, $4.90, before its sell"]);
+  });
+
+  it("shows a position waiting for cash to buy the rest next to the cash line", async () => {
+    // given
+    const { state, internals } = attentionBot({ available: () => "1" });
+    state.quotePrecision = "0.1";
+    state.gridPrice = "98";
+    state.levels[0].positions = [buyingTheRest()];
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(internals._attentionLines()).toEqual([
+      "1 buy waits for cash: $1.00 free, $4.90 needed",
+      "Buy @99 buying the rest, $4.90, before its sell",
+    ]);
+  });
+
+  it("shows only the top-up's own line when its placement failed", async () => {
+    // given
+    const { state, internals } = attentionBot();
+    state.quotePrecision = "0.1";
+    state.gridPrice = "98";
+    state.levels[0].positions = [buyingTheRest()];
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(internals._attentionLines()).toEqual([
+      expect.stringMatching(/^Buy @99 not placed: Insufficient balance/),
+    ]);
   });
 
   it("says a refused sell waits for the minute lookup, and not placed yet once it is found gone", () => {
@@ -11692,7 +12226,16 @@ describe("grid bot orders whose reply was lost or came back rejected", () => {
     };
   }
 
-  function exchangeBot(state: GridState) {
+  function estimatedAmount(request: Request, pair: CurrencyPair): Decimal {
+    const price = new Decimal(request.limit.price);
+    const step = new Decimal(pair.base_step);
+    const base = request.limit.quoteSize
+      ? new Decimal(request.limit.quoteSize).div(price).div(step).floor()
+      : new Decimal(request.limit.baseSize!).div(step);
+    return base.times(step).times(price);
+  }
+
+  function exchangeBot(state: GridState, price = PRICE) {
     const orders: Order[] = [];
     const unlisted = new Set<string>();
     const replies: Reply[] = [];
@@ -11706,6 +12249,12 @@ describe("grid bot orders whose reply was lost or came back rejected", () => {
       if (reply === "refuse") {
         throw new BadRequestError(
           `An order with the client_order_id '${request.clientOrderId}' has already been placed.`,
+        );
+      }
+      const amount = estimatedAmount(request, internals._pairInfo);
+      if (amount.lt(internals._pairInfo.min_order_size_quote)) {
+        throw new BadRequestError(
+          `Estimated amount for order is too small: QuoteAmount[amount=${amount.toFixed(14)}]`,
         );
       }
       const duplicate = orders.some(
@@ -11768,7 +12317,7 @@ describe("grid bot orders whose reply was lost or came back rejected", () => {
     };
     internals._state = state;
     internals._pairInfo = PAIR_INFO;
-    internals._priceSource = { peek: async () => PRICE };
+    internals._priceSource = { peek: async () => price };
     internals._client = {
       placeOrder,
       getActiveOrders: vi.fn(async () => ({
@@ -11797,7 +12346,7 @@ describe("grid bot orders whose reply was lost or came back rejected", () => {
     const warnings: string[] = [];
     const check = async () => {
       try {
-        await internals._tick(PRICE);
+        await internals._tick(price);
       } finally {
         warnings.push(...internals._warnings);
       }
@@ -12325,5 +12874,178 @@ describe("grid bot orders whose reply was lost or came back rejected", () => {
     expect(position.sellOrderId).toBe("first");
     expect(exchange.sends("sell")).toEqual([]);
     expect(exchange.live("sell")).toEqual(["first"]);
+  });
+
+  function trade(
+    order: Order,
+    status: Order["status"],
+    filledQuantity: string,
+    filledAmount: string,
+  ): void {
+    Object.assign(order, {
+      status,
+      filled_quantity: filledQuantity,
+      leaves_quantity: "0",
+      filled_amount: filledAmount,
+      average_fill_price: new Decimal(filledAmount)
+        .div(filledQuantity)
+        .toString(),
+      total_fee: "0",
+      fee_currency: "USD",
+    });
+  }
+
+  function fillingLevelState(): GridState {
+    const state = makeState();
+    state.createdAt = new Date(Date.now() - 60_000).toISOString();
+    state.gridPrice = "99.1";
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    return state;
+  }
+
+  function requests(exchange: ReturnType<typeof exchangeBot>) {
+    const placeOrder = exchange.internals._client.placeOrder as ReturnType<
+      typeof vi.fn
+    >;
+    return placeOrder.mock.calls.map(([request]) => {
+      const { side, limit } = request as Request;
+      return {
+        side,
+        price: limit.price,
+        size: limit.quoteSize ?? limit.baseSize,
+      };
+    });
+  }
+
+  it("buys the rest of a level into one position, sells it once, relists a partial sale and re-buys the full amount once", async () => {
+    // given
+    const state = fillingLevelState();
+    const exchange = exchangeBot(state);
+    const level = state.levels[0];
+    const order = (id: string) =>
+      exchange.orders.find((candidate) => candidate.id === id)!;
+    const positionCounts: number[] = [];
+    const check = async () => {
+      await exchange.check();
+      positionCounts.push(level.positions.length);
+    };
+
+    // when
+    await check();
+    trade(order("order-1"), "filled", "0.101", "5.05");
+    Object.assign(order("order-1"), {
+      total_fee: "0.0001",
+      fee_currency: "BTC",
+    });
+    await check();
+    const attentionWhileFilling = exchange.internals._attentionLines();
+    trade(order("order-2"), "filled", "0.049", "2.94");
+    await check();
+    trade(order("order-3"), "filled", "0.02", "1.9");
+    await check();
+    trade(order("order-4"), "cancelled", "0.05", "4.955");
+    await check();
+    trade(order("order-5"), "filled", "0.119", "11.7929");
+    await check();
+
+    // then
+    expect(requests(exchange)).toEqual([
+      { side: "buy", price: "99", size: "10" },
+      { side: "buy", price: "99", size: "4.9" },
+      { side: "buy", price: "99", size: "2" },
+      { side: "sell", price: "99.1", size: "0.169" },
+      { side: "sell", price: "99.1", size: "0.119" },
+      { side: "buy", price: "99", size: "10" },
+    ]);
+    expect(positionCounts).toEqual([0, 1, 1, 1, 1, 0]);
+    expect(attentionWhileFilling).toEqual([
+      "Buy @99 buying the rest, $4.90, before its sell",
+    ]);
+    expect(state.stats.totalBuys).toBe(3);
+    expect(state.stats.totalSells).toBe(2);
+    expect(state.stats.realizedPnl).toBe("6.8579");
+  });
+
+  it("tracks a top-up whose reply was lost and sells the level only after that top-up fills", async () => {
+    // given
+    const state = fillingLevelState();
+    const exchange = exchangeBot(state);
+    const level = state.levels[0];
+    const order = (id: string) =>
+      exchange.orders.find((candidate) => candidate.id === id)!;
+    await exchange.check();
+    trade(order("order-1"), "filled", "0.101", "5.05");
+    exchange.replies.push("lose");
+    exchange.unlisted.add("order-2");
+    await exchange.check();
+    const whileUnconfirmed = exchange.internals._attentionLines();
+
+    // when
+    exchange.unlisted.delete("order-2");
+    await exchange.check();
+    const onceTracked = exchange.internals._attentionLines();
+    const sellsBeforeTheFill = exchange.sends("sell");
+    trade(order("order-2"), "filled", "0.049", "4.85");
+    await exchange.check();
+
+    // then
+    expect(whileUnconfirmed).toEqual([
+      "Buy @99 not placed: No reply from the exchange within 30 s",
+    ]);
+    expect(onceTracked).toEqual([
+      "Buy @99 buying the rest, $4.90, before its sell",
+    ]);
+    expect(sellsBeforeTheFill).toEqual([]);
+    expect(exchange.sends("buy")).toHaveLength(2);
+    expect(level.positions).toEqual([
+      expect.objectContaining({ baseHeld: "0.15", sellOrderId: "order-3" }),
+    ]);
+    expect(requests(exchange).at(-1)).toEqual({
+      side: "sell",
+      price: "99.1",
+      size: "0.15",
+    });
+  });
+
+  it("buys the rest of a level until what is left is too small for the exchange at the level's price, then sells all its coins in one order", async () => {
+    // given
+    const state = useTurboLevels(fillingLevelState());
+    const exchange = exchangeBot(state, new Decimal("0.0009"));
+    exchange.internals._pairInfo = TURBO_PAIR;
+    const level = state.levels[0];
+    const order = (id: string) =>
+      exchange.orders.find((candidate) => candidate.id === id)!;
+
+    // when
+    await exchange.check();
+    trade(order("order-1"), "filled", "165929.2", "146.0177");
+    await exchange.check();
+    trade(order("order-2"), "cancelled", "2000", "1.76");
+    await exchange.check();
+    const sellsBeforeTheLastFill = exchange.sends("sell");
+    trade(order("order-3"), "filled", "2458.29", "2.1223");
+    await exchange.check();
+    aMinuteLater();
+    await exchange.check();
+
+    // then
+    expect(sellsBeforeTheLastFill).toEqual([]);
+    expect(requests(exchange)).toEqual([
+      { side: "buy", price: "0.000904", size: "150" },
+      { side: "buy", price: "0.000904", size: "3.9823" },
+      { side: "buy", price: "0.000904", size: "2.2223" },
+      { side: "sell", price: "0.0009113", size: "170387.49" },
+    ]);
+    expect(level.positions).toEqual([
+      expect.objectContaining({
+        baseHeld: "170387.49",
+        fillCost: "149.9",
+        sellOrderId: "order-4",
+      }),
+    ]);
+    expect(level.positions[0].spentQuote).toBeUndefined();
+    expect(level.pendingBuyClientOrderIds ?? []).toEqual([]);
+    expect(state.stats.totalBuys).toBe(3);
   });
 });

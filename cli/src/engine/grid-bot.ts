@@ -151,6 +151,12 @@ interface PendingIntent {
   position?: GridLevelPosition;
 }
 
+interface PlannedBuy {
+  level: GridLevelState;
+  quoteSize: Decimal;
+  owner?: GridLevelPosition;
+}
+
 type CloseOut =
   | { outcome: "complete" | "failed" }
   | { outcome: "waiting"; reason: string };
@@ -1380,6 +1386,34 @@ export class ForegroundGridBot {
       .toNumber();
   }
 
+  private _buysToPlace(gridPrice: Decimal): PlannedBuy[] {
+    const levels = this._state!.levels;
+    const refills = levels
+      .filter(
+        (level) =>
+          level.positions.length === 0 &&
+          new Decimal(level.price).lt(gridPrice),
+      )
+      .flatMap((level) =>
+        this._missingBuyQuotes(level).map((quoteSize) => ({
+          level,
+          quoteSize,
+        })),
+      );
+    return [
+      ...levels.flatMap((level) => this._missingTopUps(level)),
+      ...refills,
+    ];
+  }
+
+  private _missingTopUps(level: GridLevelState): PlannedBuy[] {
+    return level.positions.flatMap((owner) => {
+      if (this._hasLiveTopUp(level, owner)) return [];
+      const quoteSize = this._topUpQuote(level, owner);
+      return quoteSize ? [{ level, quoteSize, owner }] : [];
+    });
+  }
+
   private _missingBuyQuotes(level: GridLevelState): Decimal[] {
     const quotePerLevel = new Decimal(this._state!.quotePerLevel);
     let missing = quotePerLevel
@@ -2356,11 +2390,13 @@ export class ForegroundGridBot {
     clientOrderId?: string,
   ): Promise<void> {
     const quote = level.buyOrderQuoteSizes?.[orderId];
+    const owner = this._topUpOwner(level, level.buyClientOrderIds?.[orderId]);
     this._removeBuyOrder(level, orderId);
     await this._placeBuyOrAlert(
       level,
       quote ? new Decimal(quote) : undefined,
       clientOrderId,
+      owner,
     );
   }
 
@@ -2593,31 +2629,16 @@ export class ForegroundGridBot {
     return { position, base: netBase };
   }
 
-  private _shrinkSlot(
-    position: GridLevelPosition | null,
-    quote: Decimal,
-  ): void {
-    if (!position) return;
-    position.slotQuote = this._slotQuote(position).minus(quote).toString();
-  }
-
-  private async _placeRemainingBuy(
-    level: GridLevelState,
-    quoteSize: Decimal,
-    slotOwner: GridLevelPosition | null,
-  ): Promise<void> {
-    if (!this._isPlaceableBuy(level, quoteSize)) return;
-    this._shrinkSlot(slotOwner, quoteSize);
-    await this._placeBuyOrder(level, quoteSize);
-  }
-
   private _isPlaceableBuy(level: GridLevelState, quoteSize: Decimal): boolean {
     const constraints = this._getOrderConstraints();
     if (quoteSize.lt(constraints.minQuote)) return false;
+    const buyPrice = new Decimal(level.price);
     const sellLevel = this._state!.levels[level.index + 1];
+    const base = quoteSize.div(buyPrice);
     try {
+      normalizeBaseOrderSize(base, constraints, buyPrice);
       normalizeBaseOrderSize(
-        quoteSize.div(level.price),
+        base,
         constraints,
         this._config.stopLoss
           ? new Decimal(this._config.stopLoss)
@@ -2723,17 +2744,12 @@ export class ForegroundGridBot {
     }
 
     const rebuyQuote = settlement.rebuyQuote;
-    if (replaceOrders && rebuyQuote.gt(0)) {
-      try {
-        await this._placeRemainingBuy(
-          level,
-          rebuyQuote,
-          settlement.remainingBase.gt(0) ? position : null,
-        );
-      } catch (err) {
-        rethrowIfInsecureKey(err);
-        this._alertBuyFailure(level, rebuyQuote, err);
-      }
+    if (
+      replaceOrders &&
+      rebuyQuote.gt(0) &&
+      this._isPlaceableBuy(level, rebuyQuote)
+    ) {
+      await this._placeBuyOrAlert(level, rebuyQuote);
     }
     return settlement;
   }
@@ -2768,12 +2784,6 @@ export class ForegroundGridBot {
     const settledCostBasis = closesPosition
       ? fullCostBasis
       : fullCostBasis.times(settledBase).div(heldBase);
-    const rebuyQuote = this._rebuyQuote(
-      position,
-      settledBase.div(heldBase),
-      closesPosition,
-    );
-
     if (closesPosition) {
       level.positions = level.positions.filter(
         (candidate) => candidate !== position,
@@ -2783,6 +2793,9 @@ export class ForegroundGridBot {
       position.fillCost = fullCostBasis.minus(settledCostBasis).toString();
       this._clearSellOrder(position);
     }
+    const rebuyQuote = closesPosition
+      ? this._passSlotOn(level, this._slotQuote(position), fallbackPrice)
+      : new Decimal(0);
 
     return {
       quantity: settledBase,
@@ -2823,27 +2836,67 @@ export class ForegroundGridBot {
     );
   }
 
+  private _hasLiveTopUp(
+    level: GridLevelState,
+    position: GridLevelPosition,
+  ): boolean {
+    const clientOrderId = position.topUpClientOrderId;
+    if (!clientOrderId) return false;
+    return (
+      (level.pendingBuyClientOrderIds ?? []).includes(clientOrderId) ||
+      level.buyOrderIds.some(
+        (orderId) => level.buyClientOrderIds?.[orderId] === clientOrderId,
+      )
+    );
+  }
+
   private _topUpQuote(
     level: GridLevelState,
     position: GridLevelPosition,
   ): Decimal | null {
     if (position.spentQuote === undefined) return null;
-    const rest = floorToStep(
-      this._slotQuote(position).minus(position.spentQuote),
-      this._getQuoteStep(),
-    );
+    const rest = this._restToBuy(position);
     return rest.gt(0) && this._isPlaceableBuy(level, rest) ? rest : null;
   }
 
-  private _rebuyQuote(
-    position: GridLevelPosition,
-    soldShare: Decimal,
-    closesPosition: boolean,
-  ): Decimal {
+  private _restToBuy(position: GridLevelPosition): Decimal {
     const slot = this._slotQuote(position);
-    return closesPosition
-      ? slot
-      : floorToStep(slot.times(soldShare), this._getQuoteStep());
+    return floorToStep(
+      slot.minus(position.spentQuote ?? slot),
+      this._getQuoteStep(),
+    );
+  }
+
+  private _awaitsTopUp(
+    level: GridLevelState,
+    position: GridLevelPosition,
+  ): boolean {
+    return (
+      this._hasLiveTopUp(level, position) ||
+      this._topUpQuote(level, position) !== null
+    );
+  }
+
+  private _passSlotOn(
+    level: GridLevelState,
+    slot: Decimal,
+    sellPrice: Decimal,
+  ): Decimal {
+    const [heir] = level.positions
+      .filter(
+        (candidate) =>
+          this._slotQuote(candidate)
+            .plus(slot)
+            .lte(this._state!.quotePerLevel) &&
+          this._canSell(new Decimal(candidate.baseHeld), sellPrice),
+      )
+      .sort((a, b) => this._slotQuote(b).comparedTo(this._slotQuote(a)));
+    if (!heir) return slot;
+    heir.slotQuote = this._slotQuote(heir).plus(slot).toString();
+    if (heir.spentQuote !== undefined) {
+      heir.spentQuote = new Decimal(heir.spentQuote).plus(slot).toString();
+    }
+    return new Decimal(0);
   }
 
   private _consumeHeldBase(
@@ -4103,22 +4156,15 @@ export class ForegroundGridBot {
       : await this._checkBalance(quoteCurrency);
     let buysWaitingForCash = 0;
     let cashNeeded = new Decimal(0);
-    for (const level of state.levels) {
-      if (
-        level.positions.length > 0 ||
-        !new Decimal(level.price).lt(new Decimal(state.gridPrice))
-      ) {
+    const plannedBuys = this._buysToPlace(new Decimal(state.gridPrice));
+    for (const { level, quoteSize, owner } of plannedBuys) {
+      if (freeCash !== null && freeCash.lt(quoteSize)) {
+        buysWaitingForCash++;
+        cashNeeded = cashNeeded.plus(quoteSize);
         continue;
       }
-      for (const quoteSize of this._missingBuyQuotes(level)) {
-        if (freeCash !== null && freeCash.lt(quoteSize)) {
-          buysWaitingForCash++;
-          cashNeeded = cashNeeded.plus(quoteSize);
-          continue;
-        }
-        await this._placeBuyOrAlert(level, quoteSize);
-        if (freeCash !== null) freeCash = freeCash.minus(quoteSize);
-      }
+      await this._placeBuyOrAlert(level, quoteSize, undefined, owner);
+      if (freeCash !== null) freeCash = freeCash.minus(quoteSize);
     }
     this._cashShortfall =
       buysWaitingForCash > 0 && freeCash
@@ -4137,7 +4183,7 @@ export class ForegroundGridBot {
         ) {
           continue;
         }
-        if (this._topUpQuote(level, pos)) continue;
+        if (this._awaitsTopUp(level, pos)) continue;
         delete pos.spentQuote;
         if (new Decimal(pos.baseHeld).gt(0)) {
           await this._placeSellOnLevel(sellLevel, pos);
@@ -4465,6 +4511,20 @@ export class ForegroundGridBot {
           continue;
         }
         if (!new Decimal(position.baseHeld).gt(0)) continue;
+        if (this._awaitsTopUp(level, position)) {
+          const topUp = position.topUpClientOrderId;
+          if (!topUp || !level.pendingBuyClientOrderIds?.includes(topUp)) {
+            const detail = `buying the rest, ${fmtMoney(this._restToBuy(position), this._cs)}, before its sell`;
+            note(
+              "buy",
+              level.price,
+              this._hasLiveTopUp(level, position)
+                ? detail
+                : unplaced(this._buySlot(level), detail),
+            );
+          }
+          continue;
+        }
         const clientOrderId = position.sellClientOrderId;
         note(
           "sell",
@@ -4708,6 +4768,7 @@ export class ForegroundGridBot {
       return;
     }
     const quoteSize = this._pendingBuyQuote(level, clientOrderId);
+    const owner = this._topUpOwner(level, clientOrderId);
     this._clearPendingBuy(level, clientOrderId);
     this._saveGridState(this._state!);
     try {
@@ -4718,11 +4779,11 @@ export class ForegroundGridBot {
         level.price,
       );
     } catch (err) {
-      this._returnToSlot(level, quoteSize);
+      if (!owner) this._returnToSlot(level, quoteSize);
       this._saveGridState(this._state!);
       throw err;
     }
-    await this._placeBuyOrAlert(level, quoteSize);
+    await this._placeBuyOrAlert(level, quoteSize, undefined, owner);
   }
 
   private async _placeBuyOrAlert(
@@ -5018,7 +5079,15 @@ export class ForegroundGridBot {
     this._recordFoundOrder(this._buySlot(level), order);
     const closedAs = this._closedAs(order);
     if (!resend) return null;
-    return placedAgain(await this._placeBuyOrAlert(level, quoteSize), closedAs);
+    return placedAgain(
+      await this._placeBuyOrAlert(
+        level,
+        quoteSize,
+        undefined,
+        this._topUpOwner(level, clientOrderId),
+      ),
+      closedAs,
+    );
   }
 
   private async _resumePendingSell(
