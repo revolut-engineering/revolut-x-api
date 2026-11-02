@@ -2483,13 +2483,14 @@ export class ForegroundGridBot {
 
   private _dropBuyOrder(level: GridLevelState, orderId: string): void {
     const quote = level.buyOrderQuoteSizes?.[orderId];
-    if (quote) this._returnToSlot(level, quote);
+    const topUp = this._topUpOwner(level, level.buyClientOrderIds?.[orderId]);
+    if (quote && !topUp) this._returnToSlot(level, quote);
     this._removeBuyOrder(level, orderId);
   }
 
   private _returnToSlot(level: GridLevelState, quote: Decimal.Value): void {
     const position = level.positions[0];
-    if (!position) return;
+    if (!position || position.spentQuote !== undefined) return;
     position.slotQuote = this._slotQuote(position).plus(quote).toString();
   }
 
@@ -2536,8 +2537,12 @@ export class ForegroundGridBot {
     fallbackPrice: Decimal,
   ): {
     position: GridLevelPosition | null;
-    remainingQuote: Decimal;
+    base: Decimal;
   } {
+    const owner = this._topUpOwner(
+      level,
+      level.buyClientOrderIds?.[order.id] ?? order.client_order_id,
+    );
     const submittedQuote = new Decimal(
       level.buyOrderQuoteSizes?.[order.id] ?? this._state!.quotePerLevel,
     );
@@ -2547,22 +2552,32 @@ export class ForegroundGridBot {
       quoteCost,
       feeQuote,
     } = this._buyEconomics(order, fallbackPrice);
-    const remainingQuote = floorToStep(
-      Decimal.max(new Decimal(0), submittedQuote.minus(filledAmount)),
-      this._getQuoteStep(),
-    );
     this._removeBuyOrder(level, order.id);
+    if (owner) delete owner.topUpClientOrderId;
 
     let position: GridLevelPosition | null = null;
     if (netBase.gt(0)) {
-      position = {
-        id: order.id,
-        baseHeld: netBase.toString(),
-        fillCost: quoteCost.toString(),
-        slotQuote: submittedQuote.toString(),
-        sellOrderId: null,
-      };
-      level.positions.push(position);
+      if (owner) {
+        owner.baseHeld = new Decimal(owner.baseHeld).plus(netBase).toString();
+        owner.fillCost = new Decimal(owner.fillCost).plus(quoteCost).toString();
+        owner.spentQuote = new Decimal(
+          owner.spentQuote ?? this._slotQuote(owner),
+        )
+          .plus(filledAmount)
+          .toString();
+        position = owner;
+      } else {
+        position = {
+          id: order.id,
+          baseHeld: netBase.toString(),
+          fillCost: quoteCost.toString(),
+          slotQuote: submittedQuote.toString(),
+          spentQuote: filledAmount.toString(),
+          sellOrderId: null,
+        };
+        level.positions.push(position);
+      }
+      if (!this._topUpQuote(level, position)) delete position.spentQuote;
       this._state!.stats.totalBuys++;
       this._addFee(feeQuote);
       this._logTrade(
@@ -2575,7 +2590,7 @@ export class ForegroundGridBot {
       );
     }
     this._saveGridState(this._state!);
-    return { position, remainingQuote };
+    return { position, base: netBase };
   }
 
   private _shrinkSlot(
@@ -2623,6 +2638,11 @@ export class ForegroundGridBot {
     replaceOrders = true,
   ): Promise<boolean> {
     if (!this._hasFilledQuantity(order)) {
+      const owner = this._topUpOwner(
+        level,
+        level.buyClientOrderIds?.[order.id] ?? order.client_order_id,
+      );
+      if (owner) delete owner.topUpClientOrderId;
       this._removeBuyOrder(level, order.id);
       this._saveGridState(this._state!);
       return false;
@@ -2630,10 +2650,16 @@ export class ForegroundGridBot {
 
     const levelPrice = new Decimal(level.price);
     const settlement = this._settleTerminalBuyFill(level, order, levelPrice);
-    if (settlement.position) {
-      const sellLevel = this._state!.levels[level.index + 1];
-      if (sellLevel && replaceOrders) {
-        await this._placeSellOnLevel(sellLevel, settlement.position);
+    const position = settlement.position;
+    if (position) {
+      if (replaceOrders) {
+        const topUp = this._topUpQuote(level, position);
+        const sellLevel = this._state!.levels[level.index + 1];
+        if (topUp) {
+          await this._placeBuyOrAlert(level, topUp, undefined, position);
+        } else if (sellLevel) {
+          await this._placeSellOnLevel(sellLevel, position);
+        }
       }
       if (notify) {
         const base = this._config.pair.split("-")[0] ?? "";
@@ -2642,20 +2668,8 @@ export class ForegroundGridBot {
           ? ` | fee ${this._cs}${feeQuote.toFixed(2)}`
           : "";
         void this._notify(
-          `Grid Bot ${this._config.pair}: BUY filled @ ${this._cs}${this._executionPrice(order, levelPrice)} | ${settlement.position.baseHeld} ${base}${feeStr}`,
+          `Grid Bot ${this._config.pair}: BUY filled @ ${this._cs}${this._executionPrice(order, levelPrice)} | ${settlement.base} ${base}${feeStr}`,
         );
-      }
-    }
-    if (replaceOrders && settlement.remainingQuote.gt(0)) {
-      try {
-        await this._placeRemainingBuy(
-          level,
-          settlement.remainingQuote,
-          settlement.position,
-        );
-      } catch (err) {
-        rethrowIfInsecureKey(err);
-        this._alertBuyFailure(level, settlement.remainingQuote, err);
       }
     }
     return true;
@@ -2797,6 +2811,28 @@ export class ForegroundGridBot {
 
   private _slotQuote(position: GridLevelPosition): Decimal {
     return new Decimal(position.slotQuote ?? this._state!.quotePerLevel);
+  }
+
+  private _topUpOwner(
+    level: GridLevelState,
+    clientOrderId: string | undefined,
+  ): GridLevelPosition | undefined {
+    if (!clientOrderId) return undefined;
+    return level.positions.find(
+      (position) => position.topUpClientOrderId === clientOrderId,
+    );
+  }
+
+  private _topUpQuote(
+    level: GridLevelState,
+    position: GridLevelPosition,
+  ): Decimal | null {
+    if (position.spentQuote === undefined) return null;
+    const rest = floorToStep(
+      this._slotQuote(position).minus(position.spentQuote),
+      this._getQuoteStep(),
+    );
+    return rest.gt(0) && this._isPlaceableBuy(level, rest) ? rest : null;
   }
 
   private _rebuyQuote(
@@ -4101,6 +4137,8 @@ export class ForegroundGridBot {
         ) {
           continue;
         }
+        if (this._topUpQuote(level, pos)) continue;
+        delete pos.spentQuote;
         if (new Decimal(pos.baseHeld).gt(0)) {
           await this._placeSellOnLevel(sellLevel, pos);
         }
@@ -4691,9 +4729,10 @@ export class ForegroundGridBot {
     level: GridLevelState,
     quoteSize = new Decimal(this._state!.quotePerLevel),
     clientOrderId?: string,
+    owner?: GridLevelPosition,
   ): Promise<string | null> {
     try {
-      return await this._placeBuyOrder(level, quoteSize, clientOrderId);
+      return await this._placeBuyOrder(level, quoteSize, clientOrderId, owner);
     } catch (err) {
       rethrowIfInsecureKey(err);
       this._alertBuyFailure(level, quoteSize, err);
@@ -4714,6 +4753,7 @@ export class ForegroundGridBot {
     level: GridLevelState,
     quoteSize: Decimal,
     clientOrderId?: string,
+    owner?: GridLevelPosition,
   ): Promise<string | null> {
     if (this._config.dryRun) {
       const orderId = `dry-buy-${randomUUID().slice(0, 8)}`;
@@ -4731,7 +4771,7 @@ export class ForegroundGridBot {
     const pendingIds = (level.pendingBuyClientOrderIds ??= []);
     const newIntent = !pendingIds.includes(attemptClientOrderId);
     if (newIntent && minted && this._isStopping()) {
-      this._returnToSlot(level, requestedQuoteSize);
+      if (!owner) this._returnToSlot(level, requestedQuoteSize);
       this._saveGridState(this._state!);
       return null;
     }
@@ -4739,6 +4779,7 @@ export class ForegroundGridBot {
       pendingIds.push(attemptClientOrderId);
       level.pendingBuyQuoteSizes[attemptClientOrderId] =
         requestedQuoteSize.toString();
+      if (owner) owner.topUpClientOrderId = attemptClientOrderId;
       this._saveGridState(this._state!);
     }
     let placement: OrderPlacementResult;
@@ -4761,7 +4802,10 @@ export class ForegroundGridBot {
       if (!(err instanceof OrderNotSentError)) throw err;
       if (newIntent && minted) {
         this._clearPendingBuy(level, attemptClientOrderId);
-        this._returnToSlot(level, requestedQuoteSize);
+        if (!owner) this._returnToSlot(level, requestedQuoteSize);
+        else if (owner.topUpClientOrderId === attemptClientOrderId) {
+          delete owner.topUpClientOrderId;
+        }
         this._saveGridState(this._state!);
       }
       return null;

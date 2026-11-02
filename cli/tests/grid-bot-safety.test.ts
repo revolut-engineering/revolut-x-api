@@ -736,13 +736,12 @@ describe("grid bot safety", () => {
     expect(level.buyOrderIds).toEqual(["recovered-buy"]);
   });
 
-  it("tracks a terminal partial buy and replaces only its remainder", async () => {
+  it("tracks a terminal partial buy at start-up and buys only its remainder into the same position", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
     const placeOrder = vi
       .fn()
-      .mockResolvedValueOnce({ data: { venue_order_id: "partial-sell" } })
       .mockResolvedValueOnce({ data: { venue_order_id: "remainder-buy" } });
     const getOrder = vi.fn(async (orderId: string) => ({
       data:
@@ -792,15 +791,26 @@ describe("grid bot safety", () => {
     await internals._reconcileAndInit(state);
 
     // then
-    expect(state.levels[0].positions).toEqual([
-      expect.objectContaining({ baseHeld: "0.04", fillCost: "4" }),
-    ]);
-    expect(placeOrder).toHaveBeenCalledWith(
+    const requests = placeOrder.mock.calls.map(
+      ([request]) =>
+        request as { side: string; clientOrderId: string; limit: object },
+    );
+    expect(requests).toEqual([
       expect.objectContaining({
         side: "buy",
         limit: expect.objectContaining({ quoteSize: "6" }),
       }),
-    );
+    ]);
+    expect(state.levels[0].positions).toEqual([
+      expect.objectContaining({
+        baseHeld: "0.04",
+        fillCost: "4",
+        slotQuote: "10",
+        spentQuote: "4",
+        topUpClientOrderId: requests[0].clientOrderId,
+        sellOrderId: null,
+      }),
+    ]);
   });
 
   it("settles a terminal partial sell and relists only its remainder", async () => {
@@ -1685,7 +1695,7 @@ describe("grid bot opposite-order amounts", () => {
     internals._pairInfo = PAIR_INFO;
     internals._placeBuyOrder = placeBuyOrder;
     internals._placeSellOnLevel = placeSellOnLevel;
-    return { internals, placeBuyOrder };
+    return { internals, placeBuyOrder, placeSellOnLevel };
   }
 
   function fill(overrides: Partial<OrderDetails>): OrderDetails {
@@ -1831,12 +1841,12 @@ describe("grid bot opposite-order amounts", () => {
     expect(amounts).toEqual(["4.9", "5.1"]);
   });
 
-  it("gives a partly filled buy only its share of the slot when the rest goes back on the book", async () => {
+  it("holds the sell of a partly filled buy and buys the rest into the same position", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = ["buy-1"];
     state.levels[0].buyOrderQuoteSizes = { "buy-1": "10" };
-    const { internals, placeBuyOrder } = amountsBot(state);
+    const { internals, placeBuyOrder, placeSellOnLevel } = amountsBot(state);
 
     // when
     await internals._processTerminalBuy(
@@ -1851,12 +1861,20 @@ describe("grid bot opposite-order amounts", () => {
     );
 
     // then
+    const [position] = state.levels[0].positions;
     expect(placeBuyOrder).toHaveBeenCalledWith(
       state.levels[0],
       new Decimal("4"),
+      undefined,
+      position,
     );
+    expect(placeSellOnLevel).not.toHaveBeenCalled();
     expect(state.levels[0].positions).toEqual([
-      expect.objectContaining({ baseHeld: "0.06", slotQuote: "6" }),
+      expect.objectContaining({
+        baseHeld: "0.06",
+        slotQuote: "10",
+        spentQuote: "6",
+      }),
     ]);
   });
 });
@@ -2574,13 +2592,10 @@ describe("grid bot leftover buy amounts", () => {
     } as OrderDetails;
   }
 
-  it("takes the leftover out of its slot as soon as the buy is recorded, even if the reply is lost", async () => {
+  it("keeps the rest of a partly filled buy as its position's top-up, even if the reply is lost", async () => {
     // given
     const placeOrder = vi
       .fn()
-      .mockResolvedValueOnce({
-        data: { venue_order_id: "sell-1", state: "new" },
-      })
       .mockRejectedValueOnce(new Error("socket hang up"));
     const { state, internals } = partialBuyBot(placeOrder);
 
@@ -2592,13 +2607,23 @@ describe("grid bot leftover buy amounts", () => {
     );
 
     // then
-    expect(state.levels[0].positions[0].slotQuote).toBe("6");
-    expect(Object.values(state.levels[0].pendingBuyQuoteSizes ?? {})).toEqual([
-      "4",
-    ]);
+    const [request] = placeOrder.mock.calls[0] as unknown as [
+      { side: string; clientOrderId: string },
+    ];
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    expect(request.side).toBe("buy");
+    expect(state.levels[0].positions[0]).toMatchObject({
+      slotQuote: "10",
+      spentQuote: "6",
+      topUpClientOrderId: request.clientOrderId,
+      sellOrderId: null,
+    });
+    expect(state.levels[0].pendingBuyQuoteSizes).toEqual({
+      [request.clientOrderId]: "4",
+    });
   });
 
-  it("keeps a leftover too small to place in its slot, without an alert", async () => {
+  it("sells a partly filled buy at once when the rest is too small to place, without an alert", async () => {
     // given
     const placeOrder = vi.fn(async () => ({
       data: { venue_order_id: "sell-1", state: "new" },
@@ -2614,8 +2639,950 @@ describe("grid bot leftover buy amounts", () => {
 
     // then
     expect(placeOrder).toHaveBeenCalledTimes(1);
-    expect(state.levels[0].positions[0].slotQuote).toBe("10");
+    expect(state.levels[0].positions[0]).toMatchObject({
+      slotQuote: "10",
+      sellOrderId: "sell-1",
+    });
+    expect(state.levels[0].positions[0].spentQuote).toBeUndefined();
     expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("grid bot top-up buys", () => {
+  function topUpBot(
+    placeOrder: ReturnType<typeof vi.fn>,
+    client: Record<string, unknown> = {},
+  ) {
+    const state = makeState();
+    state.quotePrecision = "0.1";
+    state.levels[0].buyOrderIds = [];
+    const position: GridLevelPosition = {
+      id: "p1",
+      baseHeld: "0.06",
+      fillCost: "6",
+      slotQuote: "10",
+      spentQuote: "6",
+      sellOrderId: null,
+    };
+    state.levels[0].positions = [position];
+    const bot = new ForegroundGridBot({
+      pair: "BTC-USD",
+      levels: 4,
+      rangePct: "0.01",
+      investment: "40",
+      splitInvestment: false,
+      intervalSec: 30,
+      dryRun: false,
+      reset: false,
+      trailingUp: false,
+    });
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: Record<string, unknown>;
+      _priceSource: { peek: () => Promise<Decimal> };
+      _placeBuyOrder: (
+        level: GridLevelState,
+        quoteSize: Decimal,
+        clientOrderId?: string,
+        owner?: GridLevelPosition,
+      ) => Promise<string | null>;
+      _processTerminalBuy: (
+        level: GridLevelState,
+        order: OrderDetails,
+        notify: boolean,
+      ) => Promise<boolean>;
+      _tick: (price: Decimal) => Promise<void>;
+      _notify: ReturnType<typeof vi.fn>;
+      _warnings: string[];
+      _cashShortfall: { buys: number } | null;
+      _dropBuyOrder: (level: GridLevelState, orderId: string) => void;
+      _retirePendingIntent: (intent: {
+        clientOrderId: string;
+        level: GridLevelState;
+      }) => Promise<void>;
+      _reconcileAndInit: (savedState: GridState) => Promise<void>;
+    };
+    internals._state = state;
+    internals._notify = vi.fn();
+    internals._pairInfo = PAIR_INFO;
+    internals._priceSource = { peek: async () => new Decimal("99.05") };
+    internals._client = { placeOrder, ...client };
+    return { state, position, internals };
+  }
+
+  function filledBuy(
+    id: string,
+    clientOrderId: string,
+    filledQuantity: string,
+    filledAmount: string,
+  ): OrderDetails {
+    return {
+      id,
+      client_order_id: clientOrderId,
+      status: "filled",
+      filled_quantity: filledQuantity,
+      filled_amount: filledAmount,
+      total_fee: "0",
+      fee_currency: "USD",
+    } as OrderDetails;
+  }
+
+  function trackBuy(
+    level: GridLevelState,
+    orderId: string,
+    clientOrderId: string,
+    quote: string,
+  ): void {
+    level.buyOrderIds.push(orderId);
+    (level.buyOrderQuoteSizes ??= {})[orderId] = quote;
+    (level.buyClientOrderIds ??= {})[orderId] = clientOrderId;
+  }
+
+  function fillingPosition(
+    overrides: Partial<GridLevelPosition> = {},
+  ): GridLevelPosition {
+    return {
+      id: "p1",
+      baseHeld: "0.101",
+      fillCost: "5.05",
+      slotQuote: "10",
+      spentQuote: "5.05",
+      topUpClientOrderId: "top-up",
+      sellOrderId: null,
+      ...overrides,
+    };
+  }
+
+  function tickClient(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      getActiveOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getHistoricalOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getBalances: vi.fn(async () => [{ currency: "USD", available: "1000" }]),
+      ...overrides,
+    };
+  }
+
+  function sent(placeOrder: ReturnType<typeof vi.fn>) {
+    return placeOrder.mock.calls.map(
+      ([request]) =>
+        request as {
+          side: "buy" | "sell";
+          clientOrderId: string;
+          limit: { price: string; quoteSize?: string; baseSize?: string };
+        },
+    );
+  }
+
+  it("saves a top-up's link to its position with the pending buy before sending it, even if the reply is lost", async () => {
+    // given
+    const saved: GridState[] = [];
+    vi.mocked(saveGridState).mockImplementation((savedState) => {
+      saved.push(structuredClone(savedState));
+    });
+    let savedBeforeSend: GridState | undefined;
+    const placeOrder = vi.fn(async () => {
+      savedBeforeSend = saved.at(-1);
+      throw new NetworkError("No reply from the exchange within 30 s.");
+    });
+    const { state, position, internals } = topUpBot(placeOrder);
+
+    // when
+    const sending = internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("4"),
+      undefined,
+      position,
+    );
+
+    // then
+    await expect(sending).rejects.toThrow(NetworkError);
+    vi.mocked(saveGridState).mockReset();
+    const [request] = placeOrder.mock.calls[0] as unknown as [
+      { clientOrderId: string },
+    ];
+    expect(savedBeforeSend?.levels[0].positions[0].topUpClientOrderId).toBe(
+      request.clientOrderId,
+    );
+    expect(savedBeforeSend?.levels[0].pendingBuyQuoteSizes).toEqual({
+      [request.clientOrderId]: "4",
+    });
+    expect(position.topUpClientOrderId).toBe(request.clientOrderId);
+    expect(position.slotQuote).toBe("10");
+  });
+
+  it("sends no top-up and leaves the position's budget alone when stopping", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, position, internals } = topUpBot(placeOrder);
+    stopRequest(internals).abort();
+
+    // when
+    const placed = await internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("4"),
+      undefined,
+      position,
+    );
+
+    // then
+    expect(placed).toBeNull();
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(position.topUpClientOrderId).toBeUndefined();
+    expect(position.slotQuote).toBe("10");
+    expect(state.levels[0].pendingBuyClientOrderIds ?? []).toEqual([]);
+  });
+
+  it("drops the link and leaves the budget alone when the stop comes just before the top-up is sent", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, position, internals } = topUpBot(placeOrder);
+    (internals as unknown as { _rateLimiter: unknown })._rateLimiter = {
+      place: async (
+        send: () => Promise<unknown>,
+        refuse: () => Error | null,
+      ) => {
+        stopRequest(internals).abort();
+        const refusal = refuse();
+        if (refusal) throw refusal;
+        return send();
+      },
+    };
+
+    // when
+    const placed = await internals._placeBuyOrder(
+      state.levels[0],
+      new Decimal("4"),
+      undefined,
+      position,
+    );
+
+    // then
+    expect(placed).toBeNull();
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(position.topUpClientOrderId).toBeUndefined();
+    expect(position.slotQuote).toBe("10");
+    expect(state.levels[0].pendingBuyClientOrderIds ?? []).toEqual([]);
+  });
+
+  it("holds the sell of a buy that filled below its level and buys the rest into the same position", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [];
+    trackBuy(level, "buy-1", "first", "10");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("buy-1", "first", "0.101", "5.05"),
+      false,
+    );
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ price: "99", quoteSize: "4.9" }),
+      }),
+    ]);
+    expect(level.positions).toEqual([
+      expect.objectContaining({
+        baseHeld: "0.101",
+        fillCost: "5.05",
+        slotQuote: "10",
+        spentQuote: "5.05",
+        topUpClientOrderId: requests[0].clientOrderId,
+        sellOrderId: null,
+      }),
+    ]);
+    expect(level.buyOrderIds).toEqual(["top-up-order"]);
+  });
+
+  it("adds a top-up's coins to its position and sells them all at once when what is left can't make a buy", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("top-up-order", "top-up", "0.049", "4.85"),
+      false,
+    );
+
+    // then
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({ price: "99.1", baseSize: "0.15" }),
+      }),
+    ]);
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.15",
+      fillCost: "9.9",
+      slotQuote: "10",
+      sellOrderId: "sell-1",
+    });
+    expect(level.positions[0].spentQuote).toBeUndefined();
+    expect(level.positions[0].topUpClientOrderId).toBeUndefined();
+    expect(level.buyOrderIds).toEqual([]);
+    expect(state.stats.totalBuys).toBe(1);
+  });
+
+  it("keeps buying the rest while what is left still makes a placeable buy", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("top-up-order", "top-up", "0.049", "2.45"),
+      false,
+    );
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ quoteSize: "2.5" }),
+      }),
+    ]);
+    expect(requests[0].clientOrderId).not.toBe("top-up");
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.15",
+      spentQuote: "7.5",
+      topUpClientOrderId: requests[0].clientOrderId,
+      sellOrderId: null,
+    });
+  });
+
+  it("keeps a filling position's budget when its top-up is dropped without a fill", () => {
+    // given
+    const { state, internals } = topUpBot(vi.fn());
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    (
+      internals as unknown as {
+        _dropBuyOrder: (level: GridLevelState, orderId: string) => void;
+      }
+    )._dropBuyOrder(level, "top-up-order");
+
+    // then
+    expect(level.buyOrderIds).toEqual([]);
+    expect(level.positions[0].slotQuote).toBe("10");
+    expect(level.positions[0].spentQuote).toBe("5.05");
+  });
+
+  it("keeps a filling position's budget when a full buy on its level is dropped", () => {
+    // given
+    const { state, internals } = topUpBot(vi.fn());
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "buy-2", "c-buy-2", "10");
+
+    // when
+    (
+      internals as unknown as {
+        _dropBuyOrder: (level: GridLevelState, orderId: string) => void;
+      }
+    )._dropBuyOrder(level, "buy-2");
+
+    // then
+    expect(level.positions[0].slotQuote).toBe("10");
+  });
+
+  it("clears the top-up link when the top-up ends without a fill", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    const traded = await internals._processTerminalBuy(
+      level,
+      {
+        ...filledBuy("top-up-order", "top-up", "0", "0"),
+        status: "cancelled",
+      } as OrderDetails,
+      false,
+    );
+
+    // then
+    expect(traded).toBe(false);
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(level.buyOrderIds).toEqual([]);
+    expect(level.positions[0]).toMatchObject({
+      slotQuote: "10",
+      spentQuote: "5.05",
+    });
+    expect(level.positions[0].topUpClientOrderId).toBeUndefined();
+  });
+
+  it("merges a top-up that traded partly before it was cancelled and buys the rest once", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      {
+        ...filledBuy("top-up-order", "top-up", "0.02", "1.98"),
+        status: "cancelled",
+      } as OrderDetails,
+      false,
+    );
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ quoteSize: "2.9" }),
+      }),
+    ]);
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.121",
+      fillCost: "7.03",
+      spentQuote: "7.03",
+      topUpClientOrderId: requests[0].clientOrderId,
+      sellOrderId: null,
+    });
+    expect(state.stats.totalBuys).toBe(1);
+  });
+
+  it("merges a top-up whose fee was taken in coins", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      {
+        ...filledBuy("top-up-order", "top-up", "0.049", "4.85"),
+        total_fee: "0.00005",
+        fee_currency: "BTC",
+      } as OrderDetails,
+      false,
+    );
+
+    // then
+    expect(sent(placeOrder).map((request) => request.side)).toEqual(["sell"]);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.14995",
+      fillCost: "9.9",
+    });
+    expect(level.positions[0].spentQuote).toBeUndefined();
+  });
+
+  it("keeps a full buy on a level with a filling position as its own position", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    const filling = fillingPosition();
+    level.positions = [filling];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+    trackBuy(level, "full-order", "full", "10");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("full-order", "full", "0.101", "10"),
+      false,
+    );
+
+    // then
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({ baseSize: "0.101" }),
+      }),
+    ]);
+    expect(level.positions).toHaveLength(2);
+    expect(level.positions[0]).toBe(filling);
+    expect(filling).toMatchObject({
+      baseHeld: "0.101",
+      spentQuote: "5.05",
+      topUpClientOrderId: "top-up",
+      sellOrderId: null,
+    });
+    expect(level.positions[1]).toMatchObject({
+      baseHeld: "0.101",
+      sellOrderId: "sell-2",
+    });
+    expect(level.positions[1].spentQuote).toBeUndefined();
+    expect(level.buyOrderIds).toEqual(["top-up-order"]);
+  });
+
+  it("sends no sell for a position while its top-up is still on the book", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const topUpOrder = {
+      id: "top-up-order",
+      client_order_id: "top-up",
+      status: "new",
+      filled_quantity: "0",
+    };
+    const { state, internals } = topUpBot(placeOrder, {
+      getActiveOrders: vi.fn(async () => ({
+        data: [topUpOrder],
+        metadata: {},
+      })),
+      getHistoricalOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getBalances: vi.fn(async () => [{ currency: "USD", available: "1000" }]),
+    });
+    state.gridPrice = "99.05";
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(level.positions[0].sellOrderId).toBeNull();
+  });
+
+  it("sells a position whose budget can't make another buy", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder, {
+      getActiveOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getHistoricalOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getBalances: vi.fn(async () => [{ currency: "USD", available: "1000" }]),
+    });
+    state.gridPrice = "99.05";
+    const level = state.levels[0];
+    level.positions = [
+      fillingPosition({
+        baseHeld: "0.15",
+        fillCost: "9.9",
+        spentQuote: "9.9",
+        topUpClientOrderId: undefined,
+      }),
+    ];
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({ baseSize: "0.15" }),
+      }),
+    ]);
+    expect(level.positions[0].spentQuote).toBeUndefined();
+  });
+
+  it("finds a top-up's position from the order's own client order ID when the bot never tracked its ID", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    level.buyOrderIds = ["top-up-order"];
+    level.buyOrderQuoteSizes = { "top-up-order": "4.9" };
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("top-up-order", "top-up", "0.049", "4.85"),
+      false,
+    );
+
+    // then
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.15",
+      sellOrderId: "sell-1",
+    });
+  });
+
+  it("tells Telegram the coins this top-up bought, not the position's total", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      {
+        ...filledBuy("top-up-order", "top-up", "0.049", "4.85"),
+        average_fill_price: "99",
+      },
+      true,
+    );
+
+    // then
+    expect(internals._notify).toHaveBeenCalledWith(
+      "Grid Bot BTC-USD: BUY filled @ $99 | 0.049 BTC",
+    );
+  });
+
+  it("adds a top-up's coins after its coin fee and its full cost to the position", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      {
+        ...filledBuy("top-up-order", "top-up", "0.049", "4.85"),
+        total_fee: "0.001",
+        fee_currency: "BTC",
+      },
+      false,
+    );
+
+    // then
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.149",
+      fillCost: "9.9",
+    });
+    expect(state.stats.totalBuys).toBe(1);
+    expect(new Decimal(state.stats.totalFees).gt(0)).toBe(true);
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({ baseSize: "0.149" }),
+      }),
+    ]);
+  });
+
+  it("adds a top-up that traded during a stop to its position without placing anything", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+    const settle = internals._processTerminalBuy as unknown as (
+      level: GridLevelState,
+      order: OrderDetails,
+      notify: boolean,
+      replaceOrders: boolean,
+    ) => Promise<boolean>;
+
+    // when
+    await settle.call(
+      internals,
+      level,
+      {
+        ...filledBuy("top-up-order", "top-up", "0.02", "1.98"),
+        status: "cancelled",
+      },
+      false,
+      false,
+    );
+
+    // then
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.121",
+      spentQuote: "7.03",
+    });
+    expect(level.positions[0].topUpClientOrderId).toBeUndefined();
+  });
+
+  it("treats a linked position with no spent amount saved as full and sells it", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition({ spentQuote: undefined })];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._processTerminalBuy(
+      level,
+      filledBuy("top-up-order", "top-up", "0.02", "1.98"),
+      false,
+    );
+
+    // then
+    expect(sent(placeOrder)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({ baseSize: "0.121" }),
+      }),
+    ]);
+    expect(level.positions[0].spentQuote).toBeUndefined();
+  });
+
+  it("re-places a top-up lost during a stop on the next check, linked to its position, even above the grid price", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder, tickClient());
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [fillingPosition({ topUpClientOrderId: "cancelled" })];
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ price: "99", quoteSize: "4.9" }),
+      }),
+    ]);
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      topUpClientOrderId: requests[0].clientOrderId,
+      sellOrderId: null,
+      slotQuote: "10",
+      spentQuote: "5.05",
+    });
+  });
+
+  it("doesn't send a second top-up while the first one's reply is still being looked up", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, internals } = topUpBot(placeOrder, tickClient());
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    level.pendingBuyClientOrderIds = ["top-up"];
+    level.pendingBuyQuoteSizes = { "top-up": "4.9" };
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(level.positions[0].topUpClientOrderId).toBe("top-up");
+  });
+
+  it("waits for cash before re-placing a top-up and counts it as waiting", async () => {
+    // given
+    const placeOrder = vi.fn();
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getBalances: vi.fn(async () => [{ currency: "USD", available: "1" }]),
+      }),
+    );
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [fillingPosition({ topUpClientOrderId: undefined })];
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(internals._cashShortfall).toMatchObject({ buys: 1 });
+    expect(level.positions[0].sellOrderId).toBeNull();
+  });
+
+  it("replaces a top-up cancelled outside the bot for the same position, not as a new piece", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getOrder: vi.fn(async (id: string) => ({
+          data: {
+            id,
+            client_order_id: "top-up",
+            status: "cancelled",
+            filled_quantity: "0",
+            total_fee: "0",
+            fee_currency: "USD",
+          },
+        })),
+      }),
+    );
+    state.gridPrice = "98";
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._tick(new Decimal("99.05"));
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ quoteSize: "4.9" }),
+      }),
+    ]);
+    expect(requests[0].clientOrderId).not.toBe("top-up");
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0].topUpClientOrderId).toBe(
+      requests[0].clientOrderId,
+    );
+    expect(level.positions[0].slotQuote).toBe("10");
+  });
+
+  it("keeps a top-up retired after 5 minutes linked to its position and counts the rejection", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "top-up-order-2", state: "new" },
+    }));
+    const { state, internals } = topUpBot(placeOrder);
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    level.pendingBuyClientOrderIds = ["top-up"];
+    level.pendingBuyQuoteSizes = { "top-up": "4.9" };
+
+    // when
+    await internals._retirePendingIntent({ clientOrderId: "top-up", level });
+
+    // then
+    const requests = sent(placeOrder);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        side: "buy",
+        limit: expect.objectContaining({ quoteSize: "4.9" }),
+      }),
+    ]);
+    expect(level.positions[0].topUpClientOrderId).toBe(
+      requests[0].clientOrderId,
+    );
+    expect(level.positions[0].slotQuote).toBe("10");
+    expect(internals._warnings).toContain("Buy @99 rejected, retrying (2/3)");
+  });
+
+  it("adds a top-up that filled while the bot was stopped to its position at start-up", async () => {
+    // given
+    const placeOrder = vi.fn(async () => ({
+      data: { venue_order_id: "sell-1", state: "new" },
+    }));
+    const { state, internals } = topUpBot(
+      placeOrder,
+      tickClient({
+        getOrder: vi.fn(async (id: string) => ({
+          data: filledBuy(id, "top-up", "0.049", "4.85"),
+        })),
+      }),
+    );
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    await internals._reconcileAndInit(state);
+
+    // then
+    expect(level.positions).toHaveLength(1);
+    expect(level.positions[0]).toMatchObject({
+      baseHeld: "0.15",
+      sellOrderId: "sell-1",
+    });
+    expect(
+      sent(placeOrder).filter((request) => request.limit.price === "99.1"),
+    ).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        limit: expect.objectContaining({ baseSize: "0.15" }),
+      }),
+    ]);
+  });
+
+  it("leaves a position's budget alone when its top-up is dropped", () => {
+    // given
+    const { state, internals } = topUpBot(vi.fn());
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+
+    // when
+    internals._dropBuyOrder(level, "top-up-order");
+
+    // then
+    expect(level.positions[0]).toMatchObject({
+      slotQuote: "10",
+      spentQuote: "5.05",
+    });
+    expect(level.buyOrderIds).toEqual([]);
+  });
+
+  it("keeps a filling position's top-up the same when another buy's budget comes back to it", () => {
+    // given
+    const { state, internals } = topUpBot(vi.fn());
+    const level = state.levels[0];
+    level.positions = [fillingPosition()];
+    trackBuy(level, "top-up-order", "top-up", "4.9");
+    trackBuy(level, "other-order", "other", "10");
+
+    // when
+    internals._dropBuyOrder(level, "other-order");
+
+    // then
+    expect(level.positions[0]).toMatchObject({
+      slotQuote: "20",
+      spentQuote: "15.05",
+    });
   });
 });
 
@@ -5996,7 +6963,7 @@ describe("grid bot fee accounting", () => {
         level: GridLevelState,
         order: OrderDetails,
         fallbackPrice: Decimal,
-      ) => { position: GridLevelPosition | null; remainingQuote: Decimal };
+      ) => { position: GridLevelPosition | null; base: Decimal };
       _settlePositionFill: (
         level: GridLevelState,
         position: GridLevelPosition,
@@ -6475,6 +7442,10 @@ describe("grid bot order rejection", () => {
     expect(state.levels[0].pendingBuyClientOrderIds).toEqual([
       sent[0].clientOrderId,
     ]);
+    expect(state.levels[0].positions[0].topUpClientOrderId).toBe(
+      sent[0].clientOrderId,
+    );
+    expect(internals._placeSellOnLevel).not.toHaveBeenCalled();
   });
 
   it("keeps a rejected re-buy after a completed sell pending under its client order ID", async () => {
@@ -7080,7 +8051,7 @@ describe("grid bot rejections counted per order slot", () => {
     expect(state.stats.realizedPnl).toBe("-0.036");
   });
 
-  it("keeps what a rejected buy traded as a position and sells it", async () => {
+  it("keeps what a rejected buy traded as a position and buys the rest into it", async () => {
     // given
     const state = makeState();
     state.levels[0].buyOrderIds = [];
@@ -7099,12 +8070,21 @@ describe("grid bot rejections counted per order slot", () => {
 
     // then
     expect(result).toBeNull();
+    const buys = placeOrder.mock.calls
+      .map(([request]) => request as Request)
+      .filter(
+        (request) => request.side === "buy" && request.limit.price === "99",
+      );
+    expect(buys.map((request) => request.limit.quoteSize)).toEqual(["10", "5"]);
     expect(state.levels[0].positions).toEqual([
-      expect.objectContaining({ baseHeld: "0.05", fillCost: "4.95" }),
+      expect.objectContaining({
+        baseHeld: "0.05",
+        fillCost: "4.95",
+        spentQuote: "4.95",
+        topUpClientOrderId: buys[1].clientOrderId,
+      }),
     ]);
-    expect(sells(placeOrder).map((request) => request.limit.baseSize)).toEqual([
-      "0.05",
-    ]);
+    expect(sells(placeOrder)).toEqual([]);
   });
 
   it("keeps an order reported rejected that turns out to rest on the book", async () => {
@@ -9513,7 +10493,7 @@ describe("grid bot orders the exchange doesn't list yet", () => {
     expect(state.levels[0].buyOrderIds).toEqual([]);
   });
 
-  it("gives the slot back when Ctrl+C stops the re-buy of a partly filled buy", async () => {
+  it("keeps the full budget and no top-up link when Ctrl+C stops the rest of a partly filled buy", async () => {
     // given
     const { state, internals, placeOrder } = unlistedBot();
     internals._state = state;
@@ -9551,6 +10531,8 @@ describe("grid bot orders the exchange doesn't list yet", () => {
     expect(level.pendingBuyClientOrderIds ?? []).toEqual([]);
     expect(level.positions).toHaveLength(1);
     expect(level.positions[0].slotQuote).toBe("10");
+    expect(level.positions[0].spentQuote).toBe("4.95");
+    expect(level.positions[0].topUpClientOrderId).toBeUndefined();
   });
 
   it("saves a grid it can resume when Ctrl+C comes while the split buy fills", async () => {

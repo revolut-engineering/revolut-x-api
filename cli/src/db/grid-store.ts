@@ -17,6 +17,8 @@ export interface GridLevelPosition {
   fillCost: string;
   sellOrderId: string | null;
   slotQuote?: string;
+  spentQuote?: string;
+  topUpClientOrderId?: string;
   sellBaseSize?: string;
   sellClientOrderId?: string;
 }
@@ -195,11 +197,16 @@ function assignLeftoverSlots(state: GridState): void {
     );
     if (unslotted.length === 0) continue;
     const perLevel = new Decimal(state.quotePerLevel);
+    const topUps = new Set(
+      level.positions.flatMap((position) => position.topUpClientOrderId ?? []),
+    );
     const leftovers = [
-      ...level.buyOrderIds.map((id) => level.buyOrderQuoteSizes?.[id]),
-      ...(level.pendingBuyClientOrderIds ?? []).map(
-        (id) => level.pendingBuyQuoteSizes?.[id],
-      ),
+      ...level.buyOrderIds
+        .filter((id) => !topUps.has(level.buyClientOrderIds?.[id] ?? ""))
+        .map((id) => level.buyOrderQuoteSizes?.[id]),
+      ...(level.pendingBuyClientOrderIds ?? [])
+        .filter((id) => !topUps.has(id))
+        .map((id) => level.pendingBuyQuoteSizes?.[id]),
     ]
       .filter((size): size is string => size !== undefined)
       .map((size) => new Decimal(size))
