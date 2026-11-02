@@ -200,6 +200,57 @@ describe("slot amounts in older save files", () => {
     };
   }
 
+  it("doesn't count a position's top-up buy as an older position's leftover", () => {
+    // given
+    save({
+      buyOrderIds: ["top-up-order"],
+      buyOrderQuoteSizes: { "top-up-order": "4" },
+      buyClientOrderIds: { "top-up-order": "top-up" },
+      positions: [
+        position("older", "5"),
+        {
+          ...position("filling", "6", "10"),
+          spentQuote: "6",
+          topUpClientOrderId: "top-up",
+        },
+      ],
+    });
+
+    // when
+    const state = loadGridState("BTC-USD")!;
+
+    // then
+    expect(state.levels[1].positions.map((p) => p.slotQuote)).toEqual([
+      "10",
+      "10",
+    ]);
+  });
+
+  it("leaves a filling position's budget, spent amount and top-up link as saved", () => {
+    // given
+    save({
+      pendingBuyClientOrderIds: ["top-up"],
+      pendingBuyQuoteSizes: { "top-up": "4" },
+      positions: [
+        {
+          ...position("filling", "6", "10"),
+          spentQuote: "6",
+          topUpClientOrderId: "top-up",
+        },
+      ],
+    });
+
+    // when
+    const state = loadGridState("BTC-USD")!;
+
+    // then
+    expect(state.levels[1].positions[0]).toMatchObject({
+      slotQuote: "10",
+      spentQuote: "6",
+      topUpClientOrderId: "top-up",
+    });
+  });
+
   it("takes a leftover buy's amount out of the position it completes", () => {
     // given
     save({
