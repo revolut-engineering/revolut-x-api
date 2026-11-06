@@ -21,8 +21,16 @@ import {
   placeOrderSchema,
   replaceOrderSchema,
 } from "./validation/schemas.js";
-import type { AccountBalance } from "./types/account.js";
-import type { CurrencyMap, CurrencyPairMap } from "./types/config.js";
+import type {
+  AccountBalance,
+  SubAccountsOptions,
+  SubAccountsResponse,
+} from "./types/account.js";
+import type {
+  CurrencyMap,
+  CurrencyPairMap,
+  FeeTiersResponse,
+} from "./types/config.js";
 import {
   ActiveOrdersOptions,
   HistoricalOrdersOptions,
@@ -33,7 +41,13 @@ import {
   ReplaceOrderParams,
   ReplaceTriggerConfig,
 } from "./types/orders.js";
-import type { PublicTrade, Trade, TradesOptions } from "./types/trades.js";
+import type {
+  PublicTrade,
+  Trade,
+  TradesOptions,
+  TradingVolumeOptions,
+  TradingVolumeResponse,
+} from "./types/trades.js";
 import type {
   Transaction,
   TransactionDetails,
@@ -191,6 +205,15 @@ export class RevolutXClient {
     return this.request<AccountBalance[]>("GET", "/balances");
   }
 
+  async getSubAccounts(
+    opts?: SubAccountsOptions,
+  ): Promise<SubAccountsResponse> {
+    this.assertAuthenticated();
+    const params: Record<string, unknown> = {};
+    if (opts?.convertTo) params.convert_to = opts.convertTo;
+    return this.request<SubAccountsResponse>("GET", "/sub-accounts", params);
+  }
+
   async getCurrencies(): Promise<CurrencyMap> {
     this.assertAuthenticated();
     return this.request<CurrencyMap>("GET", "/configuration/currencies");
@@ -199,6 +222,11 @@ export class RevolutXClient {
   async getCurrencyPairs(): Promise<CurrencyPairMap> {
     this.assertAuthenticated();
     return this.request<CurrencyPairMap>("GET", "/configuration/pairs");
+  }
+
+  async getFeeTiers(): Promise<FeeTiersResponse> {
+    this.assertAuthenticated();
+    return this.request<FeeTiersResponse>("GET", "/configuration/fees/tiers");
   }
 
   getMakerFee(): string {
@@ -568,6 +596,20 @@ export class RevolutXClient {
       ...raw,
       data: raw.data.map(mapTrade),
     };
+  }
+
+  async getTradingVolume(
+    opts?: TradingVolumeOptions,
+  ): Promise<TradingVolumeResponse> {
+    this.assertAuthenticated();
+    const params: Record<string, unknown> = {};
+    if (opts?.intervalDays !== undefined)
+      params.interval_days = opts.intervalDays;
+    return this.request<TradingVolumeResponse>(
+      "GET",
+      "/trades/private/volume",
+      params,
+    );
   }
 
   async getTransactions(

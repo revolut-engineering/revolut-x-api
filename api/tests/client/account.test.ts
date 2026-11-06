@@ -96,4 +96,78 @@ describe("Account Management", () => {
       expect(result[0].total).toBe("0.00000001");
     });
   });
+
+  describe("getSubAccounts", () => {
+    const mockSubAccounts = {
+      data: {
+        sub_accounts: [
+          {
+            name: "TradingBot-65",
+            total_balance: { amount: "60000.00", currency: "USD" },
+            created_date: 1699999940000,
+            updated_date: 1700000000000,
+          },
+          {
+            name: "TradingBot-66",
+            total_balance: { amount: "0.00", currency: "USD" },
+            created_date: 1699999940000,
+            updated_date: 1700000000000,
+          },
+        ],
+      },
+      metadata: { timestamp: 1700000000000, convert_to: "USD" },
+    };
+
+    it("lists sub-accounts with total balances in the target currency", async () => {
+      const client = createTestClient();
+      nock(BASE_URL).get("/api/1.0/sub-accounts").reply(200, mockSubAccounts);
+
+      const result = await client.getSubAccounts();
+
+      expect(result.data.sub_accounts).toHaveLength(2);
+      expect(result.data.sub_accounts[0].name).toBe("TradingBot-65");
+      expect(result.data.sub_accounts[0].total_balance.amount).toBe("60000.00");
+      expect(result.data.sub_accounts[0].total_balance.currency).toBe("USD");
+      expect(result.metadata.convert_to).toBe("USD");
+    });
+
+    it("passes convert_to through as a query parameter", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/sub-accounts")
+        .query({ convert_to: "EUR" })
+        .reply(200, {
+          data: {
+            sub_accounts: [
+              {
+                name: "TradingBot-65",
+                total_balance: { amount: "55000.00", currency: "EUR" },
+                created_date: 1699999940000,
+                updated_date: 1700000000000,
+              },
+            ],
+          },
+          metadata: { timestamp: 1700000000000, convert_to: "EUR" },
+        });
+
+      const result = await client.getSubAccounts({ convertTo: "EUR" });
+
+      expect(result.metadata.convert_to).toBe("EUR");
+      expect(result.data.sub_accounts[0].total_balance.currency).toBe("EUR");
+    });
+
+    it("returns an empty list when there are no sub-accounts", async () => {
+      const client = createTestClient();
+      nock(BASE_URL)
+        .get("/api/1.0/sub-accounts")
+        .reply(200, {
+          data: { sub_accounts: [] },
+          metadata: { timestamp: 1700000000000, convert_to: "USD" },
+        });
+
+      const result = await client.getSubAccounts();
+
+      expect(result.data.sub_accounts).toEqual([]);
+    });
+  });
 });

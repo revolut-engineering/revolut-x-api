@@ -23,3 +23,23 @@ export type CurrencyMap = Record<string, Currency>;
 
 /** Map of pair code (slash format, e.g. "BTC/USD") → CurrencyPair */
 export type CurrencyPairMap = Record<string, CurrencyPair>;
+
+export interface FeeTier {
+  tier: number;
+  volume_from: string;
+  volume_to?: string | null;
+  maker_fee: string;
+  taker_fee: string;
+}
+
+export interface FeeTierGroup {
+  type: "spot" | "futures";
+  current_tier: number | null;
+  currency: string;
+  tiers: FeeTier[];
+}
+
+export interface FeeTiersResponse {
+  data: FeeTierGroup[];
+  metadata: { timestamp: number };
+}

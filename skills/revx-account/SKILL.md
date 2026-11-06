@@ -2,11 +2,11 @@
 name: revx-account
 description: >
   Revolut X account, transaction, order, and trade queries. Use when the user asks to
-  "check my balances", "transaction history", "deposits", "withdrawals", "buys", "sells",
-  "sends", "receives", "transaction details", "transaction fees", "view open orders",
-  "order history", "TWAP order", "order fills", "my trades", "trade history", or runs
-  revx account, revx transaction, revx order open, revx order history, revx order get,
-  revx order fills, or revx trade commands.
+  "check my balances", "sub-accounts", "sub-account balances", "transaction history", "deposits",
+  "withdrawals", "buys", "sells", "sends", "receives", "transaction details", "transaction fees",
+  "view open orders", "order history", "TWAP order", "order fills", "my trades", "trade history",
+  "trading volume", "trade volume", or runs revx account, revx transaction, revx order open,
+  revx order history, revx order get, revx order fills, or revx trade commands.
 ---
 
 # Account, Transaction & Order Queries
@@ -29,6 +29,19 @@ revx account balances --all                    # Include zero balances
 revx account balances BTC                      # Single currency (case-insensitive)
 revx account balances --currencies BTC,ETH,USD # Filter by multiple currencies
 ```
+
+---
+
+## Sub-Accounts
+
+```bash
+revx account sub-accounts                      # Sub-account totals converted to USD
+revx account sub-accounts --convert-to EUR     # Totals converted to another currency
+```
+
+Lists every sub-account with its **total balance** (available + reserved, converted at mid-market rates to `--convert-to`, default USD). One row per sub-account: name, total balance, currency, created and updated times.
+
+The converted total is informational — individual currency balances come from `revx account balances`. Sub-account names also appear as `account.display_name` on transactions (`Crypto Primary` is the main X balance).
 
 ---
 
@@ -125,6 +138,8 @@ revx trade private BTC-USD --start-date 7d --limit 100
 revx trade private BTC-USD --start-date 2025-04-01 --end-date 2025-04-14
 revx trade public BTC-USD                                 # Public trades
 revx trade public BTC-USD --start-date 7d --end-date today
+revx trade volume                                         # My trading volume, last 30 days
+revx trade volume --interval-days 7                       # My trading volume, last 7 days
 ```
 
 **Filters:** `--start-date`, `--end-date`, `--limit`
@@ -132,6 +147,12 @@ revx trade public BTC-USD --start-date 7d --end-date today
 **Default:** When no dates are specified, returns the last 30 days. Time formats: relative (`7d`, `1w`, `today`), ISO date (`2025-04-14`), Unix epoch ms.
 
 Aliases: `revx trade history` = `private`, `revx trade all` = `public`.
+
+### Trading Volume
+
+`revx trade volume` returns the **quote-currency volume you contributed** (default USD) over the window — one row per product: `spot` and `futures` (futures is omitted without an active derivatives account). Each row carries the `amount`, `currency`, and the window's `start_date`/`end_date` (epoch ms). `--interval-days` accepts 1–180, default 30.
+
+Fee tiers are keyed off this volume — check `revx market fees` (see `revx-market` skill) to see the current tier and the volume thresholds.
 
 ---
 
@@ -175,6 +196,7 @@ revx market tickers BTC-USD
 revx transaction list --start-date 7d
 revx order history --start-date 7d
 revx trade private BTC-USD --start-date 7d
+revx trade volume --interval-days 7
 ```
 
 ---
