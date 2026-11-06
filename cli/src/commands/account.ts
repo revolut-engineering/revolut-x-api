@@ -1,5 +1,5 @@
 import { Command, Option } from "commander";
-import type { AccountBalance } from "@revolut/revolut-x-api";
+import type { AccountBalance, SubAccount } from "@revolut/revolut-x-api";
 import chalk from "chalk";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
@@ -7,6 +7,8 @@ import {
   isJsonOutput,
   printJson,
   printTable,
+  formatLocalDateTime,
+  LOCAL_TIME_NOTE,
   type ColumnDef,
 } from "../output/formatter.js";
 
@@ -16,6 +18,24 @@ const BALANCE_COLUMNS: ColumnDef<AccountBalance>[] = [
   { header: "Reserved", key: "reserved", align: "right" },
   { header: "Staked", key: "staked", align: "right" },
   { header: "Total", key: "total", align: "right" },
+];
+
+const SUB_ACCOUNT_COLUMNS: ColumnDef<SubAccount>[] = [
+  { header: "Name", key: "name" },
+  {
+    header: "Total Balance",
+    accessor: (s) => s.total_balance.amount,
+    align: "right",
+  },
+  { header: "Currency", accessor: (s) => s.total_balance.currency },
+  {
+    header: "Created",
+    accessor: (s) => formatLocalDateTime(s.created_date),
+  },
+  {
+    header: "Updated",
+    accessor: (s) => formatLocalDateTime(s.updated_date),
+  },
 ];
 
 export function registerAccountCommand(program: Command): void {
@@ -36,7 +56,9 @@ Examples:
   $ revx account balances BTC                          Get a single currency balance
   $ revx account balances --currencies BTC,ETH,USD     Filter by currencies
   $ revx account balances --all                        Include zero balances
-  $ revx account balances --json                       Output as JSON`,
+  $ revx account balances --json                       Output as JSON
+  $ revx account sub-accounts                          Sub-account totals in USD
+  $ revx account sub-accounts --convert-to EUR         Sub-account totals in EUR`,
     );
 
   account
@@ -129,6 +151,64 @@ Examples:
             console.log(chalk.dim("─".repeat(50)));
             printTable(balances, BALANCE_COLUMNS);
           }
+        } catch (err) {
+          handleError(err);
+        }
+      },
+    );
+
+  account
+    .command("sub-accounts")
+    .alias("subaccounts")
+    .description(
+      "List your sub-accounts with total balances converted to a currency",
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx account sub-accounts                     Totals converted to USD (default)
+  $ revx account sub-accounts --convert-to EUR   Totals converted to EUR
+  $ revx account sub-accounts --json             Output as JSON`,
+    )
+    .option(
+      "--convert-to <currency>",
+      "Currency to convert total balances to (default: USD)",
+    )
+    .option("--json", "Output as JSON")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
+    .action(
+      async (opts: { convertTo?: string; json?: boolean; output?: string }) => {
+        try {
+          const client = getClient({ requireAuth: true });
+          const convertTo = opts.convertTo?.trim().toUpperCase();
+          const result = await client.getSubAccounts(
+            convertTo ? { convertTo } : undefined,
+          );
+
+          if (isJsonOutput(opts)) {
+            printJson(result);
+            return;
+          }
+
+          console.log(
+            chalk.cyan.bold(
+              `\n❖ Sub-Accounts (converted to ${result.metadata.convert_to})`,
+            ),
+          );
+          console.log(chalk.dim("─".repeat(50)));
+
+          if (result.data.sub_accounts.length === 0) {
+            console.log(chalk.yellow("! No sub-accounts found.\n"));
+            return;
+          }
+
+          console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
+          printTable(result.data.sub_accounts, SUB_ACCOUNT_COLUMNS);
         } catch (err) {
           handleError(err);
         }

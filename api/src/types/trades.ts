@@ -23,3 +23,20 @@ export interface TradesOptions {
   cursor?: string;
   limit?: number;
 }
+
+export interface TradingVolumeEntry {
+  type: "spot" | "futures";
+  amount: string;
+  currency: string;
+  start_date: number;
+  end_date: number;
+}
+
+export interface TradingVolumeOptions {
+  intervalDays?: number;
+}
+
+export interface TradingVolumeResponse {
+  data: TradingVolumeEntry[];
+  metadata: { timestamp: number };
+}

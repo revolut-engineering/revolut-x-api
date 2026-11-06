@@ -99,6 +99,9 @@ revx account balances --all             # Include zero balances
 revx account balances BTC               # Single currency balance
 revx account balances --currencies BTC,ETH,USD  # Filter by currencies
 revx account balances --json            # Output as JSON
+revx account sub-accounts                # Sub-account totals converted to USD (alias: subaccounts)
+  --convert-to EUR                       # Convert totals to another currency
+revx account sub-accounts --json        # Output as JSON
 ```
 
 ---
@@ -121,6 +124,9 @@ revx market candles BTC-USD             # OHLCV candles (default 1h, the last 10
   --until today                         # End, local time (same formats)
 revx market orderbook BTC-USD           # Order book snapshot (50 levels per side)
   --limit 192                           # Depth per side, 1–192 (default 50, out-of-range values error)
+revx market fees                         # Fee tiers by trading volume (spot and futures)
+                                         # One row per tier: type, currency, volume band,
+                                         # maker/taker fees; current tier marked
 ```
 
 A `--until` in the future counts as now. One request returns at most 50,000 candles, the latest ones in the range. With `--json`, notes such as this one go to stderr, so stdout stays valid JSON.
@@ -208,6 +214,8 @@ revx trade public BTC-USD               # All public trades for a pair (alias: a
   --start-date 7d
   --end-date today
   --limit 50
+revx trade volume                       # My trading volume, last 30 days
+  --interval-days 7                     # Look-back window in days, 1–180
 ```
 
 ---

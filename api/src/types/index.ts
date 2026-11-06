@@ -8,13 +8,21 @@ export type {
   DateRangeOptions,
 } from "./common.js";
 
-export type { AccountBalance } from "./account.js";
+export type {
+  AccountBalance,
+  SubAccount,
+  SubAccountsOptions,
+  SubAccountsResponse,
+} from "./account.js";
 
 export type {
   Currency,
   CurrencyPair,
   CurrencyMap,
   CurrencyPairMap,
+  FeeTier,
+  FeeTierGroup,
+  FeeTiersResponse,
 } from "./config.js";
 
 export type {
@@ -50,7 +58,13 @@ export type {
   HistoricalOrdersOptions,
 } from "./orders.js";
 
-export type { Trade, TradesOptions } from "./trades.js";
+export type {
+  Trade,
+  TradesOptions,
+  TradingVolumeEntry,
+  TradingVolumeOptions,
+  TradingVolumeResponse,
+} from "./trades.js";
 
 export { TRANSACTION_ACCOUNT_TYPES } from "./transactions.js";
 

@@ -26,8 +26,11 @@ import {
 const DEFAULT_CANDLES = 100;
 const MAX_CANDLES = 50000;
 
-function printSectionHeader(title: string): void {
+function printSectionHeader(title: string, subtitle?: string): void {
   console.log(chalk.cyan.bold(`\n❖ ${title}`));
+  if (subtitle) {
+    console.log(chalk.gray(`  ${subtitle}`));
+  }
   console.log(chalk.dim("─".repeat(50)));
 }
 
@@ -58,7 +61,8 @@ Examples:
   $ revx market candles BTC-USD --since 7d --until today
   $ revx market orderbook BTC-USD                     Get order book (50 levels per side)
   $ revx market orderbook BTC-USD --limit 20          Get order book (20 levels per side)
-  $ revx market orderbook BTC-USD --limit 192         Get the deepest book available`,
+  $ revx market orderbook BTC-USD --limit 192         Get the deepest book available
+  $ revx market fees                                  Show your fee tiers by trading volume`,
     );
 
   market
@@ -500,6 +504,88 @@ so a longer range keeps its end and starts later.`,
         }
       },
     );
+
+  market
+    .command("fees")
+    .description("Show your fee tiers by trading volume (spot and futures)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx market fees                            All fee tiers, current tier marked
+  $ revx market fees --json                    Output as JSON`,
+    )
+    .option("--json", "Output as JSON")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
+    .action(async (opts: { json?: boolean; output?: string }) => {
+      try {
+        const client = getClient({ requireAuth: true });
+        const result = await client.getFeeTiers();
+
+        if (isJsonOutput(opts)) {
+          printJson(result);
+          return;
+        }
+
+        if (result.data.length === 0) {
+          console.log(chalk.yellow("\n! No fee tiers found."));
+          return;
+        }
+
+        printSectionHeader(
+          "Fee Tiers",
+          "← current marks the tier your last 30 days of trading volume places you in.",
+        );
+
+        const rows = result.data.flatMap((group) =>
+          group.tiers.map((tier) => ({ group, tier })),
+        );
+        printTable(rows, [
+          {
+            header: "Type",
+            accessor: ({ group }) =>
+              group.type === "spot"
+                ? chalk.white("Spot")
+                : chalk.magenta("Futures"),
+          },
+          { header: "Currency", accessor: ({ group }) => group.currency },
+          {
+            header: "Tier",
+            accessor: ({ group, tier }) =>
+              tier.tier === group.current_tier
+                ? chalk.cyan.bold(`${tier.tier} ← current`)
+                : String(tier.tier),
+            align: "right",
+          },
+          {
+            header: "Volume From",
+            accessor: ({ tier }) => tier.volume_from,
+            align: "right",
+          },
+          {
+            header: "Volume To",
+            accessor: ({ tier }) => tier.volume_to ?? "∞",
+            align: "right",
+          },
+          {
+            header: "Maker Fee",
+            accessor: ({ tier }) => tier.maker_fee,
+            align: "right",
+          },
+          {
+            header: "Taker Fee",
+            accessor: ({ tier }) => tier.taker_fee,
+            align: "right",
+          },
+        ]);
+      } catch (err) {
+        handleError(err);
+      }
+    });
 }
 
 function printTickerTable(tickers: Ticker[]): void {

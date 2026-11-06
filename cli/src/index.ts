@@ -38,6 +38,8 @@ Examples:
     $ revx account balances --currencies BTC,ETH,USD      Filter by currencies
     $ revx account balances --all                         Include zero balances
     $ revx account balances --json                        Output as JSON
+    $ revx account sub-accounts                           Sub-account totals in USD
+    $ revx account sub-accounts --convert-to EUR          Sub-account totals in EUR
 
   Market:
     $ revx market currencies                              List supported currencies
@@ -53,6 +55,7 @@ Examples:
     $ revx market candles BTC-USD --since 7d --until today
     $ revx market orderbook BTC-USD                       Get order book (top 50)
     $ revx market orderbook BTC-USD --limit 20            Get order book (top 20)
+    $ revx market fees                                    Show fee tiers by trading volume
 
   Orders:
     $ revx order place BTC-USD buy --qty 0.001 --market         Place market buy (base qty)
@@ -77,6 +80,8 @@ Examples:
     $ revx trade private BTC-USD --limit 100 --start-date 7d
     $ revx trade public BTC-USD                           All public trades
     $ revx trade public BTC-USD --start-date 7d --limit 200
+    $ revx trade volume                                   Your trading volume (last 30 days)
+    $ revx trade volume --interval-days 7                 Trading volume over 7 days
 
   Transactions:
     $ revx transaction list                               Recent transactions

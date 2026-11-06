@@ -118,6 +118,12 @@ client.isAuthenticated; // → boolean
 // Get all balances
 const balances = await client.getBalances();
 // → AccountBalance[] — { currency, available, reserved, total, staked? }
+
+// List sub-accounts with total balances converted to a currency
+const subAccounts = await client.getSubAccounts({ convertTo: "EUR" }); // convertTo optional, default "USD"
+// → { data: { sub_accounts: SubAccount[] }, metadata: { timestamp, convert_to } }
+// SubAccount — { name, total_balance: { amount, currency }, created_date, updated_date }
+// total_balance is available + reserved converted at mid-market rates
 ```
 
 ---
@@ -132,6 +138,13 @@ const currencies = await client.getCurrencies();
 // Get trading pairs
 const pairs = await client.getCurrencyPairs();
 // → CurrencyPairMap — { [pair]: { base, quote, base_step, quote_step, min/max_order_size, status } }
+
+// Get your fee tiers by trading volume (spot and futures)
+const feeTiers = await client.getFeeTiers();
+// → { data: FeeTierGroup[], metadata: { timestamp } }
+// FeeTierGroup — { type: "spot" | "futures", current_tier: number | null, currency, tiers: FeeTier[] }
+// FeeTier — { tier, volume_from, volume_to? (absent on the top tier), maker_fee, taker_fee }
+// current_tier reflects your 30-day trading volume; null when no volume is on record
 ```
 
 ---
@@ -277,6 +290,12 @@ const trades = await client.getAllTrades("BTC-USD", {
 
 // My private trades
 const myTrades = await client.getPrivateTrades("BTC-USD");
+
+// My trading volume (quote-currency volume contributed)
+const volume = await client.getTradingVolume({ intervalDays: 30 }); // intervalDays optional, 1-180, default 30
+// → { data: TradingVolumeEntry[], metadata: { timestamp } }
+// TradingVolumeEntry — { type: "spot" | "futures", amount, currency, start_date, end_date }
+// "futures" is omitted when there is no active derivatives account
 ```
 
 ---

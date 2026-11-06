@@ -68,6 +68,8 @@ revx account balances                                       # Show non-zero bala
 revx account balances BTC                                   # Get BTC balance
 revx account balances --currencies BTC,ETH,USD              # Filter by currencies
 revx account balances --all                                 # Include zero balances
+revx account sub-accounts                                   # Sub-account totals in USD
+revx account sub-accounts --convert-to EUR                  # Sub-account totals in EUR
 
 # Market
 revx market currencies                                      # List supported currencies
@@ -83,6 +85,7 @@ revx market candles BTC-USD --interval 5m                   # Get 5-minute candl
 revx market candles BTC-USD --since 7d --until today
 revx market orderbook BTC-USD                               # Get order book (50 levels per side)
 revx market orderbook BTC-USD --limit 192                   # Get order book (max depth, 1–192)
+revx market fees                                            # Show fee tiers by trading volume
 
 # Orders
 revx order place BTC-USD buy --qty 0.001 --market           # Market buy (base qty)
@@ -108,6 +111,8 @@ revx trade private BTC-USD                                  # Private trade hist
 revx trade private BTC-USD --limit 100 --start-date 7d
 revx trade public BTC-USD                                   # All public trades
 revx trade public BTC-USD --start-date 7d --limit 200
+revx trade volume                                           # Your trading volume (last 30 days)
+revx trade volume --interval-days 7                         # Trading volume over 7 days
 
 # Monitor (runs in foreground, Ctrl-C to stop)
 revx monitor price BTC-USD --direction above --threshold 100000

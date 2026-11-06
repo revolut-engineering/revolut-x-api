@@ -2,7 +2,7 @@
 
 # Revolut X Exchange REST API
 
-> Revolut X is a crypto exchange offering 16 REST API endpoints for trading, account management, and market data. Authentication uses Ed25519 signatures via three custom headers. Base URL: `https://revx.revolut.com/api/1.0`. All monetary and quantity values are returned as strings to prevent floating-point precision loss. Symbol format differs between requests and responses: path parameters use dash format (`BTC-USD`), while response data uses slash format (`BTC/USD`).
+> Revolut X is a crypto exchange offering 19 REST API endpoints for trading, account management, and market data. Authentication uses Ed25519 signatures via three custom headers. Base URL: `https://revx.revolut.com/api/1.0`. All monetary and quantity values are returned as strings to prevent floating-point precision loss. Symbol format differs between requests and responses: path parameters use dash format (`BTC-USD`), while response data uses slash format (`BTC/USD`).
 
 ---
 
@@ -13,7 +13,7 @@
 3. **Timestamp format split:** Authenticated endpoints use int64 Unix epoch milliseconds. Public endpoints (`/public/*`) use ISO-8601 strings.
 4. **Order book buy-side enum value is `BUYI`**, not `BUY`.
 5. **`staked` field on balances is optional** -- not every currency balance includes it.
-6. **Configuration responses are maps** (object with dynamic keys), not arrays.
+6. **Configuration responses for currencies and pairs are maps** (object with dynamic keys), not arrays. Fee tiers (`/configuration/fees/tiers`) are the exception — they return `{ data: [FeeTierGroup], metadata: { timestamp } }`.
 7. **Execution instructions default** to `["allow_taker"]`. An empty array `[]` means no specific instructions.
 8. **Date range queries** (`start_date`/`end_date`) must span at most 1 week.
 9. **OrderTrigger time_in_force** supports only `"gtc"` and `"ioc"` (no `"fok"`), unlike the main order which supports all three.
@@ -167,6 +167,38 @@ Get all crypto and fiat account balances for the authenticated user.
 
 ---
 
+### GET /sub-accounts
+
+List the authenticated user's sub-accounts with the total balance of each, converted to a single currency. The total per sub-account is the sum of available and reserved funds across every currency it holds, converted at mid-market exchange rates.
+
+**Auth:** Required
+**Errors:** 400, 401, 403, 409, 5XX
+
+**Parameters:**
+
+| Name | In | Type | Required | Description |
+|------|-----|------|----------|-------------|
+| convert_to | query | string | no | Currency code to convert total balances to (e.g., `USD`). Default: `USD`. Must be an active currency |
+
+**Response (200):** `{ data: { sub_accounts: [SubAccount] }, metadata: { timestamp, convert_to } }`
+
+**Example response:**
+```json
+{
+  "data": {
+    "sub_accounts": [
+      {"name": "TradingBot-65", "total_balance": {"amount": "60000.00", "currency": "USD"}, "created_date": 3318215482991, "updated_date": 3318215482991},
+      {"name": "TradingBot-66", "total_balance": {"amount": "0.00", "currency": "USD"}, "created_date": 3318215422991, "updated_date": 3318215482991}
+    ]
+  },
+  "metadata": {"timestamp": 3318215482991, "convert_to": "USD"}
+}
+```
+
+Sub-accounts are listed in ascending sub-account ID order. An account with no funds reports a zero total in the target currency.
+
+---
+
 ### Configuration
 
 ---
@@ -216,6 +248,51 @@ Get configuration for all traded currency pairs.
   }
 }
 ```
+
+---
+
+### GET /configuration/fees/tiers
+
+Get the authenticated user's fee tiers per product, keyed by 30-day trading volume. Returns one group per product the user can trade — `spot` always, `futures` with an active derivatives account.
+
+**Auth:** Required
+**Errors:** 401, 403, 409, 5XX
+
+**Parameters:** None (besides auth headers)
+
+**Response (200):** `{ data: [FeeTierGroup], metadata: { timestamp } }`
+
+Each group carries `current_tier` — the tier the user's last 30 days of trading volume places them in (`null` when no volume is on record) — plus the full ladder of tiers. A user's fee rate for a trade is the maker/taker rate of the tier their 30-day quote-currency volume falls into.
+
+**Example response:**
+```json
+{
+  "data": [
+    {
+      "type": "spot",
+      "current_tier": 1,
+      "currency": "USD",
+      "tiers": [
+        {"tier": 0, "volume_from": "0", "volume_to": "10000000", "maker_fee": "0", "taker_fee": "0.0009"},
+        {"tier": 1, "volume_from": "10000000", "volume_to": "50000000", "maker_fee": "0", "taker_fee": "0.0004"},
+        {"tier": 2, "volume_from": "50000000", "maker_fee": "0", "taker_fee": "0.0002"}
+      ]
+    },
+    {
+      "type": "futures",
+      "current_tier": null,
+      "currency": "USD",
+      "tiers": [
+        {"tier": 0, "volume_from": "0", "volume_to": "10000000", "maker_fee": "0", "taker_fee": "0.0009"},
+        {"tier": 1, "volume_from": "10000000", "maker_fee": "0", "taker_fee": "0.0004"}
+      ]
+    }
+  ],
+  "metadata": {"timestamp": 3318215482991}
+}
+```
+
+The top tier of a ladder has no `volume_to` — it covers everything above its `volume_from`. `data` is an empty array when no tiers are available.
 
 ---
 
@@ -716,6 +793,36 @@ Get the authenticated user's own trade history (fills) for a specific symbol.
 
 ---
 
+### GET /trades/private/volume
+
+Get the authenticated user's trading volume — the quote-currency volume they contributed — over a look-back window. Returns one entry per product: `spot` always, `futures` only with an active derivatives account. The same volumes drive the fee tiers returned by `GET /configuration/fees/tiers` (which uses a 30-day window).
+
+**Auth:** Required
+**Errors:** 400, 401, 403, 409, 5XX
+
+**Parameters:**
+
+| Name | In | Type | Required | Description |
+|------|-----|------|----------|-------------|
+| interval_days | query | integer | no | Look-back window in days, 1-180. Values outside the range return 400. Default: 30 |
+
+**Response (200):** `{ data: [TradingVolumeEntry], metadata: { timestamp } }`
+
+**Example response:**
+```json
+{
+  "data": [
+    {"type": "spot", "amount": "12500000", "currency": "USD", "start_date": 3318215482991, "end_date": 3318561082991},
+    {"type": "futures", "amount": "25000000", "currency": "USD", "start_date": 3318215482991, "end_date": 3318561082991}
+  ],
+  "metadata": {"timestamp": 3318561082991}
+}
+```
+
+`start_date`/`end_date` are the window bounds in Unix epoch milliseconds (`end_date` is the request time, `start_date` is `interval_days` earlier). `data` is an empty array when no volume was contributed in the window.
+
+---
+
 ### Market Data
 
 ---
@@ -916,6 +1023,50 @@ Get the current order book (bids and asks) for a trading pair, with a maximum of
 | staked | string (decimal) | **no** | Staked funds earning rewards (optional, not always present) |
 | reserved | string (decimal) | yes | Reserved (locked) funds |
 | total | string (decimal) | yes | Available + reserved funds |
+
+### SubAccount
+
+Used by: `GET /sub-accounts`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | yes | Sub-account display name |
+| total_balance | object | yes | `{ amount, currency }` — available + reserved across all currencies, converted to `metadata.convert_to` at mid-market rates |
+| created_date | integer (int64) | yes | Creation timestamp in Unix epoch milliseconds |
+| updated_date | integer (int64) | yes | Last update timestamp in Unix epoch milliseconds |
+
+### FeeTierGroup
+
+Used by: `GET /configuration/fees/tiers`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| type | string | yes | `"spot"` or `"futures"` |
+| current_tier | integer \| null | yes | Tier the user's 30-day trading volume places them in; `null` when no volume is on record |
+| currency | string | yes | Currency of the volume thresholds (e.g., `USD`) |
+| tiers | array of FeeTier | yes | Volume bands with the fee rates that apply inside each, ordered ascending by `volume_from` |
+
+### FeeTier
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| tier | integer | yes | Zero-based tier index |
+| volume_from | string (decimal) | yes | Volume the band starts at (inclusive) |
+| volume_to | string (decimal) | **no** | Volume the band ends at (exclusive). Absent on the top tier |
+| maker_fee | string (decimal) | yes | Maker fee rate inside the band |
+| taker_fee | string (decimal) | yes | Taker fee rate inside the band |
+
+### TradingVolumeEntry
+
+Used by: `GET /trades/private/volume`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| type | string | yes | `"spot"` or `"futures"` |
+| amount | string (decimal) | yes | Quote-currency volume contributed in the window |
+| currency | string | yes | Currency of the volume (e.g., `USD`) |
+| start_date | integer (int64) | yes | Window start in Unix epoch milliseconds |
+| end_date | integer (int64) | yes | Window end in Unix epoch milliseconds |
 
 ### Currency
 

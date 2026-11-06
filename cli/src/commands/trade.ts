@@ -7,7 +7,11 @@ import {
 } from "@revolut/revolut-x-api";
 import { getClient } from "../util/client.js";
 import { handleError } from "../util/errors.js";
-import { resolveDateWindow, parsePositiveInt } from "../util/parse.js";
+import {
+  resolveDateWindow,
+  parsePositiveInt,
+  parseIntInRange,
+} from "../util/parse.js";
 import {
   isJsonOutput,
   printJson,
@@ -66,6 +70,8 @@ Examples:
   $ revx trade private BTC-USD --json              Output as JSON
   $ revx trade public BTC-USD                      Recent public trades
   $ revx trade public BTC-USD --start-date 7d      Public trades in last 7 days
+  $ revx trade volume                              Your trading volume, last 30 days
+  $ revx trade volume --interval-days 7            Your trading volume, last 7 days
 
 Without --start-date, both commands cover the 30 days ending at --end-date (now by default).`,
     );
@@ -248,6 +254,81 @@ Without --start-date, both commands cover the 30 days ending at --end-date (now 
               printTable(allTrades, columns);
             }
           }
+        } catch (err) {
+          handleError(err);
+        }
+      },
+    );
+
+  trade
+    .command("volume")
+    .description("Show your trading volume (default: last 30 days)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ revx trade volume                            Trading volume over the last 30 days
+  $ revx trade volume --interval-days 7          Trading volume over the last 7 days
+  $ revx trade volume --json                     Output as JSON`,
+    )
+    .option(
+      "--interval-days <n>",
+      "Look-back window in days, 1-180 (default: 30)",
+    )
+    .option("--json", "Output as JSON")
+    .addOption(
+      new Option("--output <format>", "Output format")
+        .choices(["table", "json"])
+        .default("table"),
+    )
+    .action(
+      async (opts: {
+        intervalDays?: string;
+        json?: boolean;
+        output?: string;
+      }) => {
+        try {
+          const client = getClient({ requireAuth: true });
+          const intervalDays = opts.intervalDays
+            ? parseIntInRange(opts.intervalDays, "--interval-days", 1, 180)
+            : 30;
+          const result = await client.getTradingVolume({ intervalDays });
+
+          if (isJsonOutput(opts)) {
+            printJson(result);
+            return;
+          }
+
+          printSectionHeader(
+            `Trading Volume: last ${intervalDays} days`,
+            "Spot and futures volume contributed in the window.",
+          );
+
+          if (result.data.length === 0) {
+            console.log(chalk.gray("No trading volume found.\n"));
+            return;
+          }
+
+          console.log(chalk.dim(`  ${LOCAL_TIME_NOTE}`));
+          printTable(result.data, [
+            {
+              header: "Type",
+              accessor: (v) =>
+                v.type === "spot"
+                  ? chalk.white("Spot")
+                  : chalk.magenta("Futures"),
+            },
+            { header: "Volume", key: "amount", align: "right" },
+            { header: "Currency", key: "currency" },
+            {
+              header: "Start",
+              accessor: (v) => formatLocalDateTime(v.start_date),
+            },
+            {
+              header: "End",
+              accessor: (v) => formatLocalDateTime(v.end_date),
+            },
+          ]);
         } catch (err) {
           handleError(err);
         }

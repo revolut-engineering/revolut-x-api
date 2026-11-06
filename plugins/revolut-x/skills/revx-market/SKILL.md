@@ -3,12 +3,13 @@ name: revx-market
 description: >
   Revolut X market data commands. Use when the user asks to "check crypto prices",
   "view candles", "get ticker", "see order book", "list currencies", "list trading pairs",
-  or runs revx market commands.
+  "fee tiers", "my fees", "trading fees", "maker fee", "taker fee", or runs revx market
+  commands.
 ---
 
 # Market Data (`revx market`)
 
-> Query currencies, trading pairs, live prices, historical candles, and order book depth.
+> Query currencies, trading pairs, live prices, historical candles, order book depth, and fee tiers.
 
 > **Auth required.** Make sure `revx` is installed and configured before running these commands. If any command fails with an auth-related error — `Auth not configured`, `No private key found`, `Authentication failed (401)`, `Invalid signature`, `insecure permissions`, or a missing key/config file at `~/.config/revolut-x/` — **invoke the `revx-auth` skill immediately and apply the fix yourself.** Do not interrupt the user to ask them to run setup. Only escalate to the user for steps only they can perform (pasting the API key, registering the public key in their Revolut X profile, choosing a passphrase). After the fix, retry the original command.
 
@@ -73,6 +74,23 @@ Depth: 1–192 levels per side.
 Asks are sorted ascending — `asks[0]` is the best (lowest) ask. Bids are sorted descending — `bids[0]` is the best (highest) bid.
 
 > **Note on defaults:** The Revolut X REST API returns 20 levels by default and accepts up to 192 per call. `revx` requests 50 by default so pass `--limit 192` when you need the full book. Values outside 1–192 are rejected with an error rather than silently reduced.
+
+---
+
+## Fee Tiers
+
+```bash
+revx market fees                                # Fee tiers for spot and futures
+revx market fees --json                         # Machine-readable output
+```
+
+Shows the user's fee ladder per product — a `spot` group and (with an active derivatives account) a `futures` group. Each group has:
+
+- `current_tier` — the tier the user is on, based on their 30-day trading volume (`null` when no volume is on record)
+- `currency` — the volume threshold currency (typically USD)
+- `tiers` — volume bands with `volume_from` / `volume_to` (the top tier has no `volume_to`) and the `maker_fee` / `taker_fee` rates that apply inside each band
+
+Tiers are volume-based, not balance-based: the more 30-day quote-currency volume contributed, the lower the fees. Table output lists one row per tier, each carrying its product `type` (Spot/Futures) and threshold `currency`, with the current tier marked `← current`. Use `revx trade volume` (see `revx-account` skill) to see the volume that drives the tier.
 
 ---
 
