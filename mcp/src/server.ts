@@ -65,7 +65,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: "Revolut X",
-      version: "1.0.52",
+      version: "1.0.53",
     },
     {
       instructions: SERVER_INSTRUCTIONS,
