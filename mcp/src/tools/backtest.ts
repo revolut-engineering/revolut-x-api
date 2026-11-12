@@ -445,7 +445,7 @@ export function registerBacktestTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe(
-            "Simulate trailing up: rebuild the grid when a candle's high reaches the second grid level above the upper boundary, once the grid holds no coins. Best for trending markets.",
+            "Simulate trailing up: rebuild the grid when a candle's high reaches the first grid level above the upper boundary, once the grid holds no coins. Best for trending markets.",
           ),
         stop_loss_price: z
           .number()
@@ -632,7 +632,7 @@ export function registerBacktestTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe(
-            "Simulate trailing up: rebuild the grid when a candle's high reaches the second grid level above the upper boundary, once the grid holds no coins. Best for trending markets.",
+            "Simulate trailing up: rebuild the grid when a candle's high reaches the first grid level above the upper boundary, once the grid holds no coins. Best for trending markets.",
           ),
         stop_loss_price: z
           .number()

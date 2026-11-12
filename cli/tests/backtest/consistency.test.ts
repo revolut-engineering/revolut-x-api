@@ -211,7 +211,7 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
   // C3 103k:  L3 split_pos sells at L4 → 1 sell; L3.buyCount=1
   // C4 105k:  L4 split_pos sells at L5 → 1 sell; L4.buyCount=1
   // After C4: buyCounts=[1,1,2,1,1,0]
-  // C5 120k:  TU threshold≈108.2k exceeded; split k=7 → all 5 new levels below 120k
+  // C5 120k:  TU threshold≈107.1k exceeded; split k=7 → all 5 new levels below 120k
   //           → buyCounts restored from savedBuyCounts=[1,1,2,1,1,0]; trailingUpShifts=1
   // C6 108k:  all 5 levels' buyCounts fire: 1+1+2+1+1=6 buys → proves k=7 and counts preserved
   //
@@ -275,7 +275,7 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
   it("trailing-up fires exactly at trailUpTriggerPrice, not before", async () => {
     const trigger = trailUpTriggerPrice(TRAIL_UP_LADDER);
     expect(trigger).not.toBeNull();
-    expect(trigger!.toFixed(2)).toBe("109288.78");
+    expect(trigger!.toFixed(2)).toBe("107122.93");
 
     const below = await runBacktestBot(
       [flat(100_000), at(trigger!.minus("0.01"))],
@@ -298,6 +298,30 @@ describe("A — runBacktest ↔ runBacktestBot consistency (flat candles)", () =
       0,
     );
     expect(atTrigger.trailingUpShifts).toBe(1);
+  });
+
+  it("rebuilds at the trail-up trigger with every buy level in place, as the bot does", async () => {
+    // given
+    const trigger = trailUpTriggerPrice(TRAIL_UP_LADDER)!;
+    const candles = [flat(100_000), at(trigger), flat(50_000)];
+
+    // when
+    const bt = runBacktest(candles, LEVELS, RANGE, INVEST, false, true, 0);
+    const bot = await runBacktestBot(
+      candles,
+      LEVELS,
+      RANGE,
+      INVEST,
+      false,
+      true,
+      0,
+    );
+
+    // then
+    expect(bt.trailingUpShifts).toBe(1);
+    expect(bot.trailingUpShifts).toBe(1);
+    expect(bt.totalBuys).toBe(3);
+    expect(bot.totalBuys).toBe(bt.totalBuys);
   });
 });
 
@@ -389,6 +413,24 @@ describe("B — CLI runBacktest ↔ MCP runBacktest (exact equality)", () => {
     expect(cliAt.finalBase.eq(mcpAt.finalBase)).toBe(true);
     expect(cliAt.finalQuote.eq(mcpAt.finalQuote)).toBe(true);
     expect(cliAt.tradeLog).toEqual(mcpAt.tradeLog);
+  });
+
+  it("both place every buy level when a candle touches the trail-up trigger and closes lower", () => {
+    // given
+    const trigger = trailUpTriggerPrice(TRAIL_UP_LADDER)!;
+    const close = trigger.times("0.997");
+    const touch = { open: d(100_000), high: trigger, low: close, close };
+    const candles = [flat(100_000), touch, flat(50_000)];
+
+    // when
+    const cli = runBacktest(candles, LEVELS, RANGE, INVEST, false, true, 0);
+    const mcp = runBacktestMcp(candles, LEVELS, RANGE, INVEST, false, true, 0);
+
+    // then
+    expect(cli.trailingUpShifts).toBe(1);
+    expect(cli.totalBuys).toBe(3);
+    expect(mcp.totalBuys).toBe(cli.totalBuys);
+    expect(mcp.tradeLog).toEqual(cli.tradeLog);
   });
 
   it("identical results across a trailing-up rebuild", () => {

@@ -9708,10 +9708,12 @@ describe("grid bot pending placement recovery", () => {
   });
 });
 
+const ONE_STEP_ABOVE_TOP = new Decimal("100").times(
+  new Decimal("100").div("99").pow(new Decimal(1).div(3)),
+);
+
 describe("grid bot trailing-up confirmation", () => {
-  it("requires three consecutive qualifying live prices", () => {
-    // given
-    const state = makeState();
+  function confirmationBot() {
     const bot = new ForegroundGridBot({
       pair: "BTC-USD",
       levels: 4,
@@ -9728,22 +9730,57 @@ describe("grid bot trailing-up confirmation", () => {
       _shouldRebuildUp: boolean;
       _checkBoundary: (price: Decimal) => void;
     };
-    internals._state = state;
+    internals._state = makeState();
+    const checks = (prices: Decimal[]) =>
+      prices.map((price) => {
+        internals._checkBoundary(price);
+        return internals._shouldRebuildUp;
+      });
+    return { internals, checks };
+  }
+
+  it("moves the grid after three checks one grid step above the top level", () => {
+    // given
+    const { checks } = confirmationBot();
+
+    // when
+    const rebuildAfter = checks([
+      ONE_STEP_ABOVE_TOP,
+      ONE_STEP_ABOVE_TOP,
+      ONE_STEP_ABOVE_TOP,
+    ]);
+
+    // then
+    expect(rebuildAfter).toEqual([false, false, true]);
+  });
+
+  it("keeps the grid while the price stays above the top level but under one grid step above it", () => {
+    // given
+    const { checks } = confirmationBot();
+    const justUnder = ONE_STEP_ABOVE_TOP.minus("0.0001");
+
+    // when
+    const rebuildAfter = checks([justUnder, justUnder, justUnder, justUnder]);
+
+    // then
+    expect(justUnder.gt("100")).toBe(true);
+    expect(rebuildAfter).toEqual([false, false, false, false]);
+  });
+
+  it("requires three consecutive qualifying live prices", () => {
+    // given
+    const { checks } = confirmationBot();
     const trigger = new Decimal("102.030405060708091011");
 
     // when
-    internals._checkBoundary(trigger);
-    const afterFirst = internals._shouldRebuildUp;
-    internals._checkBoundary(trigger.plus("1"));
-    const afterSecond = internals._shouldRebuildUp;
-    internals._checkBoundary(trigger.plus("2"));
+    const rebuildAfter = checks([
+      trigger,
+      trigger.plus("1"),
+      trigger.plus("2"),
+    ]);
 
     // then
-    expect([afterFirst, afterSecond, internals._shouldRebuildUp]).toEqual([
-      false,
-      false,
-      true,
-    ]);
+    expect(rebuildAfter).toEqual([false, false, true]);
   });
 });
 
@@ -9829,6 +9866,70 @@ describe("grid bot trailing up while the grid holds coins", () => {
     expect(rebuild).toHaveBeenCalledTimes(1);
   });
 
+  it("waits one grid step above the top level while the grid still holds coins", async () => {
+    // given
+    const { internals, rebuild } = trailingBot(false);
+
+    // when
+    await internals._tick(ONE_STEP_ABOVE_TOP);
+
+    // then
+    expect(internals._warnings).toContain(DEFERRED);
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+
+  it("waits one grid step above the top level while a sell is still open and moves once it fills", async () => {
+    // given
+    const { state, internals, rebuild } = trailingBot(false);
+    state.levels[0].positions = [];
+    state.levels[1].positions = [
+      {
+        id: "open",
+        baseHeld: "0.1",
+        fillCost: "9.91",
+        sellOrderId: "open-sell",
+        sellBaseSize: "0.1",
+      },
+    ];
+    let sellStatus: "new" | "filled" = "new";
+    const sell = () => ({
+      id: "open-sell",
+      side: "sell",
+      status: sellStatus,
+      filled_quantity: sellStatus === "filled" ? "0.1" : "0",
+      filled_amount: sellStatus === "filled" ? "9.92" : "0",
+      average_fill_price: "99.2",
+      total_fee: "0",
+      fee_currency: "USD",
+    });
+    const listActive = internals._client.getActiveOrders;
+    internals._client.getActiveOrders = vi.fn(async () => {
+      const active = await listActive();
+      return {
+        ...active,
+        data: sellStatus === "new" ? [...active.data, sell()] : active.data,
+      };
+    });
+    internals._client.getOrder = vi.fn(async (id: string) =>
+      id === "open-sell"
+        ? { data: sell() }
+        : { data: { id, status: "new", filled_quantity: "0" } },
+    ) as typeof internals._client.getOrder;
+    await internals._tick(ONE_STEP_ABOVE_TOP);
+    const warningsWhileOpen = [...internals._warnings];
+    const rebuildsWhileOpen = rebuild.mock.calls.length;
+    sellStatus = "filled";
+
+    // when
+    await internals._tick(ONE_STEP_ABOVE_TOP);
+
+    // then
+    expect(rebuildsWhileOpen).toBe(0);
+    expect(warningsWhileOpen).toContain(DEFERRED);
+    expect(state.levels[1].positions).toEqual([]);
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
   it("waits while a dry-run grid holds coins and rebuilds once its sell fills", async () => {
     // given
     const { internals, rebuild } = trailingBot(true);
@@ -9844,6 +9945,438 @@ describe("grid bot trailing up while the grid holds coins", () => {
     expect(warningsWhileHeld).toContain(DEFERRED);
     expect(rebuild).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("grid bot trailing up with a partly filled buy", () => {
+  type FakeOrder = {
+    id: string;
+    client_order_id: string;
+    side: "buy" | "sell";
+    status: string;
+    price: string;
+    filled_quantity: string;
+    filled_amount: string;
+    average_fill_price?: string;
+    total_fee: string;
+    fee_currency: string;
+    reject_reason?: string;
+  };
+  type PlaceRequest = {
+    clientOrderId: string;
+    side: "buy" | "sell";
+    limit: { price: string };
+  };
+
+  const ABOVE_TRIGGER = new Decimal("100.8");
+  const PARTIAL_WAIT =
+    "Trailing up waits: a buy has partly filled, will retry once it finishes";
+
+  function fakeExchange() {
+    const book = new Map<string, FakeOrder>();
+    let next = 0;
+    let beforeCancel: (id: string) => void = () => undefined;
+    const isOpen = (order: FakeOrder) =>
+      order.status === "new" ||
+      (order.status === "partially_filled" && !order.reject_reason);
+    const add = (
+      order: Pick<FakeOrder, "id" | "side" | "price"> & Partial<FakeOrder>,
+    ) => {
+      book.set(order.id, {
+        client_order_id: `client-${order.id}`,
+        status: "new",
+        filled_quantity: "0",
+        filled_amount: "0",
+        total_fee: "0",
+        fee_currency: "USD",
+        ...order,
+      });
+    };
+    const fill = (
+      id: string,
+      quantity: string,
+      amount: string,
+      status = "filled",
+    ) => {
+      const order = book.get(id)!;
+      order.status = status;
+      order.filled_quantity = quantity;
+      order.filled_amount = amount;
+      order.average_fill_price = new Decimal(amount).div(quantity).toString();
+    };
+    const client = {
+      placeOrder: vi.fn(async (request: PlaceRequest) => {
+        next += 1;
+        const id = `placed-${next}`;
+        add({
+          id,
+          client_order_id: request.clientOrderId,
+          side: request.side,
+          price: request.limit.price,
+        });
+        return {
+          data: {
+            venue_order_id: id,
+            client_order_id: request.clientOrderId,
+            state: "new" as const,
+          },
+        };
+      }),
+      cancelOrder: vi.fn(async (id: string) => {
+        beforeCancel(id);
+        const order = book.get(id);
+        if (!order || !isOpen(order)) return;
+        if (order.status === "partially_filled") {
+          order.reject_reason = "cancelled";
+        } else {
+          order.status = "cancelled";
+        }
+      }),
+      getActiveOrders: vi.fn(async () => ({
+        data: [...book.values()].filter(isOpen).map((order) => ({ ...order })),
+        metadata: {},
+      })),
+      getHistoricalOrders: vi.fn(async () => ({ data: [], metadata: {} })),
+      getOrder: vi.fn(async (id: string) => {
+        const order = book.get(id);
+        if (!order) throw new NotFoundError(`Order with ID '${id}' not found.`);
+        return { data: { ...order } };
+      }),
+      getBalances: vi.fn(async () => [{ currency: "USD", available: "1000" }]),
+    };
+    return {
+      client,
+      add,
+      fill,
+      onCancel: (hook: (id: string) => void) => {
+        beforeCancel = hook;
+      },
+    };
+  }
+
+  function partialFillBot(dryRun = false) {
+    const state = makeState();
+    state.config.splitInvestment = true;
+    state.config.dryRun = dryRun;
+    state.splitExecuted = true;
+    state.quotePrecision = "0.01";
+    state.gridPrice = "99.05";
+    const exchange = fakeExchange();
+    const buys = [["b0a", "b0b"], ["b1"], ["b2"], []];
+    state.levels.forEach((level, index) => {
+      level.buyOrderIds = [...buys[index]];
+      level.buyOrderQuoteSizes = Object.fromEntries(
+        buys[index].map((id) => [id, "10"]),
+      );
+      level.buyClientOrderIds = Object.fromEntries(
+        buys[index].map((id) => [id, `client-${id}`]),
+      );
+      for (const id of buys[index]) {
+        exchange.add({ id, side: "buy", price: level.price });
+      }
+    });
+    const bot = new ForegroundGridBot(
+      {
+        pair: "BTC-USD",
+        levels: 4,
+        rangePct: "0.01",
+        investment: "40",
+        splitInvestment: true,
+        intervalSec: 30,
+        dryRun,
+        reset: false,
+        trailingUp: true,
+      },
+      { suppressDashboard: true, trailingUpConfirmationTicks: 1 },
+    );
+    const internals = bot as unknown as {
+      _state: GridState;
+      _pairInfo: CurrencyPair;
+      _client: typeof exchange.client;
+      _warnings: string[];
+      _tick: (price: Decimal) => Promise<void>;
+      _rebuildGridUp: (price: Decimal) => Promise<void>;
+    };
+    internals._state = state;
+    internals._pairInfo = { ...PAIR_INFO, quote_step: "0.01" };
+    internals._client = exchange.client;
+    return { state, exchange, internals };
+  }
+
+  const buyCounts = (state: GridState) =>
+    state.levels.map((level) => level.buyOrderIds.length);
+  const prices = (state: GridState) => state.levels.map((level) => level.price);
+
+  function snapshotSaves() {
+    const saved: GridState[] = [];
+    vi.mocked(saveGridState).mockImplementation((savedState) => {
+      saved.push(structuredClone(savedState));
+    });
+    return saved;
+  }
+
+  afterEach(() => {
+    vi.mocked(saveGridState).mockReset();
+  });
+
+  it("waits without cancelling anything while an open buy has partly filled", async () => {
+    // given
+    const { state, exchange, internals } = partialFillBot();
+    exchange.fill("b2", "0.05", "4.96", "partially_filled");
+
+    // when
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    expect(exchange.client.cancelOrder).not.toHaveBeenCalled();
+    expect(internals._warnings).toContain(PARTIAL_WAIT);
+    expect(prices(state)).toEqual(["99", "99.1", "99.2", "100"]);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+    expect(state.shiftCount).toBeUndefined();
+  });
+
+  it("saves each level's buy count before it cancels anything", async () => {
+    // given
+    const saved = snapshotSaves();
+    const { exchange, internals } = partialFillBot();
+    const savedAtFirstCancel: GridState[] = [];
+    exchange.onCancel(() => {
+      if (savedAtFirstCancel.length === 0) {
+        savedAtFirstCancel.push(saved.at(-1)!);
+      }
+    });
+
+    // when
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    expect(savedAtFirstCancel[0]?.rebuildBuyCounts).toEqual([2, 1, 1, 0]);
+    expect(savedAtFirstCancel[0]?.levels.map((level) => level.price)).toEqual([
+      "99",
+      "99.1",
+      "99.2",
+      "100",
+    ]);
+  });
+
+  it("puts every cancelled buy back after a move stops on a buy that filled during the cancel", async () => {
+    // given
+    const { state, exchange, internals } = partialFillBot();
+    exchange.onCancel((id) => {
+      if (id === "b2") exchange.fill("b2", "0.05", "4.96", "partially_filled");
+    });
+
+    // when
+    const firstMove = internals._tick(ABOVE_TRIGGER);
+    await expect(firstMove).rejects.toThrow(/must be reconciled/);
+    const planAfterStop = state.rebuildBuyCounts;
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    expect(planAfterStop).toEqual([2, 1, 1, 0]);
+    expect(prices(state)).toEqual(["99", "99.1", "99.2", "100"]);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+    expect(state.levels[2].positions).toEqual([
+      expect.objectContaining({ baseHeld: "0.05" }),
+    ]);
+    expect(state.shiftCount).toBeUndefined();
+  });
+
+  it("moves with every slot once the partly filled level has sold", async () => {
+    // given
+    const { state, exchange, internals } = partialFillBot();
+    exchange.onCancel((id) => {
+      if (id === "b2") exchange.fill("b2", "0.05", "4.96", "partially_filled");
+    });
+    await expect(internals._tick(ABOVE_TRIGGER)).rejects.toThrow(
+      /must be reconciled/,
+    );
+    exchange.onCancel(() => undefined);
+    await internals._tick(ABOVE_TRIGGER);
+    exchange.fill(state.levels[2].buyOrderIds[0], "0.05", "4.96");
+    await internals._tick(ABOVE_TRIGGER);
+    exchange.fill(state.levels[2].positions[0].sellOrderId!, "0.1", "10");
+
+    // when
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    expect(state.shiftCount).toBe(1);
+    expect(prices(state)).toEqual(["100", "100.1", "100.2", "101.01"]);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+    expect(state.levels.map((level) => level.expectedBuys)).toEqual([
+      2, 1, 1, 0,
+    ]);
+    expect(state.rebuildBuyCounts).toBeUndefined();
+  });
+
+  it("uses the saved counts for the move even when buys are still missing", async () => {
+    // given
+    const { state, internals } = partialFillBot(true);
+    state.levels[0].buyOrderIds = ["b0a"];
+    state.levels[1].buyOrderIds = [];
+    state.rebuildBuyCounts = [2, 1, 1, 0];
+
+    // when
+    await internals._rebuildGridUp(ABOVE_TRIGGER);
+
+    // then
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+    expect(state.levels.map((level) => level.expectedBuys)).toEqual([
+      2, 1, 1, 0,
+    ]);
+    expect(state.rebuildBuyCounts).toBeUndefined();
+  });
+
+  it("saves only the old grid, the old grid with its counts, or the whole new grid during a move", async () => {
+    // given
+    const saved = snapshotSaves();
+    const { internals } = partialFillBot();
+    const oldPrices = ["99", "99.1", "99.2", "100"];
+    const newPrices = ["100", "100.1", "100.2", "101.01"];
+    const kindOf = (snapshot: GridState) => {
+      const levelPrices = prices(snapshot);
+      const counts = snapshot.levels.map((level) => level.expectedBuys);
+      if (
+        JSON.stringify(levelPrices) === JSON.stringify(oldPrices) &&
+        snapshot.rebuildBuyCounts === undefined
+      ) {
+        return "old grid";
+      }
+      if (
+        JSON.stringify(levelPrices) === JSON.stringify(oldPrices) &&
+        JSON.stringify(snapshot.rebuildBuyCounts) === "[2,1,1,0]"
+      ) {
+        return "old grid with its counts";
+      }
+      if (
+        JSON.stringify(levelPrices) === JSON.stringify(newPrices) &&
+        JSON.stringify(counts) === "[2,1,1,0]" &&
+        snapshot.rebuildBuyCounts === undefined
+      ) {
+        return "new grid";
+      }
+      return "mixed";
+    };
+
+    // when
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    const kinds = saved.map(kindOf);
+    expect(kinds).not.toContain("mixed");
+    expect(kinds).toContain("old grid with its counts");
+    expect(kinds.at(-1)).toBe("new grid");
+  });
+
+  it("doesn't put planned buys back in a check that runs the move again", async () => {
+    // given
+    const { state, exchange, internals } = stuckCancelBot(() => true);
+    await expect(internals._tick(ABOVE_TRIGGER)).rejects.toThrow(
+      /did not reach a cancelled state/,
+    );
+    const placedBeforeRetry = exchange.client.placeOrder.mock.calls.length;
+
+    // when
+    await expect(internals._tick(ABOVE_TRIGGER)).rejects.toThrow(
+      /did not reach a cancelled state/,
+    );
+    const placedByRetry =
+      exchange.client.placeOrder.mock.calls.length - placedBeforeRetry;
+    await internals._tick(new Decimal("100.2"));
+
+    // then
+    expect(placedByRetry).toBe(0);
+    expect(prices(state)).toEqual(["99", "99.1", "99.2", "100"]);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+  });
+
+  it("moves with the saved counts when the retry runs before the buys are back", async () => {
+    // given
+    let stuck = true;
+    const { state, internals } = stuckCancelBot(() => stuck);
+    await expect(internals._tick(ABOVE_TRIGGER)).rejects.toThrow(
+      /did not reach a cancelled state/,
+    );
+    const countsBeforeRetry = buyCounts(state);
+    stuck = false;
+
+    // when
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    expect(countsBeforeRetry).toEqual([0, 1, 0, 0]);
+    expect(state.shiftCount).toBe(1);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+    expect(state.levels.map((level) => level.expectedBuys)).toEqual([
+      2, 1, 1, 0,
+    ]);
+    expect(state.rebuildBuyCounts).toBeUndefined();
+  });
+
+  it("puts a two-slot level's other buy back while its partly filled piece waits for its top-up", async () => {
+    // given
+    const { state, exchange, internals } = partialFillBot();
+    exchange.onCancel((id) => {
+      if (id === "b0a")
+        exchange.fill("b0a", "0.05", "4.95", "partially_filled");
+    });
+    await expect(internals._tick(ABOVE_TRIGGER)).rejects.toThrow(
+      /must be reconciled/,
+    );
+
+    // when
+    await internals._tick(ABOVE_TRIGGER);
+
+    // then
+    const level = state.levels[0];
+    expect(level.positions).toEqual([
+      expect.objectContaining({ baseHeld: "0.05", slotQuote: "10" }),
+    ]);
+    expect(
+      level.buyOrderIds
+        .map((orderId) => level.buyOrderQuoteSizes?.[orderId])
+        .sort(),
+    ).toEqual(["10", "5.05"]);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+  });
+
+  it("keeps a planned level at its slots while it buys and sells during the wait", async () => {
+    // given
+    const { state, exchange, internals } = partialFillBot();
+    exchange.onCancel((id) => {
+      if (id === "b2") exchange.fill("b2", "0.05", "4.96", "partially_filled");
+    });
+    await expect(internals._tick(ABOVE_TRIGGER)).rejects.toThrow(
+      /must be reconciled/,
+    );
+    const insideGrid = new Decimal("99.15");
+    await internals._tick(insideGrid);
+    exchange.fill(state.levels[1].buyOrderIds[0], "0.1", "9.91");
+    await internals._tick(insideGrid);
+    exchange.fill(state.levels[1].positions[0].sellOrderId!, "0.1", "9.92");
+
+    // when
+    await internals._tick(insideGrid);
+    await internals._tick(insideGrid);
+
+    // then
+    expect(state.levels[1].positions).toEqual([]);
+    expect(buyCounts(state)).toEqual([2, 1, 1, 0]);
+    expect(state.rebuildBuyCounts).toEqual([2, 1, 1, 0]);
+  });
+
+  function stuckCancelBot(isStuck: () => boolean) {
+    const setup = partialFillBot();
+    const internals = setup.internals as typeof setup.internals & {
+      _cancelUntilClosed: (orderId: string) => Promise<unknown>;
+    };
+    const cancelUntilClosed = internals._cancelUntilClosed.bind(internals);
+    internals._cancelUntilClosed = async (orderId: string) =>
+      orderId === "b1" && isStuck()
+        ? { closed: false }
+        : cancelUntilClosed(orderId);
+    return setup;
+  }
 });
 
 describe("grid bot split buy with a lost reply at start-up", () => {
