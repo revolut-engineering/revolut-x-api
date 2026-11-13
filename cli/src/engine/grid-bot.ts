@@ -1364,18 +1364,29 @@ export class ForegroundGridBot {
     return false;
   }
 
-  private _buyQuoteOnLevel(level: GridLevelState): Decimal {
+  private _buyQuoteOnLevel(level: GridLevelState, skipTopUps = false): Decimal {
     const quotePerLevel = new Decimal(this._state!.quotePerLevel);
-    const placed = level.buyOrderIds.map(
-      (orderId) => level.buyOrderQuoteSizes?.[orderId] ?? quotePerLevel,
-    );
-    const pending = (level.pendingBuyClientOrderIds ?? []).map(
-      (clientOrderId) =>
-        level.pendingBuyQuoteSizes?.[clientOrderId] ?? quotePerLevel,
-    );
+    const counted = (clientOrderId: string | undefined) =>
+      !skipTopUps || !this._topUpOwner(level, clientOrderId);
+    const placed = level.buyOrderIds
+      .filter((orderId) => counted(level.buyClientOrderIds?.[orderId]))
+      .map((orderId) => level.buyOrderQuoteSizes?.[orderId] ?? quotePerLevel);
+    const pending = (level.pendingBuyClientOrderIds ?? [])
+      .filter(counted)
+      .map(
+        (clientOrderId) =>
+          level.pendingBuyQuoteSizes?.[clientOrderId] ?? quotePerLevel,
+      );
     return [...placed, ...pending].reduce<Decimal>(
       (sum, quote) => sum.plus(quote),
       new Decimal(0),
+    );
+  }
+
+  private _slotsOnLevel(level: GridLevelState): Decimal {
+    return level.positions.reduce<Decimal>(
+      (sum, position) => sum.plus(this._slotQuote(position)),
+      this._buyQuoteOnLevel(level, true),
     );
   }
 
@@ -1386,16 +1397,24 @@ export class ForegroundGridBot {
       .toNumber();
   }
 
+  private _rebuildPlan(): number[] | null {
+    const plan = this._state!.rebuildBuyCounts;
+    return plan && plan.length === this._state!.levels.length ? plan : null;
+  }
+
   private _buysToPlace(gridPrice: Decimal): PlannedBuy[] {
     const levels = this._state!.levels;
+    const plan = this._rebuildPlan();
+    const planned = (level: GridLevelState) => plan?.[level.index] ?? 0;
     const refills = levels
       .filter(
         (level) =>
-          level.positions.length === 0 &&
-          new Decimal(level.price).lt(gridPrice),
+          (level.positions.length === 0 &&
+            new Decimal(level.price).lt(gridPrice)) ||
+          planned(level) > 0,
       )
       .flatMap((level) =>
-        this._missingBuyQuotes(level).map((quoteSize) => ({
+        this._missingBuyQuotes(level, planned(level)).map((quoteSize) => ({
           level,
           quoteSize,
         })),
@@ -1414,11 +1433,11 @@ export class ForegroundGridBot {
     });
   }
 
-  private _missingBuyQuotes(level: GridLevelState): Decimal[] {
+  private _missingBuyQuotes(level: GridLevelState, planned: number): Decimal[] {
     const quotePerLevel = new Decimal(this._state!.quotePerLevel);
     let missing = quotePerLevel
-      .times(level.expectedBuys ?? 1)
-      .minus(this._buyQuoteOnLevel(level));
+      .times(Math.max(level.expectedBuys ?? 1, planned))
+      .minus(this._slotsOnLevel(level));
     const quotes: Decimal[] = [];
     while (missing.gte(quotePerLevel)) {
       quotes.push(quotePerLevel);
@@ -1443,7 +1462,9 @@ export class ForegroundGridBot {
     }
     const N = state.levels.length;
 
-    const savedCounts = state.levels.map((level) => this._fullBuyCount(level));
+    const savedCounts =
+      this._rebuildPlan() ??
+      state.levels.map((level) => this._fullBuyCount(level));
 
     const quoteStep = this._getQuoteStep();
     const rebuildPlan = createTrailingGridRebuildPlan({
@@ -1481,6 +1502,8 @@ export class ForegroundGridBot {
     }
 
     if (!this._config.dryRun && client) {
+      state.rebuildBuyCounts = savedCounts;
+      this._saveGridState(state);
       const problems = closeProblems(
         await this._closeGridOrders(state, "keepTraded"),
       );
@@ -1503,9 +1526,12 @@ export class ForegroundGridBot {
 
     for (let i = 0; i < N; i++) {
       state.levels[i].price = candidatePrices[i].toString();
+      state.levels[i].expectedBuys = rebuildPlan.buyCounts[i];
     }
 
     state.gridPrice = currentPrice.toString();
+    delete state.rebuildBuyCounts;
+    this._saveGridState(state);
 
     const rebuilds: Array<{
       level: GridLevelState;
@@ -1514,9 +1540,6 @@ export class ForegroundGridBot {
     for (let i = 0; i < N; i++) {
       const level = state.levels[i];
       const count = rebuildPlan.buyCounts[i];
-      level.expectedBuys = count;
-      if (count === 0) continue;
-
       for (let j = 0; j < count; j++) {
         rebuilds.push({
           level,
@@ -4156,7 +4179,13 @@ export class ForegroundGridBot {
       : await this._checkBalance(quoteCurrency);
     let buysWaitingForCash = 0;
     let cashNeeded = new Decimal(0);
-    const plannedBuys = this._buysToPlace(new Decimal(state.gridPrice));
+    const retriesMove =
+      this._shouldRebuildUp &&
+      this._rebuildPlan() !== null &&
+      this._trailingUpHold(state) === null;
+    const plannedBuys = retriesMove
+      ? []
+      : this._buysToPlace(new Decimal(state.gridPrice));
     for (const { level, quoteSize, owner } of plannedBuys) {
       if (freeCash !== null && freeCash.lt(quoteSize)) {
         buysWaitingForCash++;
@@ -4196,15 +4225,26 @@ export class ForegroundGridBot {
 
     if (this._shouldRebuildUp) {
       this._shouldRebuildUp = false;
-      const hasOpenPositions = state.levels.some((l) => l.positions.length > 0);
-      if (hasOpenPositions || this._hasUnresolvedPlacementIntents()) {
-        this._warnings.push(
-          "Trailing up deferred: open positions or unresolved placements present, will retry next tick",
-        );
+      const hold = this._trailingUpHold(state);
+      if (hold) {
+        this._warnings.push(hold);
       } else {
         await this._rebuildGridUp(currentPrice);
       }
     }
+  }
+
+  private _trailingUpHold(state: GridState): string | null {
+    if (
+      state.levels.some((level) => level.positions.length > 0) ||
+      this._hasUnresolvedPlacementIntents()
+    ) {
+      return "Trailing up deferred: open positions or unresolved placements present, will retry next tick";
+    }
+    if (this._openBuyFills.gt(0)) {
+      return "Trailing up waits: a buy has partly filled, will retry once it finishes";
+    }
+    return null;
   }
 
   // --------------- dry run ---------------

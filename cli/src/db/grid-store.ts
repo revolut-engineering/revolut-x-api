@@ -85,6 +85,7 @@ export interface GridState {
   halt?: GridHalt;
   stopped?: boolean;
   shiftCount?: number;
+  rebuildBuyCounts?: number[];
   gridPrice: string;
   quotePrecision: string;
   basePrecision: string;

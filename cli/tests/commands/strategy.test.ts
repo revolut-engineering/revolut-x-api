@@ -672,10 +672,11 @@ describe("strategy machine output", () => {
     )!;
 
     // then
-    expect(backtestTrailing.description).toContain("second geometric level");
-    expect(optimizeTrailing.description).toContain("second geometric level");
+    expect(backtestTrailing.description).toContain("first geometric level");
+    expect(optimizeTrailing.description).toContain("first geometric level");
     expect(runTrailing.description).toContain("3 consecutive ticks");
-    expect(runTrailing.description).toContain("second geometric level");
+    expect(runTrailing.description).toContain("first geometric level");
+    expect(runTrailing.description).toContain("no buy has partly filled");
     for (const trailing of [backtestTrailing, optimizeTrailing, runTrailing]) {
       expect(trailing.description).toContain("once the grid holds no coins");
     }

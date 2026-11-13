@@ -58,6 +58,6 @@ export function trailUpTriggerFromBounds(
   if (levelCount < 2) return null;
   if (!lower.gt(0) || !upper.gt(0)) return null;
   const ratio = upper.div(lower).pow(new Decimal(1).div(levelCount - 1));
-  const trigger = upper.times(ratio.pow(2));
+  const trigger = upper.times(ratio);
   return trigger.isFinite() ? trigger : null;
 }
