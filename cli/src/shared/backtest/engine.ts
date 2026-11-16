@@ -638,17 +638,28 @@ export function runBacktest(
         // Save buyCount before sell pass clears things (used to restore split slots)
         const savedBuyCounts = levels.map((l) => l.buyCount);
 
+        const levelsPerSide = Math.floor(levels.length / 2);
+        const rebuildBuyCount = (index: number) =>
+          split ? savedBuyCounts[index] : index < levelsPerSide ? 1 : 0;
         let k: number;
         if (split) {
           k = findFirstGeometricShiftAbovePrice(upper, ratio, rebuildPrice, 1);
         } else {
-          const sellBoundary = levels[Math.floor(levels.length / 2)].price;
+          const topBuy = levels[levelsPerSide - 1].price;
+          const shiftedTopBuy = (steps: number) =>
+            roundToStep(topBuy.times(ratio.pow(steps)), quoteStep);
           k = findFirstGeometricShiftAbovePrice(
-            sellBoundary,
+            levels[levelsPerSide].price,
             ratio,
             rebuildPrice,
-            Math.floor(levels.length / 2) + 1,
+            levelsPerSide + 1,
           );
+          while (k > 0 && shiftedTopBuy(k).gte(rebuildPrice)) {
+            k--;
+          }
+          while (shiftedTopBuy(k + 1).lt(rebuildPrice)) {
+            k++;
+          }
         }
         const ratioK = ratio.pow(k);
         const candidatePrices = levels.map((level) =>
@@ -661,8 +672,7 @@ export function runBacktest(
               "Trailing grid does not produce unique prices at the pair precision.",
             );
           }
-          const buyCount = split ? savedBuyCounts[i] : 1;
-          if (price.lt(rebuildPrice) && buyCount > 0) {
+          if (price.lt(rebuildPrice) && rebuildBuyCount(i) > 0) {
             const executionPrice =
               stopLossPrice > 0
                 ? new Decimal(stopLossPrice)
@@ -683,7 +693,7 @@ export function runBacktest(
         for (let i = 0; i < levels.length; i++) {
           const level = levels[i];
           if (level.price.lt(rebuildPrice)) {
-            level.buyCount = split ? savedBuyCounts[i] : 1;
+            level.buyCount = rebuildBuyCount(i);
           } else {
             level.buyCount = 0;
           }

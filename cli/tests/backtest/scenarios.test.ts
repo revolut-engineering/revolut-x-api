@@ -24,7 +24,7 @@ const INVEST = d(1_000);
 //   L0≈95k, L1≈96.9k, L2≈98.9k (buy levels, price < 100k)
 //   L3≈100.9k, L4≈102.9k, L5≈105k (above start)
 // Split init: L2.positions=[bp], L3.positions=[bp], L4.positions=[bp]; L2.buyCount stays 1.
-// Trailing-up threshold ≈ 108.2k.
+// Trailing-up threshold ≈ 107.1k.
 
 function collectFills(
   candles: ReturnType<typeof flat>[],

@@ -379,7 +379,7 @@ describe("grid plan", () => {
     expect(plan.levels[2].price.lt(currentPrice)).toBe(true);
   });
 
-  it("preserves trailing allocation invariants through 100 levels per side", () => {
+  it("preserves trailing allocation invariants through 100 levels per side, one and two steps above the top", () => {
     // given
     const ranges = ["0.01", "0.1", "0.5"];
 
@@ -397,40 +397,44 @@ describe("grid plan", () => {
         const ratio = upper
           .div(lower)
           .pow(new Decimal(1).div(levels.length - 1));
-        const currentPrice = upper.times(ratio.pow(2)).plus("0.00000001");
-        const nonSplitPlan = createTrailingGridRebuildPlan({
-          levels,
-          currentPrice,
-          split: false,
-          buyCounts: levels.map((level) =>
-            level.index < levelsPerSide ? 1 : 0,
-          ),
-          quoteStep: new Decimal("0.00000001"),
-        });
-        const splitCounts = levels.map(() => 1);
-        const splitPlan = createTrailingGridRebuildPlan({
-          levels,
-          currentPrice,
-          split: true,
-          buyCounts: splitCounts,
-          quoteStep: new Decimal("0.00000001"),
-        });
+        for (const stepsAbove of [1, 2]) {
+          const currentPrice = upper
+            .times(ratio.pow(stepsAbove))
+            .plus("0.00000001");
+          const nonSplitPlan = createTrailingGridRebuildPlan({
+            levels,
+            currentPrice,
+            split: false,
+            buyCounts: levels.map((level) =>
+              level.index < levelsPerSide ? 1 : 0,
+            ),
+            quoteStep: new Decimal("0.00000001"),
+          });
+          const splitCounts = levels.map(() => 1);
+          const splitPlan = createTrailingGridRebuildPlan({
+            levels,
+            currentPrice,
+            split: true,
+            buyCounts: splitCounts,
+            quoteStep: new Decimal("0.00000001"),
+          });
 
-        // then
-        expect(
-          nonSplitPlan.buyCounts.reduce((total, count) => total + count, 0),
-        ).toBe(levelsPerSide);
-        expect(
-          nonSplitPlan.levels.every(
-            (level, index) =>
-              nonSplitPlan.buyCounts[index] === 0 ||
-              level.price.lt(currentPrice),
-          ),
-        ).toBe(true);
-        expect(splitPlan.buyCounts).toEqual(splitCounts);
-        expect(
-          splitPlan.levels.every((level) => level.price.lt(currentPrice)),
-        ).toBe(true);
+          // then
+          expect(
+            nonSplitPlan.buyCounts.reduce((total, count) => total + count, 0),
+          ).toBe(levelsPerSide);
+          expect(
+            nonSplitPlan.levels.every(
+              (level, index) =>
+                nonSplitPlan.buyCounts[index] === 0 ||
+                level.price.lt(currentPrice),
+            ),
+          ).toBe(true);
+          expect(splitPlan.buyCounts).toEqual(splitCounts);
+          expect(
+            splitPlan.levels.every((level) => level.price.lt(currentPrice)),
+          ).toBe(true);
+        }
       }
     }
   });

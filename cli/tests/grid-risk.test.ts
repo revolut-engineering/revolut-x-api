@@ -67,7 +67,7 @@ describe("trailUpTriggerPrice", () => {
   it("matches the boundary-check formula for a 95k-105k ladder", () => {
     const trigger = trailUpTriggerPrice(LADDER);
     expect(trigger).not.toBeNull();
-    expect(trigger!.toFixed(2)).toBe("109288.78");
+    expect(trigger!.toFixed(2)).toBe("107122.93");
   });
 
   it("sits above the top grid level", () => {
@@ -288,7 +288,7 @@ describe("renderRiskLine", () => {
 
   it("renders the trailing-up trigger with distance from current price", () => {
     expect(renderRiskLine(makeState({ trailingUp: true }), PRICE)).toBe(
-      "Trail up $109,288.78 (+9.3%)",
+      "Trail up $107,122.93 (+7.1%)",
     );
   });
 
@@ -301,14 +301,14 @@ describe("renderRiskLine", () => {
   it("renders both when configured together", () => {
     expect(
       renderRiskLine(makeState({ trailingUp: true, stopLoss: "82000" }), PRICE),
-    ).toBe("Trail up $109,288.78 (+9.3%) \u00B7 Stop $82,000.00 (-18.0%)");
+    ).toBe("Trail up $107,122.93 (+7.1%) \u00B7 Stop $82,000.00 (-18.0%)");
   });
 
   it("groups the shift count with the trailing-up segment", () => {
     const state = makeState({ trailingUp: true, stopLoss: "82000" });
     state.shiftCount = 2;
     expect(renderRiskLine(state, PRICE)).toBe(
-      "Trail up $109,288.78 (+9.3%) \u00B7 Shifts 2 \u00B7 Stop $82,000.00 (-18.0%)",
+      "Trail up $107,122.93 (+7.1%) \u00B7 Shifts 2 \u00B7 Stop $82,000.00 (-18.0%)",
     );
   });
 
@@ -621,7 +621,7 @@ describe("renderDashboard trailing-up row", () => {
   it("shows the trigger price when trailing-up is enabled", () => {
     const out = dashboard(makeState({ trailingUp: true }));
     expect(out).toContain("Trail Up");
-    expect(out).toContain("$109,288.78");
+    expect(out).toContain("$107,122.93");
   });
 
   it("omits the row when trailing-up is disabled", () => {

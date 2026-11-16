@@ -1120,7 +1120,7 @@ but ticker polling seconds for run.`,
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
-      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary, once the grid holds no coins",
+      "Simulate grid rebuild when a candle reaches the first geometric level above the upper boundary, once the grid holds no coins",
     )
     .option(
       "--stop-loss <price>",
@@ -1161,7 +1161,7 @@ but ticker polling seconds for run.`,
     .option("--split", "Market-buy base for sell levels at start")
     .option(
       "--trailing-up",
-      "Simulate grid rebuild when a candle reaches the second geometric level above the upper boundary, once the grid holds no coins",
+      "Simulate grid rebuild when a candle reaches the first geometric level above the upper boundary, once the grid holds no coins",
     )
     .option(
       "--stop-loss <price>",
@@ -1203,7 +1203,7 @@ but ticker polling seconds for run.`,
     )
     .option(
       "--trailing-up",
-      "Rebuild grid after price reaches the second geometric level above the upper boundary for 3 consecutive ticks, once the grid holds no coins",
+      "Rebuild grid after price reaches the first geometric level above the upper boundary for 3 consecutive ticks, once the grid holds no coins and no buy has partly filled",
     )
     .option(
       "--stop-loss <price>",

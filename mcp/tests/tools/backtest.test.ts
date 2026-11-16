@@ -240,7 +240,7 @@ describe("grid_backtest — pair limits and sizing", () => {
     expect(text).toContain("Stop-loss ($90,000.00): not triggered");
   });
 
-  it("describes trailing up at the second level above the grid", async () => {
+  it("describes trailing up at the first level above the grid", async () => {
     const { tools } = await client.listTools();
     const tool = tools.find((t) => t.name === "grid_backtest");
     const trailing = (
@@ -248,7 +248,7 @@ describe("grid_backtest — pair limits and sizing", () => {
     ).trailing_up;
 
     expect(trailing.description).toContain(
-      "second grid level above the upper boundary",
+      "first grid level above the upper boundary",
     );
     expect(trailing.description).toContain("once the grid holds no coins");
   });
